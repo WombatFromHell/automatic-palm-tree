@@ -55,12 +55,12 @@ in {
     statix
   ];
 
+  virtual-surround.enable = true;
   programs = {
     ghostty.enable = true;
     home-manager.enable = true;
   };
   services = {
-    virtual-surround.enable = true;
     lightsout-home.enable = true;
   };
 }

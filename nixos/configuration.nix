@@ -1,8 +1,10 @@
 {
+  lib,
   pkgs,
   sharedArgs,
   ...
 }: let
+  hwconf = ./hardware-configuration.nix;
   user = sharedArgs.username;
 in {
   nix = {
@@ -17,8 +19,17 @@ in {
   };
   nixpkgs.config.allowUnfree = true;
 
-  # NOTE: make sure to copy in/out your hardware-configuration.nix!
-  imports = [./hardware-configuration.nix];
+  # Assert that the hardware-configuration.nix file exists
+  assertions = [
+    {
+      assertion = builtins.pathExists hwconf;
+      message = ''
+        The file `hardware-configuration.nix` is required but does not exist.
+        Please copy your system's hardware configuration to: ./nixos/
+      '';
+    }
+  ];
+  imports = [hwconf];
 
   boot = {
     loader = {
@@ -53,6 +64,9 @@ in {
   # hold-over from 24.11 unstil 25.11 comes out
   # hardware.pulseaudio.enable = false;
 
+  nvidia-support.enable = true;
+  local-mounts.enable = true;
+
   services = {
     earlyoom.enable = true;
 
@@ -83,8 +97,7 @@ in {
     # ollama.enable = true;
 
     lightsout-system.enable = true;
-    nvidia-support.enable = true;
-    nvidiapm.enable = true;
+    nvidia-pm.enable = true;
     sleepfix.enable = true;
   };
   security.rtkit.enable = true;
