@@ -35,7 +35,7 @@ in {
     virtualisation.docker.rootless.daemon.settings.features.cdi = true;
 
     environment.systemPackages = with pkgs; [
-      nvtop-nvidia
+      nvtopPackages.nvidia
       nvidia-container-toolkit
     ];
 

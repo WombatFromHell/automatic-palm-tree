@@ -51,6 +51,7 @@
 
     # Desktop specific modules
     methylModules = [
+      ./nixos/methyl/hardware-configuration.nix
       ./nixos/configuration.nix
       ./nixos/modules/nvidia.nix
       ./nixos/modules/gigabyte-sleepfix.nix

@@ -1,10 +1,8 @@
 {
-  lib,
   pkgs,
   sharedArgs,
   ...
 }: let
-  hwconf = ./hardware-configuration.nix;
   user = sharedArgs.username;
 in {
   nix = {
@@ -18,18 +16,6 @@ in {
     # };
   };
   nixpkgs.config.allowUnfree = true;
-
-  # Assert that the hardware-configuration.nix file exists
-  assertions = [
-    {
-      assertion = builtins.pathExists hwconf;
-      message = ''
-        The file `hardware-configuration.nix` is required but does not exist.
-        Please copy your system's hardware configuration to: ./nixos/
-      '';
-    }
-  ];
-  imports = [hwconf];
 
   boot = {
     loader = {
