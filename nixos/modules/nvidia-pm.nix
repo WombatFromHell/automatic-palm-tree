@@ -4,11 +4,11 @@
   pkgs,
   ...
 }: let
-  scriptName = "nvidiapm";
+  scriptName = "nvidia-pm";
   description = "NVIDIA Power Limit Service";
   smiPath = "${config.hardware.nvidia.package.bin}/bin/nvidia-smi";
   scriptPath = pkgs.writeScriptBin "${scriptName}" ''
-    #!${pkgs.stdenv.shell}
+    #!${pkgs.bash}/bin/bash
     NVIDIASMI="${smiPath}"
     BC="${pkgs.bc}/bin/bc"
     AWK="${pkgs.gawk}/bin/awk"
@@ -58,12 +58,12 @@
   '';
 in {
   options = {
-    services.nvidiapm.enable = lib.mkEnableOption "${description}";
+    services."${scriptName}".enable = lib.mkEnableOption "${description}";
   };
 
   config = lib.mkMerge [
-    (lib.mkIf (config.services.nvidia-support.enable && config.services.nvidiapm.enable) {
-      systemd.services.nvidiapm = {
+    (lib.mkIf (config.nvidia-support.enable && config.services."${scriptName}".enable) {
+      systemd.services."${scriptName}" = {
         description = "NVIDIA Power Limit Service";
         wantedBy = ["multi-user.target"];
         serviceConfig = {
@@ -74,7 +74,7 @@ in {
         };
       };
 
-      systemd.timers.nvidiapm = {
+      systemd.timers."${scriptName}" = {
         wantedBy = ["timers.target"];
         timerConfig = {
           OnBootSec = 5;
@@ -82,7 +82,7 @@ in {
       };
     })
 
-    (lib.mkIf (!config.services.nvidia-support.enable && config.services.nvidiapm.enable) {
+    (lib.mkIf (!config.nvidia-support.enable && config.services."${scriptName}".enable) {
       warnings = [
         "The systemd unit 'nvidiapm' is enabled but requires 'nvidia.enable', and will not function without it!"
       ];

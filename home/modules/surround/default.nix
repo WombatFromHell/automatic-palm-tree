@@ -5,12 +5,26 @@
 }: let
   moduleName = "virtual-surround";
   hrirWav = "hrir.wav";
+  hrirPath = builtins.path {
+    path = ./.;
+    name = "hrir.wav";
+  };
   atmosPath = "${config.xdg.configHome}/pipewire/${hrirWav}";
 in {
-  options = {
-    services."${moduleName}".enable = lib.mkEnableOption "Enable virtual surround HRIR sink for pipewire";
-  };
-  config = lib.mkIf config.services."${moduleName}".enable {
+  options."${moduleName}".enable = lib.mkEnableOption "Enable virtual surround HRIR sink for pipewire";
+
+  config = lib.mkIf config."${moduleName}".enable {
+    # Assert that the hrir.wav file exists
+    assertions = [
+      {
+        assertion = builtins.pathExists hrirPath;
+        message = ''
+          The file `hrir.wav` is required but does not exist.
+          Please copy this file to your flake root.
+        '';
+      }
+    ];
+
     xdg.configFile."pipewire/filter-chain.conf.d/virtual-surround.conf".text = ''
       # Convolver sink
       context.modules = [
@@ -109,10 +123,9 @@ in {
                   }
               }
           }
-      ]
-    '';
+      ]'';
 
     # Link the hrir.wav file into place
-    home.file.".config/pipewire/${hrirWav}".source = ./${hrirWav};
+    home.file.".config/pipewire/${hrirWav}".source = hrirPath;
   };
 }

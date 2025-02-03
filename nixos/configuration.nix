@@ -17,9 +17,6 @@ in {
   };
   nixpkgs.config.allowUnfree = true;
 
-  # NOTE: make sure to copy in/out your hardware-configuration.nix!
-  imports = [./hardware-configuration.nix];
-
   boot = {
     loader = {
       systemd-boot.enable = true;
@@ -53,6 +50,9 @@ in {
   # hold-over from 24.11 unstil 25.11 comes out
   # hardware.pulseaudio.enable = false;
 
+  nvidia-support.enable = true;
+  local-mounts.enable = true;
+
   services = {
     earlyoom.enable = true;
 
@@ -83,8 +83,7 @@ in {
     # ollama.enable = true;
 
     lightsout-system.enable = true;
-    nvidia-support.enable = true;
-    nvidiapm.enable = true;
+    nvidia-pm.enable = true;
     sleepfix.enable = true;
   };
   security.rtkit.enable = true;
