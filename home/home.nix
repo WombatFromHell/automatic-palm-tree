@@ -57,6 +57,7 @@ in {
   ];
 
   virtual-surround.enable = true;
+  veridian-controller.enable = true;
   programs = {
     ghostty.enable = true;
     home-manager.enable = true;

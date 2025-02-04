@@ -25,10 +25,12 @@ in {
 
     kernelParams = ["amd_pstate=active"];
     # kernelPackages = pkgs.linuxPackages_latest;
-    # provide some chaotic-nyx niceties
-    # NOTE: enable these only after the first 'rebuild'
     kernelPackages = pkgs.linuxPackages_cachyos;
-    # services.scx.enable = true;
+  };
+
+  security = {
+    rtkit.enable = true;
+    sudo.enable = true;
   };
 
   networking = {
@@ -38,7 +40,20 @@ in {
   };
 
   time.timeZone = "America/Denver";
-  i18n.defaultLocale = "en_US.UTF-8";
+  i18n = {
+    defaultLocale = "en_US.UTF-8";
+    extraLocaleSettings = {
+      LC_ADDRESS = "en_US.UTF-8";
+      LC_IDENTIFICATION = "en_US.UTF-8";
+      LC_MEASUREMENT = "en_US.UTF-8";
+      LC_MONETARY = "en_US.UTF-8";
+      LC_NAME = "en_US.UTF-8";
+      LC_NUMERIC = "en_US.UTF-8";
+      LC_PAPER = "en_US.UTF-8";
+      LC_TELEPHONE = "en_US.UTF-8";
+      LC_TIME = "en_US.UTF-8";
+    };
+  };
 
   zramSwap = {
     enable = true;
@@ -59,9 +74,12 @@ in {
     xserver.enable = true;
     displayManager.sddm.enable = true;
     desktopManager.plasma6.enable = true;
-    xserver.xkb.layout = "us";
+    xserver.xkb = {
+      layout = "us";
+      variant = "";
+    };
 
-    sshd.enable = true;
+    #openssh.enable = true;
 
     printing = {
       enable = true;
@@ -81,12 +99,12 @@ in {
 
     flatpak.enable = true;
     # ollama.enable = true;
+    # scx.enable = true;
 
     lightsout-system.enable = true;
     nvidia-pm.enable = true;
     sleepfix.enable = true;
   };
-  security.rtkit.enable = true;
 
   environment.systemPackages = with pkgs; [
     cifs-utils
@@ -110,6 +128,10 @@ in {
   hardware.bluetooth.enable = true;
   hardware.steam-hardware.enable = true;
 
+  # networking.firewall.allowedTCPPorts = [];
+  # networking.firewall.allowedUDPPorts = [];
+  # networking.firewall.enable = false;
+
   programs = {
     fish.enable = true;
     steam.enable = true;
@@ -129,6 +151,7 @@ in {
     gnupg.agent = {
       enable = true;
       enableSSHSupport = true;
+      pinentryPackage = pkgs.pinentry-all;
     };
   };
 

@@ -49,7 +49,7 @@ in {
           commands = [
             {
               command = "${config.hardware.nvidia.package.settings}/bin/nvidia-settings";
-              options = ["NOPASSWD"];
+              options = ["NOPASSWD" "SETENV"];
             }
           ];
         }
