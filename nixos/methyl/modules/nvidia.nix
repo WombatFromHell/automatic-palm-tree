@@ -46,7 +46,7 @@ in {
           groups = ["wheel"];
           commands = [
             {
-              command = "${config.hardware.nvidia.package.bin}/bin/nvidia-settings";
+              command = "${config.hardware.nvidia.package.settings}/bin/nvidia-settings";
               options = ["NOPASSWD"];
             }
           ];
