@@ -44,6 +44,7 @@ in {
     rdfind
     ripgrep
     zoxide
+    vesktop
     # include some tools for mason
     python3
     nodejs_23
