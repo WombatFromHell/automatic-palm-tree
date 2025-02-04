@@ -106,6 +106,8 @@ in {
     sleepfix.enable = true;
   };
 
+  fonts.fontconfig.useEmbeddedBitmaps = true;
+
   environment.systemPackages = with pkgs; [
     cifs-utils
     wget
@@ -125,8 +127,10 @@ in {
     shell = pkgs.fish;
   };
 
-  hardware.bluetooth.enable = true;
-  hardware.steam-hardware.enable = true;
+  hardware = {
+    bluetooth.enable = true;
+    steam-hardware.enable = true;
+  };
 
   # networking.firewall.allowedTCPPorts = [];
   # networking.firewall.allowedUDPPorts = [];
