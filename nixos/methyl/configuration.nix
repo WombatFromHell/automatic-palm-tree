@@ -24,10 +24,10 @@ in {
     };
 
     kernelParams = ["amd_pstate=active"];
-    # kernelPackages = pkgs.linuxPackages_latest;
+    kernelPackages = pkgs.linuxPackages_latest;
     # provide some chaotic-nyx niceties
     # NOTE: enable these only after the first 'rebuild'
-    kernelPackages = pkgs.linuxPackages_cachyos;
+    # kernelPackages = pkgs.linuxPackages_cachyos;
     # services.scx.enable = true;
   };
 
