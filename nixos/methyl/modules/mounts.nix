@@ -23,7 +23,7 @@ in {
         options = ["${ext4_opts}"];
       };
       "/mnt/linuxdata" = {
-        device = "/dev/disk/by-uuid/00ce9421-9338-4d99-b57e-ac55cc0c08c2";
+        device = "/dev/disk/by-uuid/45710fdb-8f12-432e-998b-9dce7dfaeadd";
         fsType = "ext4";
         options = ["${ext4_opts}"];
       };
