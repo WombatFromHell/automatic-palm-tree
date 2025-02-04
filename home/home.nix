@@ -30,6 +30,7 @@ in {
     eza
     bat
     fd
+    unzip
     openrgb
     firefox
     kdePackages.kate
@@ -54,6 +55,7 @@ in {
     gnumake
     alejandra
     statix
+    rustup
   ];
 
   virtual-surround.enable = true;
