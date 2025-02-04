@@ -113,7 +113,11 @@ in {
   programs = {
     fish.enable = true;
     steam.enable = true;
-    appimage.enable = true;
+    nix-ld.enable = true;
+    appimage = {
+      enable = true;
+      binfmt = true;
+    };
 
     nh = {
       enable = true;
