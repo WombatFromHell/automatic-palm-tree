@@ -111,6 +111,6 @@ in {
       ]'';
 
     # Link the hrir.wav file into place
-    home.file.".config/pipewire/${hrirWav}".source = ./${hrirPath};
+    home.file.".config/pipewire/${hrirWav}".source = ./${hrirWav};
   };
 }
