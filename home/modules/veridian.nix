@@ -2,6 +2,7 @@
   lib,
   pkgs,
   config,
+  osConfig ? {},
   ...
 }: let
   moduleName = "veridian-controller";
@@ -17,6 +18,7 @@ in {
         Description = "${description}";
       };
       Service = {
+        Environment = "PATH=/run/wrappers/bin:${osConfig.hardware.nvidia.package.settings}/bin:${osConfig.hardware.nvidia.package.bin}/bin";
         Type = "simple";
         ExecStart = "${pkgs.${moduleName}}/bin/${moduleName}";
         TimeoutStopSec = 10;

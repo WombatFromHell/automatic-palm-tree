@@ -42,6 +42,9 @@ in {
 
     # add a sudoers rule for 'nvidia-settings' so admins can use fan control support
     security.sudo = {
+      extraConfig = ''
+        Defaults !requiretty
+      '';
       extraRules = [
         {
           # groups = ["wheel"];
