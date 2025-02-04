@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  sharedArgs,
   ...
 }: let
   moduleName = "nvidia-support";
@@ -43,7 +44,8 @@ in {
     security.sudo = {
       extraRules = [
         {
-          groups = ["wheel"];
+          # groups = ["wheel"];
+          users = ["${sharedArgs.username}"];
           commands = [
             {
               command = "${config.hardware.nvidia.package.settings}/bin/nvidia-settings";

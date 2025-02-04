@@ -9,12 +9,10 @@ in {
     Service = {
       Type = "simple";
       ExecStart = "${pkgs.${moduleName}}/bin/${moduleName}";
-      Restart = "on-failure";
-      RestartSec = 5;
       TimeoutStopSec = 10;
     };
     Install = {
-      WantedBy = ["graphical-session.target"];
+      WantedBy = ["default.target"];
     };
   };
 }
