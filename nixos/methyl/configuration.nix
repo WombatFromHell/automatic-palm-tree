@@ -24,10 +24,10 @@ in {
     };
 
     kernelParams = ["amd_pstate=active"];
-    kernelPackages = pkgs.linuxPackages_latest;
+    # kernelPackages = pkgs.linuxPackages_latest;
     # provide some chaotic-nyx niceties
     # NOTE: enable these only after the first 'rebuild'
-    # kernelPackages = pkgs.linuxPackages_cachyos;
+    kernelPackages = pkgs.linuxPackages_cachyos;
     # services.scx.enable = true;
   };
 
@@ -90,7 +90,6 @@ in {
 
   environment.systemPackages = with pkgs; [
     cifs-utils
-    fish
     wget
     curl
     neovim
@@ -105,12 +104,14 @@ in {
     description = "${user}";
     uid = sharedArgs.myuid;
     extraGroups = ["networkmanager" "wheel" "input" "i2c"];
+    shell = pkgs.fish;
   };
 
   hardware.bluetooth.enable = true;
   hardware.steam-hardware.enable = true;
 
   programs = {
+    fish.enable = true;
     steam.enable = true;
     appimage.enable = true;
 
