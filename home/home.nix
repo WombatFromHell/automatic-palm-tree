@@ -14,7 +14,7 @@ in {
   imports = [
     ./modules/openrgb/lightsout-home.nix
     ./modules/surround
-    ./veridian.nix # veridian-controller service
+    ./modules/veridian.nix
   ];
 
   home.packages = with pkgs; [

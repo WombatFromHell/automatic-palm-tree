@@ -52,11 +52,11 @@
     # Desktop specific modules
     methylModules = [
       ./nixos/methyl/hardware-configuration.nix
-      ./nixos/configuration.nix
-      ./nixos/modules/nvidia.nix
-      ./nixos/modules/gigabyte-sleepfix.nix
-      ./nixos/modules/nvidia-pm.nix
-      ./nixos/modules/mounts.nix
+      ./nixos/methyl/configuration.nix
+      ./nixos/methyl/modules/nvidia.nix
+      ./nixos/methyl/modules/gigabyte-sleepfix.nix
+      ./nixos/methyl/modules/nvidia-pm.nix
+      ./nixos/methyl/modules/mounts.nix
       ./home/modules/openrgb/lightsout-system.nix
 
       inputs.home-manager.nixosModules.home-manager
