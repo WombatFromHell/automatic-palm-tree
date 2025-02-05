@@ -12,8 +12,9 @@ in {
   };
 
   imports = [
-    ./modules/openrgb/lightsout-home.nix
+    ./modules/monitor-session
     ./modules/surround
+    ./modules/openrgb/lightsout-home.nix
     ./modules/veridian.nix
   ];
 
@@ -66,5 +67,6 @@ in {
   };
   services = {
     lightsout-home.enable = true;
+    monitor-session.enable = true;
   };
 }
