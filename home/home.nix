@@ -47,6 +47,7 @@ in {
     ripgrep
     zoxide
     vesktop
+    rustmission
     # include some tools for mason
     python3
     nodejs_23
