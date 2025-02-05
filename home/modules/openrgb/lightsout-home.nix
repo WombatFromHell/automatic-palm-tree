@@ -59,5 +59,8 @@ in {
       # turn off all RGB on DRAM, GPU, and mobo
       source = ./lightsout.orp;
     };
+
+    # expose the script to the user's environment
+    home.packages = [scriptBin];
   };
 }
