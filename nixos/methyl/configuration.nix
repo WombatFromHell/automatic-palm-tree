@@ -140,6 +140,7 @@ in {
     fish.enable = true;
     steam.enable = true;
     nix-ld.enable = true;
+    dconf.enable = true;
     appimage = {
       enable = true;
       binfmt = true;
@@ -155,7 +156,7 @@ in {
     gnupg.agent = {
       enable = true;
       enableSSHSupport = true;
-      pinentryPackage = pkgs.pinentry-all;
+      pinentryPackage = pkgs.pinentry-curses;
     };
   };
 
