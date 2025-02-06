@@ -14,6 +14,7 @@ in {
   imports = [
     ./modules/monitor-session
     ./modules/surround
+    ./modules/monitor-session/fix-gsync.nix
     ./modules/openrgb/lightsout-home.nix
     ./modules/veridian.nix
   ];

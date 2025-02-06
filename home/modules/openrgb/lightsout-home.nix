@@ -12,7 +12,7 @@
 
     OPENRGB="${pkgs.openrgb}/bin/openrgb"
     do_lightsout() {
-      NUM_DEVICES=$("$OPENRGB" --noautoconnect --list-devices | grep -E '^[0-9]+: ' | wc -l)
+      NUM_DEVICES=$("$OPENRGB" --noautoconnect --list-devices | grep -cE '^[0-9]+: ')
 
       for i in $(seq 0 $((NUM_DEVICES - 1))); do
         "$OPENRGB" --noautoconnect --device "$i" --mode static --color 000000
@@ -29,12 +29,8 @@
       ;;
     esac
   '';
-in {
-  options = {
-    services."${scriptName}".enable = lib.mkEnableOption "Enable the ${description}";
-  };
 
-  config = lib.mkIf config.services."${scriptName}".enable {
+  homeConfigModule = lib.mkIf config.services."${scriptName}".enable {
     assertions = [
       {
         assertion = osConfig.services.lightsout-system.enable or false;
@@ -63,4 +59,17 @@ in {
     # expose the script to the user's environment
     home.packages = [scriptBin];
   };
+
+  monitorConfigModule = lib.mkIf config.services.monitor-session.enable {
+    # expose a link to our script in the monitor-session script directory
+    systemd.user.tmpfiles.rules = [
+      "L+ %h/.local/bin/monitor-session/lightsout-home.sh - - - - ${scriptBin}/bin/lightsout-home"
+    ];
+  };
+in {
+  options = {
+    services."${scriptName}".enable = lib.mkEnableOption "Enable the ${description}";
+  };
+
+  config = lib.mkMerge [homeConfigModule monitorConfigModule];
 }

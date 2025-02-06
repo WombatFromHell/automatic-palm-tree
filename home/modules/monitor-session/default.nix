@@ -29,9 +29,15 @@ in {
         WantedBy = ["graphical-session.target"];
       };
     };
+
+    systemd.user.tmpfiles.rules = [
+      # ensure our monitor script directory exists with correct permissions
+      "D %h/.local/bin/monitor-session 0755 - - -"
+    ];
+
     # expose 'kscreen-id' so the user's HM can use it
-    home = {
-      packages = [kscreenId];
-    };
+    home.packages = [
+      kscreenId
+    ];
   };
 }
