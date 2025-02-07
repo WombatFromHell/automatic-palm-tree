@@ -65,6 +65,7 @@ in {
   veridian-controller.enable = true;
   programs = {
     ghostty.enable = true;
+    alacritty.enable = true;
     home-manager.enable = true;
   };
   services = {
