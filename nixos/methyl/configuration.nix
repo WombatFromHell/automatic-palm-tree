@@ -117,6 +117,7 @@ in {
     dive
     podman-tui
     podman-compose
+    desktop-file-utils
   ];
 
   users.users.${user} = {
