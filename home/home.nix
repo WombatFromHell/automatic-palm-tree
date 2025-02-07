@@ -51,10 +51,10 @@ in {
     rustmission
     # include some tools for mason
     python3
-    nodejs_23
-    pnpm
+    # nodejs_23 # in favor of nvm.fish
+    # pnpm # in favor of nvm.fish
     gcc
-    nil
+    # nil # in favor of mason
     gnumake
     alejandra
     statix
@@ -64,7 +64,9 @@ in {
   virtual-surround.enable = true;
   veridian-controller.enable = true;
   programs = {
-    ghostty.enable = true;
+    # disabled due to startup lag
+    # ghostty.enable = true;
+    #
     alacritty.enable = true;
     home-manager.enable = true;
   };
