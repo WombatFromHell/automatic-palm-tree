@@ -6,21 +6,15 @@
 }: let
   scriptName = "nvidia-pm";
   description = "NVIDIA Power Limit Service";
-  smiPath = "${config.hardware.nvidia.package.bin}/bin/nvidia-smi";
   scriptPath = pkgs.writeScriptBin "${scriptName}" ''
     #!${pkgs.bash}/bin/bash
-    NVIDIASMI="${smiPath}"
-    BC="${pkgs.bc}/bin/bc"
-    AWK="${pkgs.gawk}/bin/awk"
-
+    NVIDIASMI="${config.hardware.nvidia.package.bin}/bin/nvidia-smi"
+    PYTHON="${pkgs.python3}/bin/python3"
     BASE_PL="320"
 
     do_math() {
-      local math
-      math="$1 * $2"
-      echo "$math" | "$BC" | "$AWK" "{print int($1)}"
+      "$PYTHON" -c "from decimal import Decimal, ROUND_HALF_UP; print(int((Decimal(\"$1\") * Decimal(\"$2\")).quantize(Decimal('1'), rounding=ROUND_HALF_UP)))"
     }
-
     underclock() {
       "$NVIDIASMI" -pl "$1"
     }
@@ -28,10 +22,6 @@
       "$NVIDIASMI" -pl "$BASE_PL"
       "$NVIDIASMI" -rgc
       "$NVIDIASMI" -rmc
-    }
-    default() {
-      limit="$(do_math $BASE_PL 0.72)" # 72%
-      underclock "$limit"
     }
 
     "$NVIDIASMI" -pm 1
@@ -43,7 +33,8 @@
       limit="$(do_math $BASE_PL 0.8)" # 80%
       underclock "$limit"
     elif [ "$1" == "low" ]; then
-      default # 72%
+      limit="$(do_math $BASE_PL 0.72)" # 72%
+      underclock "$limit"
     elif [ "$1" == "vlow" ]; then
       limit="$(do_math $BASE_PL 0.6)" # 60%
       underclock "$limit"
@@ -52,8 +43,6 @@
       underclock "$limit"
     elif [ "$1" == "undo" ]; then
       undo
-    else
-      default
     fi
   '';
 in {
@@ -84,7 +73,7 @@ in {
 
     (lib.mkIf (!config.nvidia-support.enable && config.services."${scriptName}".enable) {
       warnings = [
-        "The systemd unit 'nvidiapm' is enabled but requires 'nvidia.enable', and will not function without it!"
+        "The systemd unit 'nvidia-pm' is enabled but requires 'nvidia.enable', and will not function without it!"
       ];
     })
   ];
