@@ -66,6 +66,8 @@ in {
   # hardware.pulseaudio.enable = false;
 
   nvidia-support.enable = true;
+  nvidia-support.cdi.enable = true;
+
   local-mounts.enable = true;
 
   services = {

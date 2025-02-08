@@ -6,10 +6,8 @@
   ...
 }: let
   moduleName = "nvidia-support";
-in {
-  options."${moduleName}".enable = lib.mkEnableOption "User configured NVIDIA driver module";
 
-  config = lib.mkIf config."${moduleName}".enable {
+  mainConfig = lib.mkIf config."${moduleName}".enable {
     services.xserver.videoDrivers = ["nvidia"];
 
     hardware = {
@@ -32,12 +30,8 @@ in {
       };
     };
 
-    # enable nvidia-container-toolkit support (podman)
-    virtualisation.docker.rootless.daemon.settings.features.cdi = true;
-
     environment.systemPackages = with pkgs; [
       nvtopPackages.nvidia
-      nvidia-container-toolkit
     ];
 
     # add a sudoers rule for 'nvidia-settings' so admins can use fan control support
@@ -59,4 +53,42 @@ in {
       ];
     };
   };
+
+  cdiConfig = lib.mkIf (config."${moduleName}".cdi.enable
+    && config.virtualisation.podman.enable) {
+    environment.systemPackages = with pkgs; [
+      nvidia-container-toolkit
+    ];
+
+    # enable nvidia-container-toolkit support
+    hardware.nvidia-container-toolkit.enable = true;
+
+    # Create CDI directory
+    systemd.tmpfiles.rules = [
+      "d /etc/cdi 0755 root root -"
+    ];
+
+    # Generate CDI spec on boot
+    systemd.services.generate-nvidia-cdi-spec = {
+      wantedBy = ["multi-user.target"];
+      after = ["nvidia-container-toolkit.service"];
+      serviceConfig.Type = "oneshot";
+      script = ''
+        ${pkgs.nvidia-container-toolkit}/bin/nvidia-ctk cdi generate --output /etc/cdi/nvidia.yaml
+        chmod 644 /etc/cdi/nvidia.yaml
+      '';
+    };
+  };
+in {
+  options = {
+    "${moduleName}" = {
+      enable = lib.mkEnableOption "Enable user configured NVIDIA driver customizations";
+      cdi.enable = lib.mkEnableOption "Enable NVIDIA CDI support for rootless containers";
+    };
+  };
+
+  config = lib.mkMerge [
+    mainConfig
+    cdiConfig
+  ];
 }
