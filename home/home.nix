@@ -50,7 +50,6 @@ in {
     vesktop
     rustmission
     # include some tools for mason
-    python3
     # nodejs_23 # in favor of nvm.fish
     # pnpm # in favor of nvm.fish
     gcc

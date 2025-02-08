@@ -55,9 +55,9 @@
       ./nixos/methyl/configuration.nix
       ./nixos/methyl/modules/nvidia.nix
       ./nixos/methyl/modules/gigabyte-sleepfix.nix
-      ./nixos/methyl/modules/nvidia-pm.nix
-      ./nixos/methyl/modules/mounts.nix
       ./home/modules/openrgb/lightsout-system.nix
+      ./nixos/methyl/modules/mounts.nix
+      ./nixos/methyl/modules/nvidia-pm
 
       inputs.home-manager.nixosModules.home-manager
       {home-manager = mkHomeConfig;}
