@@ -37,7 +37,6 @@ in {
     firefox
     kdePackages.kate
     kdePackages.kcalc
-    protonplus
     zellij
     mangohud
     mpv
