@@ -17,6 +17,7 @@ in {
     ./modules/monitor-session/fix-gsync.nix
     ./modules/openrgb/lightsout-home.nix
     ./modules/veridian.nix
+    ./modules/theming
   ];
 
   home.packages = with pkgs; [
@@ -49,16 +50,14 @@ in {
     vesktop
     rustmission
     # include some tools for mason
-    # nodejs_23 # in favor of nvm.fish
-    # pnpm # in favor of nvm.fish
     gcc
-    # nil # in favor of mason
     gnumake
     alejandra
     statix
     rustup
   ];
 
+  theming.enable = true;
   virtual-surround.enable = true;
   veridian-controller.enable = true;
   programs = {
