@@ -21,6 +21,7 @@ in {
       };
       Service = {
         Type = "simple";
+        Environment = "PATH=${pkgs.python3}/bin";
         ExecStart = "${monitorSession.monitorScript}/bin/monitor-dbus-session-state";
         ExecStop = "${pkgs.procps}/bin/pkill -9 -f monitor-dbus-session-state";
         RemainAfterExit = "yes";
