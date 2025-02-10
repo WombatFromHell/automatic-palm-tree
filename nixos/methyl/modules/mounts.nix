@@ -1,11 +1,11 @@
 {
   config,
   lib,
-  sharedArgs,
+  hostArgs,
   ...
 }: let
   moduleName = "local-mounts";
-  myuid = toString sharedArgs.myuid;
+  myuid = toString hostArgs.methyl.myuid;
   mygid = toString config.users.groups.users.gid;
 in {
   options."${moduleName}".enable = lib.mkEnableOption "User configured local filesystem mounts";

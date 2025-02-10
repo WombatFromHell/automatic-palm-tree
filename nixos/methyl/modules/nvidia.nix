@@ -2,7 +2,7 @@
   config,
   lib,
   pkgs,
-  sharedArgs,
+  hostArgs,
   ...
 }: let
   moduleName = "nvidia-support";
@@ -42,7 +42,7 @@
       extraRules = [
         {
           # groups = ["wheel"];
-          users = ["${sharedArgs.username}"];
+          users = ["${hostArgs.methyl.username}"];
           commands = [
             {
               command = "${config.hardware.nvidia.package.settings}/bin/nvidia-settings";

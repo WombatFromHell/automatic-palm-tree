@@ -1,9 +1,9 @@
 {
   pkgs,
-  sharedArgs,
+  hostArgs,
   ...
 }: let
-  user = sharedArgs.username;
+  user = hostArgs.methyl.username;
 in {
   nix = {
     settings.experimental-features = ["nix-command" "flakes"];
@@ -34,7 +34,7 @@ in {
   };
 
   networking = {
-    hostName = sharedArgs.desktopHost;
+    hostName = hostArgs.methyl.hostname;
     networkmanager.enable = true;
     firewall.enable = false;
   };
@@ -125,7 +125,7 @@ in {
   users.users.${user} = {
     isNormalUser = true;
     description = "${user}";
-    uid = sharedArgs.myuid;
+    uid = hostArgs.methyl.myuid;
     extraGroups = ["networkmanager" "wheel" "input" "i2c"];
     shell = pkgs.fish;
   };

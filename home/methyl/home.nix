@@ -1,9 +1,9 @@
 {
   pkgs,
-  sharedArgs,
+  hostArgs,
   ...
 }: let
-  user = sharedArgs.username;
+  user = hostArgs.methyl.username;
 in {
   home = {
     username = user;
@@ -60,6 +60,7 @@ in {
   theming.enable = true;
   virtual-surround.enable = true;
   veridian-controller.enable = true;
+
   programs = {
     # disabled due to startup lag
     # ghostty.enable = true;
