@@ -33,6 +33,8 @@ in {
     eza
     bat
     fd
+    pv
+    gawk
     btop
     unzip
     openrgb
