@@ -127,6 +127,7 @@ in {
   fonts.fontconfig.useEmbeddedBitmaps = true;
 
   environment.systemPackages = with pkgs; [
+    lix
     cifs-utils
     wget
     curl
