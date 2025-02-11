@@ -54,6 +54,7 @@ in {
     gcc
     gnumake
     alejandra
+    python3
     statix
     rustup
   ];
