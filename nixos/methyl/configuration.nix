@@ -99,6 +99,22 @@ in {
       pulse.enable = true;
     };
 
+    ananicy = {
+      enable = true;
+      package = pkgs.ananicy-cpp;
+      rulesProvider = pkgs.ananicy-rules-cachyos;
+      extraRules = [
+        {
+          "name" = "Dragon Age The Veilguard.exe";
+          "type" = "Game";
+        }
+        {
+          "name" = "TheGreatCircle.exe";
+          "type" = "Game";
+        }
+      ];
+    };
+
     flatpak.enable = true;
     # ollama.enable = true;
     # scx.enable = true;
