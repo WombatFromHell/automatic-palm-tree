@@ -33,6 +33,7 @@ in {
     eza
     bat
     fd
+    btop
     unzip
     openrgb
     firefox

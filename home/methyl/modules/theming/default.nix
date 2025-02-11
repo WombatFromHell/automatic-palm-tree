@@ -24,6 +24,8 @@ in {
 
       pointerCursor = {
         inherit (pointerCursorTheme) name size package;
+        x11.enable = true;
+        gtk.enable = true;
       };
     };
 
