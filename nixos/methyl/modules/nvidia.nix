@@ -11,21 +11,13 @@
     services.xserver.videoDrivers = ["nvidia"];
 
     hardware = {
-      graphics = {
-        enable = true;
-        extraPackages = with pkgs; [
-          nvidia-vaapi-driver
-        ];
-      };
-
-      # only for use with pre-25.11
-      # opengl.enable = true;
-
+      graphics.enable = true;
       nvidia = {
         modesetting.enable = true;
         powerManagement.enable = true;
         open = true;
         nvidiaSettings = true;
+        videoAcceleration = true;
         package = config.boot.kernelPackages.nvidiaPackages.beta;
       };
     };
