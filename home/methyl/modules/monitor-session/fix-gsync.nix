@@ -1,10 +1,11 @@
 {
   lib,
   pkgs,
-  config,
   osConfig ? {},
   ...
 }: let
+  kscreenId = import ./kscreen-id.nix {inherit pkgs;};
+
   fixGsyncContent = builtins.readFile ./fix-gsync.py;
   unwrappedScript = pkgs.writeScriptBin "fix-gsync" fixGsyncContent;
   wrappedScript =
@@ -13,7 +14,12 @@
     } ''
       mkdir -p $out/bin
       makeWrapper ${unwrappedScript}/bin/fix-gsync $out/bin/fix-gsync \
-        --prefix PATH : ${lib.makeBinPath [pkgs.python3 osConfig.hardware.nvidia.package.settings]}
+        --prefix PATH : ${lib.makeBinPath [
+        kscreenId
+        pkgs.python3
+        pkgs.kdePackages.libkscreen
+        osConfig.hardware.nvidia.package.settings
+      ]}
     '';
 in {
   config = lib.mkIf (osConfig.nvidia-support.enable or false) {
