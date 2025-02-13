@@ -26,23 +26,24 @@
       nvtopPackages.nvidia
     ];
 
-    # add a sudoers rule for 'nvidia-settings' so admins can use fan control support
     security.sudo = {
+      # '!requiretty' is necessary for 'veridian-controller to function'
       extraConfig = ''
         Defaults !requiretty
       '';
-      extraRules = [
-        {
-          # groups = ["wheel"];
-          users = ["${hostArgs.username}"];
-          commands = [
-            {
-              command = "${config.hardware.nvidia.package.settings}/bin/nvidia-settings";
-              options = ["NOPASSWD" "SETENV"];
-            }
-          ];
-        }
-      ];
+      # add a sudoers rule for 'nvidia-settings' so admins can use fan control support
+      # extraRules = [
+      #   {
+      #     # groups = ["wheel"];
+      #     users = ["${hostArgs.username}"];
+      #     commands = [
+      #       {
+      #         command = "${config.hardware.nvidia.package.settings}/bin/nvidia-settings";
+      #         options = ["NOPASSWD" "SETENV"];
+      #       }
+      #     ];
+      #   }
+      # ];
     };
   };
 
