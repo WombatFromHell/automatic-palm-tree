@@ -12,6 +12,11 @@ in {
   config = lib.mkIf config.services."${moduleName}".enable {
     environment.systemPackages = [pkgs.${moduleName}];
 
+    # ensure the config file exists with the right perms
+    systemd.tmpfiles.rules = [
+      "f /etc/veridian-controller.toml 0640 root root -"
+    ];
+
     systemd.services."${moduleName}" = {
       description = "${description}";
       wantedBy = ["multi-user.target"];
