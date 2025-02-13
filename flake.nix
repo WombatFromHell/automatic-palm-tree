@@ -22,7 +22,7 @@
     ...
   }: let
     inherit (nixpkgs) lib;
-    hosts = import ./shared.nix;
+    hosts = import ./hosts.nix;
     # Filter only enabled hosts
     enabledHosts = lib.filterAttrs (_: v: v.enable or false) hosts;
     # Generate a unique list of systems from enabled hosts
@@ -54,20 +54,17 @@
         veridian.nixosModules.default
       ];
 
-      hostModules =
-        if (hostArgs ? osModules)
-        then map (path: ./nixos/${hostArgs.hostname}/${path}) hostArgs.osModules
-        else [];
+      hostModule = [./nixos/${hostArgs.hostname}];
 
-      homeManagerModules = [
+      homeManagerModule = [
         home-manager.nixosModules.home-manager
         (mkHome hostArgs hostArgs.username hostArgs.hostname)
       ];
 
       modules =
         if isDarwin
-        then baseModules ++ hostModules
-        else baseModules ++ hostModules ++ homeManagerModules;
+        then baseModules ++ hostModule
+        else baseModules ++ hostModule ++ homeManagerModule;
     in
       systemType {
         inherit (hostArgs) system;
