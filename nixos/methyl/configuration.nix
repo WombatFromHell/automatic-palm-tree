@@ -62,11 +62,11 @@ in {
     memoryPercent = 13;
   };
 
-  # hold-over from 24.11 unstil 25.11 comes out
-  # hardware.pulseaudio.enable = false;
-
-  nvidia-support.enable = true;
-  nvidia-support.cdi.enable = true;
+  # user-defined nvidia support enablement
+  nvidia-support = {
+    enable = true;
+    cdi.enable = true;
+  };
 
   local-mounts.enable = true;
 
@@ -119,6 +119,7 @@ in {
     # ollama.enable = true;
     # scx.enable = true;
 
+    # user-defined system-level service enablement
     lightsout.enable = true;
     nvidia-pm.enable = true;
     sleepfix.enable = true;

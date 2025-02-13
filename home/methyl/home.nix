@@ -53,9 +53,6 @@ in {
     rustup
   ];
 
-  theming.enable = true;
-  virtual-surround.enable = true;
-
   programs = {
     # disabled due to startup lag
     # ghostty.enable = true;
@@ -63,7 +60,12 @@ in {
     alacritty.enable = true;
     home-manager.enable = true;
   };
+
+  # user-defined HM module enablement
+  theming.enable = true;
+  virtual-surround.enable = true;
   services = {
+    # nixos 'services.lightsout.enable' is required here as well
     lightsout.enable = true;
     monitor-session.enable = true;
   };
