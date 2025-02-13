@@ -1,9 +1,9 @@
 {
-  description = "Unified NixOS and Home Manager configuration";
+  description = "Unified Nix (Linux/Darwin) and Home Manager configuration";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-parts.url = "github:hercules-ci/flake-parts";
     home-manager = {
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -14,42 +14,21 @@
 
   outputs = inputs @ {
     self,
+    flake-parts,
     nixpkgs,
-    flake-utils,
     home-manager,
     chaotic,
     veridian,
     ...
   }: let
-    hostArgs = {
-      methyl = {
-        system = "x86_64-linux";
-        username = "josh";
-        myuid = 1000;
-        hostname = "methyl";
-      };
-      laptop = {
-        system = "x86_64-darwin";
-        inherit (hostArgs.methyl) username;
-        myuid = 501;
-        hostname = "MacBookPro.lan";
-      };
-    };
+    inherit (nixpkgs) lib;
+    hosts = import ./shared.nix;
+    # Filter only enabled hosts
+    enabledHosts = lib.filterAttrs (_: v: v.enable or false) hosts;
+    # Generate a unique list of systems from enabled hosts
+    systems = lib.lists.unique (builtins.attrValues (builtins.mapAttrs (_: v: v.system) enabledHosts));
 
-    # Desktop modules
-    mkDesktopSystem = extraModules:
-      nixpkgs.lib.nixosSystem {
-        inherit (hostArgs.methyl) system;
-        specialArgs = {inherit hostArgs;};
-        modules =
-          [
-            chaotic.nixosModules.default
-            veridian.nixosModules.default
-          ]
-          ++ extraModules;
-      };
-
-    mkDesktopHome = username: hostname: let
+    mkHome = hostArgs: username: hostname: let
       homePath = path: ./home/${hostname}/${path};
     in {
       home-manager = {
@@ -61,39 +40,63 @@
         ];
       };
     };
-  in
-    {
-      nixosConfigurations = let
-        deskHost = hostArgs.methyl.hostname;
-        deskUser = hostArgs.${deskHost}.username;
-        deskHostPath = path: ./nixos/${deskHost}/${path};
-        deskHostHMPath = path: ./home/${deskHost}/${path};
-        nixosModules = {
-          system = [
-            "hardware-configuration.nix"
-            "configuration.nix"
-            "modules/nvidia.nix"
-            "modules/gigabyte-sleepfix.nix"
-            "modules/mounts.nix"
-            "modules/nvidia-pm"
-          ];
-          home = ["modules/openrgb/lightsout-system.nix"];
-        };
-      in {
-        default = mkDesktopSystem [];
-        # flatten our list of modules
-        ${deskHost} = mkDesktopSystem (builtins.concatLists [
-          (map deskHostPath nixosModules.system)
-          # system-level support modules for home-manager
-          (map deskHostHMPath nixosModules.home)
-          [
-            # home-manager config
-            inputs.home-manager.nixosModules.home-manager
-            (mkDesktopHome deskUser deskHost)
-          ]
-        ]);
+
+    # Function to create a system configuration (NixOS or Darwin)
+    mkSystem = hostArgs: let
+      isDarwin = hostArgs.system == "x86_64-darwin";
+      systemType =
+        if isDarwin
+        then nixpkgs.lib.darwinSystem
+        else nixpkgs.lib.nixosSystem;
+
+      baseModules = [
+        chaotic.nixosModules.default
+        veridian.nixosModules.default
+      ];
+
+      hostModules =
+        if (hostArgs ? osModules)
+        then map (path: ./nixos/${hostArgs.hostname}/${path}) hostArgs.osModules
+        else [];
+
+      homeManagerModules = [
+        home-manager.nixosModules.home-manager
+        (mkHome hostArgs hostArgs.username hostArgs.hostname)
+      ];
+
+      modules =
+        if isDarwin
+        then baseModules ++ hostModules
+        else baseModules ++ hostModules ++ homeManagerModules;
+    in
+      systemType {
+        inherit (hostArgs) system;
+        inherit modules;
+        specialArgs = {inherit hostArgs;};
       };
-    }
-    // flake-utils.lib.eachDefaultSystem (system: {
-    });
+  in
+    flake-parts.lib.mkFlake {inherit inputs;} {
+      inherit systems;
+
+      flake = {
+        # Auto-generate system configurations for enabled hosts
+        nixosConfigurations =
+          builtins.mapAttrs (
+            name: hostArgs:
+              if hostArgs.system == "x86_64-linux"
+              then mkSystem hostArgs
+              else null
+          )
+          enabledHosts;
+
+        darwinConfigurations =
+          builtins.mapAttrs (
+            name: hostArgs:
+              if hostArgs.system == "x86_64-darwin"
+              then mkSystem hostArgs
+              else null
+          )
+          enabledHosts;
+      };
+    };
 }

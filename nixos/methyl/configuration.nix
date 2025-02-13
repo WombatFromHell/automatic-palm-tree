@@ -3,17 +3,10 @@
   hostArgs,
   ...
 }: let
-  user = hostArgs.methyl.username;
+  user = hostArgs.username;
 in {
   nix = {
     settings.experimental-features = ["nix-command" "flakes"];
-    # settings.auto-optimise-store = true;
-    # mutually exclusive with NH
-    # gc = {
-    #   automatic = true;
-    #   dates = "weekly";
-    #   options = "--delete-older-than 1w";
-    # };
   };
   nixpkgs.config.allowUnfree = true;
 
@@ -34,7 +27,7 @@ in {
   };
 
   networking = {
-    hostName = hostArgs.methyl.hostname;
+    hostName = hostArgs.hostname;
     networkmanager.enable = true;
     firewall.enable = false;
   };
@@ -119,9 +112,10 @@ in {
     # ollama.enable = true;
     # scx.enable = true;
 
-    lightsout-system.enable = true;
+    lightsout.enable = true;
     nvidia-pm.enable = true;
     sleepfix.enable = true;
+    veridian-controller.enable = true;
   };
 
   fonts.fontconfig.useEmbeddedBitmaps = true;
@@ -142,7 +136,7 @@ in {
   users.users.${user} = {
     isNormalUser = true;
     description = "${user}";
-    uid = hostArgs.methyl.myuid;
+    uid = hostArgs.myuid;
     extraGroups = ["networkmanager" "wheel" "input" "i2c"];
     shell = pkgs.fish;
   };

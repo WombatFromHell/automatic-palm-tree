@@ -34,7 +34,7 @@
       extraRules = [
         {
           # groups = ["wheel"];
-          users = ["${hostArgs.methyl.username}"];
+          users = ["${hostArgs.username}"];
           commands = [
             {
               command = "${config.hardware.nvidia.package.settings}/bin/nvidia-settings";

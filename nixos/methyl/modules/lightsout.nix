@@ -4,10 +4,11 @@
   pkgs,
   ...
 }: let
-  scriptName = "lightsout-system";
+  scriptName = "lightsout";
+  description = "OpenRGB lightsout support module";
 in {
   options = {
-    services."${scriptName}".enable = lib.mkEnableOption "";
+    services."${scriptName}".enable = lib.mkEnableOption "Enable ${description}";
   };
 
   config = lib.mkIf config.services."${scriptName}".enable {

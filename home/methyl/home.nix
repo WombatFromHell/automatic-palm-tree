@@ -3,7 +3,7 @@
   hostArgs,
   ...
 }: let
-  user = hostArgs.methyl.username;
+  user = hostArgs.username;
 in {
   home = {
     username = user;
@@ -13,10 +13,9 @@ in {
 
   imports = [
     ./modules/monitor-session
-    ./modules/surround
     ./modules/monitor-session/fix-gsync.nix
-    ./modules/openrgb/lightsout-home.nix
-    ./modules/veridian.nix
+    ./modules/surround
+    ./modules/openrgb
     ./modules/theming
   ];
 
@@ -24,6 +23,7 @@ in {
     nerd-fonts.meslo-lg
     nerd-fonts.jetbrains-mono
     nerd-fonts.caskaydia-cove
+    #
     direnv
     nix-direnv
     wl-clipboard
@@ -63,7 +63,6 @@ in {
 
   theming.enable = true;
   virtual-surround.enable = true;
-  veridian-controller.enable = true;
 
   programs = {
     # disabled due to startup lag
@@ -73,7 +72,7 @@ in {
     home-manager.enable = true;
   };
   services = {
-    lightsout-home.enable = true;
+    lightsout.enable = true;
     monitor-session.enable = true;
   };
 }

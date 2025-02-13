@@ -5,7 +5,7 @@
   pkgs,
   ...
 }: let
-  scriptName = "lightsout-home";
+  scriptName = "lightsout";
   description = "OpenRGB lightsout profile service";
   scriptBin = pkgs.writeScriptBin "${scriptName}" ''
     #!${pkgs.stdenv.shell}
@@ -33,7 +33,7 @@
   homeConfigModule = lib.mkIf config.services."${scriptName}".enable {
     assertions = [
       {
-        assertion = osConfig.services.lightsout-system.enable or false;
+        assertion = osConfig.services.lightsout.enable or false;
         message = "The OpenRGB lightsout system module must be enabled in NixOS configuration";
       }
     ];
