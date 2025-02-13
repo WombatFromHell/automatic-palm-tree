@@ -11,14 +11,6 @@ in {
     stateVersion = "24.11";
   };
 
-  imports = [
-    ./modules/monitor-session
-    ./modules/monitor-session/fix-gsync.nix
-    ./modules/surround
-    ./modules/openrgb
-    ./modules/theming
-  ];
-
   home.packages = with pkgs; [
     nerd-fonts.meslo-lg
     nerd-fonts.jetbrains-mono

@@ -28,16 +28,12 @@
     # Generate a unique list of systems from enabled hosts
     systems = lib.lists.unique (builtins.attrValues (builtins.mapAttrs (_: v: v.system) enabledHosts));
 
-    mkHome = hostArgs: username: hostname: let
-      homePath = path: ./home/${hostname}/${path};
-    in {
+    mkHome = hostArgs: username: hostname: {
       home-manager = {
         extraSpecialArgs = {inherit hostArgs;};
         useGlobalPkgs = true;
         useUserPackages = true;
-        users.${username}.imports = [
-          (homePath "home.nix")
-        ];
+        users.${username}.imports = [./home/${hostname}];
       };
     };
 
