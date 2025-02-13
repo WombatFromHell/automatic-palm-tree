@@ -19,6 +19,13 @@ in {
     kernelParams = ["amd_pstate=active"];
     # kernelPackages = pkgs.linuxPackages_latest;
     kernelPackages = pkgs.linuxPackages_cachyos;
+
+    # set sane swappiness behavior
+    kernel.sysctl = {
+      "vm.swappiness" = 1;
+      "vm.watermark_boost_factor" = 0;
+      "kernel.split_lock_mitigate" = 0;
+    };
   };
 
   security = {
