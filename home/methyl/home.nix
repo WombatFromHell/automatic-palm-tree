@@ -46,12 +46,10 @@ in {
     vesktop
     rustmission
     # include some tools for mason
-    gcc
-    gnumake
+    nil
     alejandra
     python3
     statix
-    rustup
   ];
 
   programs = {
