@@ -345,11 +345,11 @@
         "nixpkgs": "nixpkgs_4"
       },
       "locked": {
-        "lastModified": 1739643938,
-        "narHash": "sha256-b4+AVrwE5PO1w+INXIXLF1SM6fleEKbI+iYXziiZQs8=",
+        "lastModified": 1739651359,
+        "narHash": "sha256-9PFN9Op4x/ocIwCAWMI4Vtzhor0DcfUFaPqSdJFiHwE=",
         "owner": "WombatFromHell",
         "repo": "veridian-controller",
-        "rev": "ae17f0ddbbed54081108c89261303160d5ca339d",
+        "rev": "024112da11f8e40e8c698b95c63f071d8dec93db",
         "type": "github"
       },
       "original": {
