@@ -91,8 +91,6 @@ in {
       variant = "";
     };
 
-    #openssh.enable = true;
-
     printing = {
       enable = true;
       # provide the brother printer lpd's
@@ -125,6 +123,7 @@ in {
       ];
     };
 
+    #openssh.enable = true;
     flatpak.enable = true;
     # ollama.enable = true;
     # scx.enable = true;
@@ -153,6 +152,7 @@ in {
     neovim
     nh
     dive
+    cachix
     podman-tui
     podman-compose
     desktop-file-utils
@@ -188,7 +188,7 @@ in {
     nh = {
       enable = true;
       clean.enable = true;
-      clean.extraArgs = "--keep-since 7d --keep 5";
+      clean.extraArgs = "--keep-since 3d --keep 5";
       flake = "/home/${user}/.dotfiles/nix";
     };
 

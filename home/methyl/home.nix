@@ -45,7 +45,6 @@ in {
     zoxide
     vesktop
     rustmission
-    cachix
     # include some tools for mason
     gcc
     gnumake
