@@ -32,8 +32,15 @@ in {
     gtk = {
       enable = true;
       theme = {
-        name = "Breeze-Dark";
-        package = pkgs.libsForQt5.breeze-gtk;
+        # name = "Breeze"
+        # package = pkgs.libsForQt5.breeze-gtk;
+
+        name = "Catppuccin-Mocha-Standard-Teal-Dark";
+        package = pkgs.catppuccin-gtk.override {
+          accents = ["teal"];
+          size = "standard";
+          variant = "mocha";
+        };
       };
       iconTheme = {
         name = "Papirus-Dark";
@@ -45,8 +52,33 @@ in {
       cursorTheme = {
         inherit (pointerCursorTheme) name package size;
       };
-      gtk3.extraConfig.gtk-application-prefer-dark-theme = true;
-      gtk4.extraConfig.gtk-application-prefer-dark-theme = true;
     };
+    xdg.configFile = {
+      "gtk-4.0/assets".source = "${config.gtk.theme.package}/share/themes/${config.gtk.theme.name}/gtk-4.0/assets";
+      "gtk-4.0/gtk.css".source = "${config.gtk.theme.package}/share/themes/${config.gtk.theme.name}/gtk-4.0/gtk.css";
+      "gtk-4.0/gtk-dark.css".source = "${config.gtk.theme.package}/share/themes/${config.gtk.theme.name}/gtk-4.0/gtk-dark.css";
+    };
+    dconf.settings = {
+      "org/gnome/desktop/interface".color-scheme = "prefer-dark";
+    };
+
+    # plasma-manager config
+    # programs.plasma = {
+    #   enable = false;
+    #   shortcuts = {
+    #     # make alacritty the defacto terminal via Ctrl+Alt+T
+    #     "services/Alacritty.desktop"."New" = "Ctrl+Alt+T";
+    #     "services/org.kde.konsole.desktop"."_launch" = [];
+    #   };
+    #   configFile = {
+    #     "kcminputrc"."Keyboard"."RepeatDelay" = 333;
+    #     "kcminputrc"."Keyboard"."RepeatRate" = 33;
+    #     "kcminputrc"."Mouse"."cursorTheme" = "default";
+    #     "kdeglobals"."Icons"."Theme" = "breeze-dark";
+    #     "kdeglobals"."KDE"."widgetStyle" = "Breeze";
+    #     "ksplashrc"."KSplash"."Engine" = "none";
+    #     "ksplashrc"."KSplash"."Theme" = "None";
+    #   };
+    # };
   };
 }
