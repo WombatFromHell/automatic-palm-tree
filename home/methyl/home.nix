@@ -12,9 +12,10 @@ in {
   };
 
   home.packages = with pkgs; [
-    nerd-fonts.meslo-lg
     nerd-fonts.jetbrains-mono
-    nerd-fonts.caskaydia-cove
+    nerd-fonts.monaspace
+    nerd-fonts.iosevka
+    nerd-fonts.iosevka-term
     #
     direnv
     nix-direnv
