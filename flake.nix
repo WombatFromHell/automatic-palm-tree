@@ -35,11 +35,16 @@
     systems = lib.lists.unique (builtins.attrValues (builtins.mapAttrs (_: v: v.system) enabledHosts));
 
     mkHome = hostArgs: username: hostname: {
+      imports = [home-manager.nixosModules.home-manager];
+
       home-manager = {
         extraSpecialArgs = {inherit hostArgs;};
         useGlobalPkgs = true;
         useUserPackages = true;
-        users.${username}.imports = [./home/${hostname}];
+        users.${username}.imports = [
+          ./home/${hostname}
+          plasma-manager.homeManagerModules.plasma-manager
+        ];
       };
     };
 
@@ -59,8 +64,6 @@
       hostModule = [./nixos/${hostArgs.hostname}];
 
       homeManagerModule = [
-        home-manager.nixosModules.home-manager
-        plasma-manager.homeManagerModules.plasma-manager
         (mkHome hostArgs hostArgs.username hostArgs.hostname)
       ];
 
