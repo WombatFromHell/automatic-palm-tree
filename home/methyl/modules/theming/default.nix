@@ -35,10 +35,11 @@ in {
         # name = "Breeze"
         # package = pkgs.libsForQt5.breeze-gtk;
 
-        name = "Catppuccin-Mocha-Standard-Teal-Dark";
+        name = "Catppuccin-Mocha-Compact-Teal-Dark";
         package = pkgs.catppuccin-gtk.override {
           accents = ["teal"];
-          size = "standard";
+          size = "compact";
+          tweaks = ["rimless" "black"];
           variant = "mocha";
         };
       };
