@@ -45,6 +45,7 @@ in {
     zoxide
     vesktop
     rustmission
+    code-cursor
     # include some tools for mason
     nil
     alejandra
