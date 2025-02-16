@@ -21,10 +21,6 @@
     accentCapd = upperFirst accent;
   };
   themeConfig = mkThemeConfig "mocha" "teal";
-
-  kvantumThemePkg = pkgs.catppuccin-kvantum.override {
-    inherit (themeConfig) variant accent;
-  };
   themeId = "catppuccin-${themeConfig.variant}-${themeConfig.accent}";
 in {
   options.theming.enable = lib.mkEnableOption "Enable user customized theming";
@@ -37,16 +33,6 @@ in {
           accents = [themeConfig.accent];
           winDecStyles = ["classic"];
         })
-        #
-        # qt5/qt6 libs currently busted
-        #
-        # (catppuccin-kvantum.override {
-        #   inherit (themeConfig) variant accent;
-        # })
-        # libsForQt5.qtstyleplugin-kvantum
-        # kdePackages.qtstyleplugin-kvantum
-        # libsForQt5.qt5ct
-        # kdePackages.qt6ct
       ];
 
       pointerCursor = {
@@ -56,28 +42,15 @@ in {
       };
     };
 
-    # qt = {
-    #   enable = true;
-    #   platformTheme = "qt5ct";
-    #   style = "kvantum";
-    # };
-    # xdg.configFile = {
-    #   "Kvantum/kvantum.kvconfig".text = ''
-    #     [General]
-    #     theme=${themeId}
-    #   '';
-    #   "Kvantum/${themeId}".source = "${kvantumThemePkg}/share/Kvantum/${themeId}";
-    # };
-
     gtk = {
       enable = true;
       theme = {
-        name = "${themeId}-compact+rimless,black";
+        name = "${themeId}-compact+rimless";
         package = pkgs.catppuccin-gtk.override {
           inherit (themeConfig) variant;
           accents = [themeConfig.accent];
           size = "compact";
-          tweaks = ["rimless" "black"];
+          tweaks = ["rimless"];
         };
       };
       iconTheme = {
