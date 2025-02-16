@@ -8,13 +8,8 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    plasma-manager = {
-      url = "github:nix-community/plasma-manager";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.home-manager.follows = "home-manager";
-    };
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
-    veridian.url = "github:WombatFromHell/veridian-controller";
+    veridian.url = "github:WombatFromHell/veridian-controller?rev=d55e9e87bcbfdacb6d1385a854c691fabae6abaa"; # pin to v0.2.8
   };
 
   outputs = inputs @ {
@@ -22,7 +17,6 @@
     flake-parts,
     nixpkgs,
     home-manager,
-    plasma-manager,
     chaotic,
     veridian,
     ...
@@ -41,9 +35,9 @@
         extraSpecialArgs = {inherit hostArgs;};
         useGlobalPkgs = true;
         useUserPackages = true;
+        backupFileExtension = "hm";
         users.${username}.imports = [
           ./home/${hostname}
-          plasma-manager.homeManagerModules.plasma-manager
         ];
       };
     };
