@@ -63,7 +63,7 @@
   monitorConfigModule = lib.mkIf config.services.monitor-session.enable {
     # expose a link to our script in the monitor-session script directory
     systemd.user.tmpfiles.rules = [
-      "L+ %h/.local/bin/monitor-session/lightsout-home.sh - - - - ${scriptBin}/bin/lightsout-home"
+      "L+ %h/.local/bin/monitor-session/lightsout.sh - - - - ${scriptBin}/bin/lightsout"
     ];
   };
 in {
