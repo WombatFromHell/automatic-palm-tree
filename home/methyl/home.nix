@@ -46,6 +46,7 @@ in {
     vesktop
     rustmission
     code-cursor
+    aider-chat
     # include some tools for mason
     nil
     alejandra
