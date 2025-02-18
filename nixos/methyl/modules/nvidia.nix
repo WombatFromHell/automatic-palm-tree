@@ -26,6 +26,12 @@
       nvtopPackages.nvidia
     ];
 
+    environment.sessionVariables = {
+      NVD_BACKEND = "direct";
+      MOZ_DISABLE_RDD_SANDBOX = "1";
+      LIBVA_DRIVER_NAME = "nvidia";
+    };
+
     security.sudo = {
       # '!requiretty' is necessary for 'veridian-controller to function'
       extraConfig = ''
