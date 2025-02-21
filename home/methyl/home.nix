@@ -45,6 +45,7 @@ in {
     vesktop
     rustmission
     code-cursor
+    kitty
     # include some tools for mason
     nil
     alejandra
