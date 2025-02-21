@@ -14,7 +14,7 @@
       inputs.home-manager.follows = "home-manager";
     };
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
-    veridian.url = "github:WombatFromHell/veridian-controller?rev=d55e9e87bcbfdacb6d1385a854c691fabae6abaa"; # pin to v0.2.8
+    veridian.url = "github:WombatFromHell/veridian-controller?rev=489fca55e84ca3f647227686cf1ff5da52196979"; # pin to v0.2.9
   };
 
   outputs = inputs @ {
