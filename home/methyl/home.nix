@@ -13,7 +13,6 @@ in {
 
   home.packages = with pkgs; [
     nerd-fonts.jetbrains-mono
-    nerd-fonts.monaspace
     nerd-fonts.iosevka
     nerd-fonts.iosevka-term
     #
@@ -34,7 +33,7 @@ in {
     firefox
     kdePackages.kate
     kdePackages.kcalc
-    zellij
+    tmux
     mangohud
     mpv
     stow
@@ -54,9 +53,6 @@ in {
   ];
 
   programs = {
-    # disabled due to startup lag
-    # ghostty.enable = true;
-    #
     alacritty.enable = true;
     home-manager.enable = true;
   };
@@ -65,7 +61,6 @@ in {
   theming.enable = true;
   virtual-surround.enable = true;
   services = {
-    # nixos 'services.lightsout.enable' is required here as well
     lightsout.enable = true;
     monitor-session.enable = true;
   };

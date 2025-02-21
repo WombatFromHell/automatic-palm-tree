@@ -5,6 +5,7 @@
     ./modules/surround
     ./modules/openrgb
     ./modules/theming
+    ./modules/kitty.nix
     ./home.nix
   ];
 }
