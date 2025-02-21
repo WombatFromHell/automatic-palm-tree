@@ -47,6 +47,7 @@ in {
     code-cursor
     kitty
     # include some tools for mason
+    gcc
     nil
     alejandra
     python3
