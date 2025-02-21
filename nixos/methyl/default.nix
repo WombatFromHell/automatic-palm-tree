@@ -8,5 +8,6 @@
     ./modules/gigabyte-sleepfix.nix
     ./modules/lightsout.nix
     ./modules/nvidia-pm
+    ./modules/tweaks.nix
   ];
 }

@@ -114,22 +114,6 @@ in {
       pulse.enable = true;
     };
 
-    ananicy = {
-      enable = true;
-      package = pkgs.ananicy-cpp;
-      rulesProvider = pkgs.ananicy-rules-cachyos;
-      extraRules = [
-        {
-          "name" = "Dragon Age The Veilguard.exe";
-          "type" = "Game";
-        }
-        {
-          "name" = "TheGreatCircle.exe";
-          "type" = "Game";
-        }
-      ];
-    };
-
     #openssh.enable = true;
     flatpak.enable = true;
     # ollama.enable = true;
@@ -140,13 +124,6 @@ in {
     nvidia-pm.enable = true;
     sleepfix.enable = true;
     veridian-controller.enable = true;
-
-    # use kyber as the default ioscheduler
-    udev.extraRules = ''
-      ACTION=="add|change", KERNEL=="sd[a-z]*", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="kyber"
-      ACTION=="add|change", KERNEL=="sd[a-z]*|mmcblk[0-9]*", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="kyber"
-      ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="kyber"
-    '';
   };
 
   fonts.fontconfig.useEmbeddedBitmaps = true;
@@ -218,8 +195,10 @@ in {
   systemd.services.flatpak-repo = {
     wantedBy = ["multi-user.target"];
     path = [pkgs.flatpak];
+    # conigure the default remote for both system and user mode
     script = ''
       flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+      flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
     '';
   };
 
