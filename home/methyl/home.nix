@@ -64,4 +64,12 @@ in {
     lightsout.enable = true;
     monitor-session.enable = true;
   };
+
+  # enable kwallet's pinentry agent support api
+  xdg.configFile."kwalletrc".text = ''
+    [Wallet]
+    First Use=false
+    [org.freedesktop.secrets]
+    apiEnabled=true
+  '';
 }
