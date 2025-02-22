@@ -14,6 +14,7 @@
       inputs.home-manager.follows = "home-manager";
     };
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
+    neovim-nightly-overlay.url = "github:nix-community/neovim-nightly-overlay";
     veridian.url = "github:WombatFromHell/veridian-controller?rev=489fca55e84ca3f647227686cf1ff5da52196979"; # pin to v0.2.9
   };
 
@@ -24,6 +25,7 @@
     home-manager,
     plasma-manager,
     chaotic,
+    neovim-nightly-overlay,
     veridian,
     ...
   }: let
@@ -60,6 +62,11 @@
       baseModules = [
         chaotic.nixosModules.default
         veridian.nixosModules.default
+        ({pkgs, ...}: {
+          nixpkgs.overlays = [
+            neovim-nightly-overlay.overlays.default
+          ];
+        })
       ];
 
       hostModule = [./nixos/${hostArgs.hostname}];
