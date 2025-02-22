@@ -81,7 +81,10 @@ in {
   local-mounts.enable = true;
 
   services = {
-    earlyoom.enable = true;
+    earlyoom = {
+      enable = true;
+      enableNotifications = true;
+    };
 
     xserver.enable = true;
     displayManager.sddm.enable = true;
