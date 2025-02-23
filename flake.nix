@@ -29,7 +29,7 @@
 
     # shared inputs
     flake-parts.url = "github:hercules-ci/flake-parts";
-    neovim-nightly-overlay.url = "github:nix-community/neovim-nightly-overlay";
+    neovim-nightly-overlay.url = "github:nix-community/neovim-nightly-overlay?rev=9eb6d8698e2876f97baf71b8d3a70ec01e859c7b"; # pin to 02-22-25
   };
 
   outputs = inputs @ {
@@ -55,8 +55,8 @@
     # shortcut to check if a host is on Darwin based on hosts.nix
     isDarwin = hostArgs: builtins.elem hostArgs.system ["x86_64-darwin" "aarch64-darwin"];
 
-    mkHome = import ./lib/home.nix {inherit lib inputs isDarwin;};
-    mkSystem = import ./lib/system.nix {inherit lib inputs isDarwin mkHome;};
+    mkHome = import ./lib/mkhome.nix {inherit lib inputs isDarwin;};
+    mkSystem = import ./lib/mksystem.nix {inherit lib inputs isDarwin mkHome;};
   in
     flake-parts.lib.mkFlake {inherit inputs;} {
       inherit systems;

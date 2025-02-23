@@ -1,5 +1,5 @@
 {lib, ...}: {
-  # imports = [
-  #   ./configuration.nix
-  # ];
+  imports = [
+    ./darwin-configuration.nix
+  ];
 }

@@ -7,7 +7,7 @@
 in {
   home = {
     username = user;
-    homeDirectory = "/home/${user}";
+    homeDirectory = "/Users/${user}";
     stateVersion = "24.11";
   };
 
@@ -36,8 +36,6 @@ in {
     rdfind
     ripgrep
     zoxide
-    #
-    kitty
     # include some tools for mason
     gcc
     nil

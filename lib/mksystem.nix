@@ -40,7 +40,7 @@
   ];
   nixosModules = [../nixos/${hostArgs.hostname}];
 
-  homeConfig = mkHome homeManagerModule hostArgs hostArgs.username hostArgs.hostname;
+  homeConfig = mkHome hostArgs hostArgs.username hostArgs.hostname;
 
   modules = lib.flatten [
     baseModules
@@ -50,9 +50,7 @@
       else nixosModules
     )
     homeManagerModule
-    ({_}: {
-      home-manager = homeConfig;
-    })
+    homeConfig
   ];
 in
   systemType {
