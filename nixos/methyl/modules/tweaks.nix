@@ -1,7 +1,11 @@
 {pkgs, ...}: {
-  imports = [./game-performance];
+  imports = [
+    ./game-performance
+    ./swapfile.nix
+  ];
 
   game-performance.enable = true;
+  swapfile.enable = true;
 
   boot.kernel.sysctl = {
     # set sane swappiness behavior
