@@ -6,11 +6,11 @@ rec {
     myuid = 1000;
     hostname = "methyl";
   };
-  laptop = {
-    enable = false;
+  propyl = {
+    enable = true;
     system = "x86_64-darwin";
     inherit (methyl) username;
     myuid = 501;
-    hostname = "MacBookPro.lan";
+    hostname = "propyl";
   };
 }

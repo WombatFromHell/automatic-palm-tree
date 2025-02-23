@@ -2,8 +2,8 @@
   description = "Unified Nix (Linux/Darwin) and Home Manager configuration";
 
   inputs = {
+    # nixos inputs
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-parts.url = "github:hercules-ci/flake-parts";
     home-manager = {
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -14,8 +14,22 @@
       inputs.home-manager.follows = "home-manager";
     };
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
-    neovim-nightly-overlay.url = "github:nix-community/neovim-nightly-overlay";
     veridian.url = "github:WombatFromHell/veridian-controller?rev=489fca55e84ca3f647227686cf1ff5da52196979"; # pin to v0.2.9
+
+    # darwin inputs
+    nixpkgs-darwin.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    home-manager-darwin = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs-darwin";
+    };
+    nix-darwin = {
+      url = "github:LnL7/nix-darwin/master";
+      inputs.nixpkgs.follows = "nixpkgs-darwin";
+    };
+
+    # shared inputs
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    neovim-nightly-overlay.url = "github:nix-community/neovim-nightly-overlay";
   };
 
   outputs = inputs @ {
@@ -25,66 +39,24 @@
     home-manager,
     plasma-manager,
     chaotic,
+    nix-darwin,
     neovim-nightly-overlay,
     veridian,
     ...
   }: let
     inherit (nixpkgs) lib;
-    hosts = import ./hosts.nix;
+
+    hosts = import ./lib/hosts.nix;
     # Filter only enabled hosts
     enabledHosts = lib.filterAttrs (_: v: v.enable or false) hosts;
     # Generate a unique list of systems from enabled hosts
     systems = lib.lists.unique (builtins.attrValues (builtins.mapAttrs (_: v: v.system) enabledHosts));
 
-    mkHome = hostArgs: username: hostname: {
-      imports = [home-manager.nixosModules.home-manager];
+    # shortcut to check if a host is on Darwin based on hosts.nix
+    isDarwin = hostArgs: builtins.elem hostArgs.system ["x86_64-darwin" "aarch64-darwin"];
 
-      home-manager = {
-        extraSpecialArgs = {inherit hostArgs;};
-        useGlobalPkgs = true;
-        useUserPackages = true;
-        backupFileExtension = "hm";
-        users.${username}.imports = [
-          ./home/${hostname}
-          plasma-manager.homeManagerModules.plasma-manager
-        ];
-      };
-    };
-
-    # Function to create a system configuration (NixOS or Darwin)
-    mkSystem = hostArgs: let
-      isDarwin = hostArgs.system == "x86_64-darwin";
-      systemType =
-        if isDarwin
-        then nixpkgs.lib.darwinSystem
-        else nixpkgs.lib.nixosSystem;
-
-      baseModules = [
-        chaotic.nixosModules.default
-        veridian.nixosModules.default
-        ({pkgs, ...}: {
-          nixpkgs.overlays = [
-            neovim-nightly-overlay.overlays.default
-          ];
-        })
-      ];
-
-      hostModule = [./nixos/${hostArgs.hostname}];
-
-      homeManagerModule = [
-        (mkHome hostArgs hostArgs.username hostArgs.hostname)
-      ];
-
-      modules =
-        if isDarwin
-        then baseModules ++ hostModule
-        else baseModules ++ hostModule ++ homeManagerModule;
-    in
-      systemType {
-        inherit (hostArgs) system;
-        inherit modules;
-        specialArgs = {inherit hostArgs;};
-      };
+    mkHome = import ./lib/home.nix {inherit lib inputs isDarwin;};
+    mkSystem = import ./lib/system.nix {inherit lib inputs isDarwin mkHome;};
   in
     flake-parts.lib.mkFlake {inherit inputs;} {
       inherit systems;

@@ -1,0 +1,5 @@
+{lib, ...}: {
+  imports = [
+    ./home.nix
+  ];
+}
