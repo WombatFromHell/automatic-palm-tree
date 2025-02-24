@@ -28,6 +28,7 @@ in {
     stow
     lazygit
     yazi
+    kitty
     rdfind
     ripgrep
     zoxide
@@ -42,8 +43,6 @@ in {
 
   programs = {
     gpg.enable = true;
-    nh.enable = true;
-    kitty.enable = true;
     home-manager.enable = true;
   };
 }
