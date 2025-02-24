@@ -68,7 +68,7 @@
         nixosConfigurations =
           builtins.mapAttrs (
             name: hostArgs:
-              if hostArgs.system == "x86_64-linux"
+              if !(isDarwin hostArgs)
               then mkSystem hostArgs
               else null
           )
@@ -77,7 +77,7 @@
         darwinConfigurations =
           builtins.mapAttrs (
             name: hostArgs:
-              if hostArgs.system == "x86_64-darwin"
+              if (isDarwin hostArgs)
               then mkSystem hostArgs
               else null
           )

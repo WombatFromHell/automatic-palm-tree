@@ -41,10 +41,7 @@
     })
   ];
 
-  darwinModules = [
-    inputs.nix-darwin.darwinModules
-    ../darwin/${hostArgs.hostname}
-  ];
+  darwinModules = [../darwin/${hostArgs.hostname}];
   nixosModules = [../nixos/${hostArgs.hostname}];
 
   homeConfig = mkHome hostArgs hostArgs.username hostArgs.hostname;
