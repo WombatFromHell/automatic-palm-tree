@@ -43,6 +43,7 @@ in {
 
   programs = {
     gpg.enable = true;
+    nh.enable = true;
     home-manager.enable = true;
   };
 }
