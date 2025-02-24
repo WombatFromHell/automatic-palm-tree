@@ -38,6 +38,7 @@
       nixpkgs.overlays = [
         inputs.neovim-nightly-overlay.overlays.default
       ];
+      nixpkgs.config.allowUnfree = true;
     })
   ];
 
@@ -60,6 +61,5 @@ in
   systemType {
     inherit (hostArgs) system;
     inherit modules;
-    pkgs = selectedNixpkgs.legacyPackages.${hostArgs.system};
     specialArgs = {inherit hostArgs inputs;};
   }
