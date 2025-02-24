@@ -21,12 +21,19 @@
 
   systemType =
     if isDarwinSystem
-    then selectedNixpkgs.lib.darwinSystem
+    then inputs.nix-darwin.lib.darwinSystem
     else selectedNixpkgs.lib.nixosSystem;
 
-  baseModules = [
-    inputs.chaotic.nixosModules.default
-    inputs.veridian.nixosModules.default
+  baseModules = lib.flatten [
+    (
+      if !isDarwinSystem
+      then [
+        inputs.chaotic.nixosModules.default
+        inputs.veridian.nixosModules.default
+      ]
+      else []
+    )
+
     ({pkgs, ...}: {
       nixpkgs.overlays = [
         inputs.neovim-nightly-overlay.overlays.default
@@ -56,5 +63,6 @@ in
   systemType {
     inherit (hostArgs) system;
     inherit modules;
+    pkgs = selectedNixpkgs.legacyPackages.${hostArgs.system};
     specialArgs = {inherit hostArgs inputs;};
   }

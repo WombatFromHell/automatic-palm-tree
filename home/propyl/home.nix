@@ -16,18 +16,13 @@ in {
     nerd-fonts.iosevka
     nerd-fonts.iosevka-term
     #
-    direnv
-    nix-direnv
-    #
     git
-    dust
     fzf
     eza
     bat
     fd
     pv
     gawk
-    btop
     unzip
     tmux
     stow
