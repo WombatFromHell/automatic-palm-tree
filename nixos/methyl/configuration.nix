@@ -5,15 +5,12 @@
 }: let
   user = hostArgs.username;
 in {
-  nix = let
-    nixCacheSettings = import ../../lib/cache.nix;
-  in {
+  imports = [../../lib/cache.nix];
+
+  nix = {
     optimise = {
       automatic = true;
       dates = ["09:00"];
-    };
-    settings = {
-      inherit (nixCacheSettings) experimental-features substituters trusted-public-keys;
     };
   };
 
