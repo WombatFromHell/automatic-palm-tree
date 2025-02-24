@@ -46,6 +46,7 @@ in {
     rustmission
     code-cursor
     kitty
+    brave
     # include some tools for mason
     gcc
     nil
@@ -55,7 +56,6 @@ in {
   ];
 
   programs = {
-    alacritty.enable = true;
     home-manager.enable = true;
   };
 
