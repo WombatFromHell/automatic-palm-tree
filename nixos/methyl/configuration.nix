@@ -20,7 +20,6 @@ in {
       efi.canTouchEfiVariables = true;
     };
 
-    kernelParams = ["amd_pstate=active"];
     # kernelPackages = pkgs.linuxPackages_latest;
     kernelPackages = pkgs.linuxPackages_cachyos;
   };

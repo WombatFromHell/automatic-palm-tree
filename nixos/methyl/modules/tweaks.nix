@@ -7,12 +7,15 @@
   game-performance.enable = true;
   swapfile.enable = true;
 
+  boot.kernelParams = ["amd_pstate=guided"];
   boot.kernel.sysctl = {
     # set sane swappiness behavior
     "vm.swappiness" = 1;
     "vm.watermark_boost_factor" = 0;
     "kernel.split_lock_mitigate" = 0;
   };
+
+  powerManagement.cpuFreqGovernor = "schedutil";
 
   # use kyber as the default ioscheduler
   services.udev.extraRules = ''
