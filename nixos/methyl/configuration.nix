@@ -68,6 +68,13 @@ in {
   local-mounts.enable = true;
 
   services = {
+    resolved = {
+      enable = true;
+      dnssec = "allow-downgrade";
+      dnsovertls = "opportunistic";
+      fallbackDns = ["1.1.1.1" "8.8.8.8"];
+    };
+
     earlyoom = {
       enable = true;
       enableNotifications = true;
