@@ -8,14 +8,14 @@
   swapfile.enable = true;
 
   boot.kernelParams = ["amd_pstate=guided"];
+  # should only apply when using standard kernel (not chaotic-nyx cachyos)
+  #powerManagement.cpuFreqGovernor = "schedutil";
   boot.kernel.sysctl = {
     # set sane swappiness behavior
     "vm.swappiness" = 1;
     "vm.watermark_boost_factor" = 0;
     "kernel.split_lock_mitigate" = 0;
   };
-
-  powerManagement.cpuFreqGovernor = "schedutil";
 
   # use kyber as the default ioscheduler
   services.udev.extraRules = ''
