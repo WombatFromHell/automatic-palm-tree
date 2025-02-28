@@ -7,9 +7,7 @@
   game-performance.enable = true;
   swapfile.enable = true;
 
-  boot.kernelParams = ["amd_pstate=guided"];
-  # should only apply when using standard kernel (not chaotic-nyx cachyos)
-  #powerManagement.cpuFreqGovernor = "schedutil";
+  boot.kernelParams = ["amd_pstate=active"];
   boot.kernel.sysctl = {
     # set sane swappiness behavior
     "vm.swappiness" = 1;
