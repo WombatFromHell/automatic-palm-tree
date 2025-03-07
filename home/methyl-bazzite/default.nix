@@ -36,6 +36,16 @@ in {
   ];
 
   programs = {
+    gpg.enable = true;
     home-manager.enable = true;
+  };
+  services = {
+    gpg-agent = {
+      enable = true;
+      pinentryPackage = pkgs.pinentry-qt;
+      enableSshSupport = true;
+      maxCacheTtl = 60480000;
+      defaultCacheTtl = 60480000;
+    };
   };
 }
