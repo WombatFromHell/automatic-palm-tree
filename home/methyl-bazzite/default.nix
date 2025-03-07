@@ -15,6 +15,18 @@ in {
     direnv
     nix-direnv
     dust
+    #
+    bat
+    eza
+    fd
+    fish
+    fzf
+    lazygit
+    rdfind
+    ripgrep
+    starship
+    stow
+    zoxide
     # include some tools for mason
     gcc
     nil
