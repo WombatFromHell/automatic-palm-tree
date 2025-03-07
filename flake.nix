@@ -87,12 +87,7 @@
           )
           regularHosts;
 
-        homeConfigurations =
-          builtins.mapAttrs (
-            name: hostArgs:
-              mkHome hostArgs
-          )
-          hmHosts;
+        homeConfigurations = builtins.mapAttrs (_: mkHome) hmHosts;
       };
     };
 }
