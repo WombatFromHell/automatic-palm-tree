@@ -45,7 +45,7 @@
   darwinModules = [../darwin/${hostArgs.hostname}];
   nixosModules = [../nixos/${hostArgs.hostname}];
 
-  homeConfig = mkHome hostArgs hostArgs.username hostArgs.hostname;
+  homeConfig = mkHome hostArgs;
 
   modules = lib.flatten [
     baseModules

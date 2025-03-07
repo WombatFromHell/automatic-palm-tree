@@ -51,6 +51,10 @@
     hosts = import ./lib/hosts.nix;
     # Filter only enabled hosts
     enabledHosts = lib.filterAttrs (_: v: v.enable or false) hosts;
+    # Filter by 'hm-only'
+    regularHosts = lib.filterAttrs (name: v: !v.hm-only) enabledHosts;
+    hmHosts = lib.filterAttrs (name: v: v.hm-only) enabledHosts;
+
     # Generate a unique list of systems from enabled hosts
     systems = lib.lists.unique (builtins.attrValues (builtins.mapAttrs (_: v: v.system) enabledHosts));
 
@@ -72,7 +76,7 @@
               then mkSystem hostArgs
               else null
           )
-          enabledHosts;
+          regularHosts;
 
         darwinConfigurations =
           builtins.mapAttrs (
@@ -81,7 +85,14 @@
               then mkSystem hostArgs
               else null
           )
-          enabledHosts;
+          regularHosts;
+
+        homeConfigurations =
+          builtins.mapAttrs (
+            name: hostArgs:
+              mkHome hostArgs
+          )
+          hmHosts;
       };
     };
 }
