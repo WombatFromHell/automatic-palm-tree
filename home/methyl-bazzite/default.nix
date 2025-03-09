@@ -25,6 +25,7 @@ in {
     lm_sensors
     rdfind
     ripgrep
+    spicetify-cli
     starship
     stow
     zoxide
