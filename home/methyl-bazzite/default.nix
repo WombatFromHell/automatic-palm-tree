@@ -22,6 +22,7 @@ in {
     fish
     fzf
     lazygit
+    lm_sensors
     rdfind
     ripgrep
     starship
