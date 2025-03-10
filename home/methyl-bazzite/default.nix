@@ -28,6 +28,7 @@ in {
     spicetify-cli
     starship
     tuckr
+    yazi
     zoxide
     # include some tools for mason
     gcc
