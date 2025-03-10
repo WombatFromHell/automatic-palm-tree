@@ -27,7 +27,7 @@ in {
     ripgrep
     spicetify-cli
     starship
-    stow
+    tuckr
     zoxide
     # include some tools for mason
     gcc
