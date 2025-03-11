@@ -21,6 +21,7 @@ in {
     fd
     fish
     fzf
+    joystickwake
     lazygit
     lm_sensors
     rdfind
