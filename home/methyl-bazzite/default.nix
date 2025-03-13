@@ -31,6 +31,8 @@ in {
     tuckr
     yazi
     zoxide
+    #
+    peazip
     # include some tools for mason
     gcc
     nil
