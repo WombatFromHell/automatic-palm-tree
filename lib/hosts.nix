@@ -7,12 +7,6 @@ rec {
     myuid = 1000;
     hostname = "methyl";
   };
-  methyl-bazzite = {
-    enable = true;
-    hm-only = true;
-    hostname = "methyl-bazzite";
-    inherit (methyl) system username myuid;
-  };
   propyl = {
     enable = true;
     hm-only = false;
@@ -20,5 +14,21 @@ rec {
     inherit (methyl) username;
     myuid = 501;
     hostname = "propyl";
+  };
+  methyl-bazzite = {
+    enable = true;
+    hm-only = true;
+    hostname = "methyl-bazzite";
+    inherit (methyl) system username myuid;
+  };
+  # test machines
+  oxyl-cachyos = {
+    username = "testuser";
+    hostname = "oxyl-cachyos";
+    inherit (methyl-bazzite) system enable hm-only myuid;
+  };
+  oxyl-bazzite = {
+    hostname = "oxyl-bazzite";
+    inherit (oxyl-cachyos) system enable hm-only username myuid;
   };
 }
