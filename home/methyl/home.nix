@@ -38,6 +38,7 @@ in {
     mpv
     stow
     lazygit
+    neovim
     yazi
     rdfind
     ripgrep

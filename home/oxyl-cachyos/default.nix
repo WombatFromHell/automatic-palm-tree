@@ -18,6 +18,7 @@ in {
     fish
     fzf
     lazygit
+    neovim
     rdfind
     ripgrep
     spicetify-cli

@@ -19,6 +19,7 @@ in {
     fzf
     joystickwake
     lazygit
+    neovim
     rdfind
     ripgrep
     spicetify-cli

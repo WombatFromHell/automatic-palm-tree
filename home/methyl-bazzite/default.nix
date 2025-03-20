@@ -23,7 +23,7 @@ in {
     fzf
     joystickwake
     lazygit
-    lm_sensors
+    neovim
     rdfind
     ripgrep
     spicetify-cli
