@@ -9,7 +9,12 @@
 
   isDarwinHome = isDarwin hostArgs;
   hmOnly = hostArgs.hm-only or false;
-  pkgs = import inputs.nixpkgs {inherit system;};
+  pkgs = import inputs.nixpkgs {
+    inherit system;
+    overlays = [
+      inputs.neovim-nightly-overlay.overlays.default
+    ];
+  };
 
   commonModules = [
     ../home/${hostname}

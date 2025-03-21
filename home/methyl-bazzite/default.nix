@@ -31,6 +31,7 @@ in {
     yazi
     zoxide
     # include some tools for dev work
+    cachix
     direnv
     nix-direnv
     gcc
