@@ -23,6 +23,7 @@ in {
     ripgrep
     spicetify-cli
     starship
+    tmux
     tuckr
     yazi
     zoxide

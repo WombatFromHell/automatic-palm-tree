@@ -12,11 +12,8 @@ in {
   };
 
   home.packages = with pkgs; [
-    direnv
-    nix-direnv
-    dust
-    #
     bat
+    dust
     eza
     fd
     fish
@@ -24,16 +21,21 @@ in {
     joystickwake
     lazygit
     neovim
+    pv
     rdfind
     ripgrep
     spicetify-cli
     starship
     tuckr
+    tmux
     yazi
     zoxide
-    # include some tools for mason
+    # include some tools for dev work
+    direnv
+    nix-direnv
     gcc
     nil
+    rustup
     alejandra
     python3
     statix
