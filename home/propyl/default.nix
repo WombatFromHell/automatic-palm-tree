@@ -22,10 +22,11 @@ in {
     bat
     fd
     pv
+    zstd
+    tuckr
     gawk
     unzip
     tmux
-    stow
     lazygit
     yazi
     kitty

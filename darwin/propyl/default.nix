@@ -22,7 +22,7 @@ in {
   };
 
   # enable TouchID support for sudo
-  security.pam.enableSudoTouchIdAuth = true;
+  security.pam.services.sudo_local.touchIdAuth = true;
 
   system.stateVersion = 6;
 }

@@ -13,6 +13,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.home-manager.follows = "home-manager";
     };
+    neovim-nightly-overlay = {
+      url = "github:nix-community/neovim-nightly-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
     veridian.url = "github:WombatFromHell/veridian-controller?rev=489fca55e84ca3f647227686cf1ff5da52196979"; # pin to v0.2.9
 
@@ -26,10 +30,13 @@
       url = "github:LnL7/nix-darwin/master";
       inputs.nixpkgs.follows = "nixpkgs-darwin";
     };
+    neovim-nightly-overlay-darwin = {
+      url = "github:nix-community/neovim-nightly-overlay";
+      inputs.nixpkgs.follows = "nixpkgs-darwin";
+    };
 
     # shared inputs
     flake-parts.url = "github:hercules-ci/flake-parts";
-    neovim-nightly-overlay.url = "github:nix-community/neovim-nightly-overlay?rev=9eb6d8698e2876f97baf71b8d3a70ec01e859c7b"; # pin to 02-22-25
   };
 
   outputs = inputs @ {
@@ -42,7 +49,7 @@
     plasma-manager,
     chaotic,
     nix-darwin,
-    neovim-nightly-overlay,
+    # neovim-nightly-overlay,
     veridian,
     ...
   }: let
