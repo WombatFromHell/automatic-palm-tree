@@ -17,6 +17,7 @@ in {
     nerd-fonts.iosevka-term
     #
     bat
+    cachix
     eza
     fd
     fzf
