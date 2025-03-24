@@ -16,28 +16,30 @@ in {
     nerd-fonts.iosevka
     nerd-fonts.iosevka-term
     #
-    git
-    fzf
-    eza
     bat
+    eza
     fd
-    pv
-    zstd
-    tuckr
+    fzf
     gawk
-    unzip
-    tmux
-    lazygit
-    yazi
+    git
     kitty
+    lazygit
+    neovim
+    pv
     rdfind
     ripgrep
+    spotify
+    starship
+    tmux
+    tuckr
+    unzip
+    yazi
     zoxide
-    neovim
+    zstd
     # include some tools for mason
+    alejandra
     gcc
     nil
-    alejandra
     python3
     statix
   ];
