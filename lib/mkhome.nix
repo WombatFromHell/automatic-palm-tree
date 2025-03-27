@@ -11,9 +11,10 @@
   hmOnly = hostArgs.hm-only or false;
   pkgs = import inputs.nixpkgs {
     inherit system;
-    overlays = [
-      inputs.neovim-nightly-overlay.overlays.default
-    ];
+    # overlays =
+    #   if isDarwinHome
+    #   then [inputs.neovim-nightly-overlay-darwin.overlays.default]
+    #   else [inputs.neovim-nightly-overlay.overlays.default];
   };
 
   commonModules = [
