@@ -12,21 +12,6 @@ in {
   };
 
   home.packages = with pkgs; [
-    bat
-    eza
-    fd
-    fish
-    fzf
-    lazygit
-    neovim
-    rdfind
-    ripgrep
-    spicetify-cli
-    starship
-    tmux
-    tuckr
-    yazi
-    zoxide
     # include some tools for mason
     nil
     alejandra

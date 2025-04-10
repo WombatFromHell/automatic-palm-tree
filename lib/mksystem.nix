@@ -35,10 +35,6 @@
     )
 
     ({pkgs, ...}: {
-      nixpkgs.overlays =
-        if isDarwinSystem
-        then [inputs.neovim-nightly-overlay-darwin.overlays.default]
-        else [inputs.neovim-nightly-overlay.overlays.default];
       nixpkgs.config.allowUnfree = true;
     })
   ];

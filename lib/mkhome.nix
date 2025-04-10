@@ -11,9 +11,7 @@
   hmOnly = hostArgs.hm-only or false;
   pkgs = import inputs.nixpkgs {
     inherit system;
-    overlays = [
-      inputs.neovim-nightly-overlay.overlays.default
-    ];
+    overlays = [];
   };
 
   commonModules = [

@@ -24,7 +24,7 @@ in {
     ripgrep
     spicetify-cli
     starship
-    tuckr
+    # tuckr
     yazi
     zoxide
     # include some tools for mason
