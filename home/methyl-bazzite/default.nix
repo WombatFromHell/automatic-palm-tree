@@ -31,6 +31,8 @@ in {
     yazi
     zoxide
     # include some tools for dev work
+    ansible
+    ansible-lint
     cachix
     direnv
     nix-direnv
