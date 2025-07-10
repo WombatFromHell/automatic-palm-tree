@@ -19,6 +19,7 @@ in {
     fish
     fzf
     sysz
+    atuin
     joystickwake
     lazygit
     neovim
