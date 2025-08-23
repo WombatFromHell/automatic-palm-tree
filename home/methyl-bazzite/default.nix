@@ -2,9 +2,11 @@
   pkgs,
   hostArgs,
   ...
-}: let
+}:
+let
   user = hostArgs.username;
-in {
+in
+{
   home = {
     username = user;
     homeDirectory = "/home/${user}";
@@ -26,7 +28,6 @@ in {
     pv
     rdfind
     ripgrep
-    spicetify-cli
     starship
     tuckr
     tmux
