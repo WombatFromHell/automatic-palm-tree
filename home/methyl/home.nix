@@ -2,9 +2,11 @@
   pkgs,
   hostArgs,
   ...
-}: let
+}:
+let
   user = hostArgs.username;
-in {
+in
+{
   home = {
     username = user;
     homeDirectory = "/home/${user}";
@@ -54,6 +56,7 @@ in {
     alejandra
     python3
     statix
+    uv
   ];
 
   programs = {

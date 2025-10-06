@@ -45,6 +45,7 @@ in
     alejandra
     python3
     statix
+    uv
   ];
 
   programs = {
