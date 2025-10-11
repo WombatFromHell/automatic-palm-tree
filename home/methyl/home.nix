@@ -24,6 +24,7 @@ in
     git
     dust
     fzf
+    helix
     eza
     bat
     fd

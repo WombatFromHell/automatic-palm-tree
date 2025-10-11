@@ -20,6 +20,7 @@ in
     fd
     fish
     fzf
+    helix
     sysz
     atuin
     joystickwake
