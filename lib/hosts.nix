@@ -24,10 +24,22 @@ rec {
   # test machines
   oxyl-cachyos = {
     hostname = "oxyl-cachyos";
-    inherit (methyl-bazzite) system enable hm-only myuid username;
+    inherit (methyl-bazzite)
+      system
+      enable
+      hm-only
+      myuid
+      username
+      ;
   };
   oxyl-bazzite = {
     hostname = "oxyl-bazzite";
-    inherit (methyl-bazzite) system enable hm-only myuid username;
+    inherit (methyl-bazzite)
+      system
+      enable
+      hm-only
+      myuid
+      username
+      ;
   };
 }

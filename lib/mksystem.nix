@@ -5,58 +5,55 @@
   mkHome,
   inputs,
   ...
-}: hostArgs: let
+}:
+hostArgs:
+let
   isDarwinSystem = isDarwin hostArgs;
 
   # Select the appropriate inputs based on the system
-  selectedNixpkgs =
-    if isDarwinSystem
-    then inputs.nixpkgs-darwin
-    else inputs.nixpkgs;
+  selectedNixpkgs = if isDarwinSystem then inputs.nixpkgs-darwin else inputs.nixpkgs;
 
   homeManagerModule =
-    if isDarwinSystem
-    then inputs.home-manager-darwin.darwinModules.home-manager
-    else inputs.home-manager.nixosModules.home-manager;
+    if isDarwinSystem then
+      inputs.home-manager-darwin.darwinModules.home-manager
+    else
+      inputs.home-manager.nixosModules.home-manager;
 
   systemType =
-    if isDarwinSystem
-    then inputs.nix-darwin.lib.darwinSystem
-    else selectedNixpkgs.lib.nixosSystem;
+    if isDarwinSystem then inputs.nix-darwin.lib.darwinSystem else selectedNixpkgs.lib.nixosSystem;
 
   baseModules = lib.flatten [
     (
-      if !isDarwinSystem
-      then [
-        inputs.chaotic.nixosModules.default
-        inputs.veridian.nixosModules.default
-      ]
-      else []
+      if !isDarwinSystem then
+        [
+          inputs.veridian.nixosModules.default
+        ]
+      else
+        [ ]
     )
 
-    ({pkgs, ...}: {
-      nixpkgs.config.allowUnfree = true;
-    })
+    (
+      { pkgs, ... }:
+      {
+        nixpkgs.config.allowUnfree = true;
+      }
+    )
   ];
 
-  darwinModules = [../darwin/${hostArgs.hostname}];
-  nixosModules = [../nixos/${hostArgs.hostname}];
+  darwinModules = [ ../darwin/${hostArgs.hostname} ];
+  nixosModules = [ ../nixos/${hostArgs.hostname} ];
 
   homeConfig = mkHome hostArgs;
 
   modules = lib.flatten [
     baseModules
-    (
-      if isDarwinSystem
-      then darwinModules
-      else nixosModules
-    )
+    (if isDarwinSystem then darwinModules else nixosModules)
     homeManagerModule
     homeConfig
   ];
 in
-  systemType {
-    inherit (hostArgs) system;
-    inherit modules;
-    specialArgs = {inherit hostArgs inputs;};
-  }
+systemType {
+  inherit (hostArgs) system;
+  inherit modules;
+  specialArgs = { inherit hostArgs inputs; };
+}

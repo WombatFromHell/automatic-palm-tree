@@ -39,6 +39,7 @@ in
     tmux
     mangohud
     mpv
+    ncdu
     stow
     lazygit
     neovim

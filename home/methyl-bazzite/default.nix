@@ -15,16 +15,19 @@ in
 
   home.packages = with pkgs; [
     bat
+    btdu
     dust
     eza
     fd
     fish
     fzf
+    gdu
     helix
     sysz
     atuin
     joystickwake
     lazygit
+    ncdu
     neovim
     pv
     rdfind
@@ -33,6 +36,7 @@ in
     tuckr
     tmux
     yazi
+    yt-dlp
     zoxide
     # include some tools for dev work
     ansible
