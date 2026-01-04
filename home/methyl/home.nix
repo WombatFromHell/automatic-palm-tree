@@ -40,6 +40,7 @@ in
     mangohud
     mpv
     ncdu
+    squashfuse
     stow
     lazygit
     neovim
@@ -53,12 +54,15 @@ in
     kitty
     brave
     # include some tools for mason
-    gcc
-    nil
     alejandra
+    bats
+    gcc
+    kcov
+    nil
     python3
     statix
     uv
+    ty
   ];
 
   programs = {

@@ -33,24 +33,27 @@ in
     rdfind
     ripgrep
     starship
+    squashfuse
     tuckr
     tmux
     yazi
     yt-dlp
     zoxide
     # include some tools for dev work
+    alejandra
     ansible
     ansible-lint
+    bats
     cachix
     direnv
     nix-direnv
     gcc
+    kcov
     nil
-    rustup
-    alejandra
     python3
     statix
     uv
+    ty
   ];
 
   programs = {
