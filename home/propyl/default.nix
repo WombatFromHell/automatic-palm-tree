@@ -44,6 +44,7 @@ in
     nil
     python3
     statix
+    rustup
     uv
   ];
 
