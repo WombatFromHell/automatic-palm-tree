@@ -1,8 +1,10 @@
-{ pkgs, hostArgs, ... }:
-let
-  user = hostArgs.username;
-in
 {
+  pkgs,
+  hostArgs,
+  ...
+}: let
+  user = hostArgs.username;
+in {
   home = {
     username = user;
     homeDirectory = "/home/${user}";
@@ -52,16 +54,16 @@ in
   ];
 
   programs = {
-    # gpg.enable = true;
+    gpg.enable = true;
     home-manager.enable = true;
   };
   services = {
-    # gpg-agent = {
-    #   enable = true;
-    #   pinentry.package = pkgs.pinentry-qt;
-    #   enableSshSupport = true;
-    #   maxCacheTtl = 60480000;
-    #   defaultCacheTtl = 60480000;
-    # };
+    gpg-agent = {
+      enable = true;
+      pinentry.package = pkgs.pinentry-qt;
+      enableSshSupport = true;
+      maxCacheTtl = 60480000;
+      defaultCacheTtl = 60480000;
+    };
   };
 }
