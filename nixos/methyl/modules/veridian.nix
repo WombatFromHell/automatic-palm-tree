@@ -3,25 +3,25 @@
   pkgs,
   config,
   ...
-}: let
+}:
+let
   moduleName = "veridian-controller";
   description = "Veridian Controller User Fan Service";
-in {
+in
+{
   options.services."${moduleName}".enable = lib.mkEnableOption "Enable ${description}";
 
   config = lib.mkIf config.services."${moduleName}".enable {
-    environment.systemPackages = [pkgs.${moduleName}];
+    environment.systemPackages = [ pkgs.${moduleName} ];
 
     # ensure the config file exists with the right perms
 
     systemd = {
-      tmpfiles.rules = [
-        "f /etc/veridian-controller.toml 0640 root root -"
-      ];
+      tmpfiles.rules = [ "f /etc/veridian-controller.toml 0640 root root -" ];
 
       services."${moduleName}" = {
         description = "${description}";
-        wantedBy = ["multi-user.target"];
+        wantedBy = [ "multi-user.target" ];
         serviceConfig = {
           Environment = "PATH=/run/wrappers/bin:${config.hardware.nvidia.package.settings}/bin:${config.hardware.nvidia.package.bin}/bin";
           Type = "simple";

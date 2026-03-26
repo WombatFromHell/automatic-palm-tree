@@ -1,8 +1,4 @@
-{
-  pkgs,
-  hostArgs,
-  ...
-}:
+{ pkgs, hostArgs, ... }:
 let
   user = hostArgs.username;
 in

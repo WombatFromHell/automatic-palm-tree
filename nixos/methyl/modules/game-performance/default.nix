@@ -3,16 +3,17 @@
   lib,
   pkgs,
   ...
-}: let
+}:
+let
   moduleName = "game-performance";
-  perfBoost = import ./perfboost.nix {inherit pkgs;};
-in {
-  options."${moduleName}".enable = lib.mkEnableOption "Enable CachyOS-like ${moduleName} wrapper script and ananicy-cpp rules";
+  perfBoost = import ./perfboost.nix { inherit pkgs; };
+in
+{
+  options."${moduleName}".enable =
+    lib.mkEnableOption "Enable CachyOS-like ${moduleName} wrapper script and ananicy-cpp rules";
 
   config = lib.mkIf config."${moduleName}".enable {
-    environment.systemPackages = [
-      perfBoost.scriptContent
-    ];
+    environment.systemPackages = [ perfBoost.scriptContent ];
 
     services = {
       ananicy = {

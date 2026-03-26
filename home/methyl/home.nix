@@ -1,8 +1,4 @@
-{
-  pkgs,
-  hostArgs,
-  ...
-}:
+{ pkgs, hostArgs, ... }:
 let
   user = hostArgs.username;
 in
@@ -43,7 +39,6 @@ in
     squashfuse
     stow
     lazygit
-    neovim
     yazi
     rdfind
     ripgrep
@@ -59,6 +54,7 @@ in
     gcc
     kcov
     nil
+    nixfmt
     python3
     statix
     uv

@@ -3,11 +3,15 @@
   pkgs,
   config,
   ...
-}: let
-  upperFirst = s:
-    if s == ""
-    then "" # Handle empty strings
-    else lib.strings.toUpper (builtins.substring 0 1 s) + builtins.substring 1 (builtins.stringLength s - 1) s;
+}:
+let
+  upperFirst =
+    s:
+    if s == "" then
+      "" # Handle empty strings
+    else
+      lib.strings.toUpper (builtins.substring 0 1 s)
+      + builtins.substring 1 (builtins.stringLength s - 1) s;
 
   pointerTheme = {
     name = "Bibata-Modern-Classic";
@@ -25,16 +29,17 @@
     kdeThemeId = "Catppuccin-${themeConfig.variantCapd}-${themeConfig.accentCapd}";
   };
   themeConfig = mkThemeConfig "mocha" "teal";
-in {
+in
+{
   options.theming.enable = lib.mkEnableOption "Enable user customized theming";
 
   config = lib.mkIf config.theming.enable {
     home = {
       packages = with pkgs; [
         (catppuccin-kde.override {
-          flavour = [themeConfig.variant];
-          accents = [themeConfig.accent];
-          winDecStyles = ["classic"];
+          flavour = [ themeConfig.variant ];
+          accents = [ themeConfig.accent ];
+          winDecStyles = [ "classic" ];
         })
       ];
 
@@ -60,9 +65,9 @@ in {
         name = "${themeConfig.gtkThemeId}-compact+rimless";
         package = pkgs.catppuccin-gtk.override {
           inherit (themeConfig) variant;
-          accents = [themeConfig.accent];
+          accents = [ themeConfig.accent ];
           size = "compact";
-          tweaks = ["rimless"];
+          tweaks = [ "rimless" ];
         };
       };
       iconTheme = {
@@ -72,9 +77,7 @@ in {
           inherit (themeConfig) accent;
         };
       };
-      cursorTheme = {
-        inherit (pointerTheme) name package size;
-      };
+      cursorTheme = { inherit (pointerTheme) name package size; };
     };
     dconf.settings = {
       "org/gnome/desktop/interface".color-scheme = "prefer-dark";

@@ -3,13 +3,15 @@
   lib,
   pkgs,
   ...
-}: let
+}:
+let
   moduleName = "nvidia-pm";
   description = "NVIDIA Power Limit Service";
   scriptName = "${moduleName}.py";
   scriptContent = builtins.readFile ./${scriptName};
   nvpmScript = pkgs.writeScriptBin "${scriptName}" scriptContent;
-in {
+in
+{
   options = {
     services."${moduleName}".enable = lib.mkEnableOption "${description}";
   };
@@ -29,7 +31,7 @@ in {
 
       systemd.services."${moduleName}" = {
         description = "NVIDIA Power Limit Service";
-        wantedBy = ["multi-user.target"];
+        wantedBy = [ "multi-user.target" ];
         serviceConfig = {
           Type = "oneshot";
           Environment = "PATH=${config.hardware.nvidia.package.bin}/bin:${pkgs.python3}/bin";
@@ -40,7 +42,7 @@ in {
       };
 
       systemd.timers."${moduleName}" = {
-        wantedBy = ["timers.target"];
+        wantedBy = [ "timers.target" ];
         timerConfig = {
           OnBootSec = 5;
         };

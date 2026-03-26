@@ -23,14 +23,7 @@ let
     if isDarwinSystem then inputs.nix-darwin.lib.darwinSystem else selectedNixpkgs.lib.nixosSystem;
 
   baseModules = lib.flatten [
-    (
-      if !isDarwinSystem then
-        [
-          inputs.veridian.nixosModules.default
-        ]
-      else
-        [ ]
-    )
+    (if !isDarwinSystem then [ inputs.veridian.nixosModules.default ] else [ ])
 
     (
       { pkgs, ... }:

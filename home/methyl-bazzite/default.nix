@@ -1,8 +1,4 @@
-{
-  pkgs,
-  hostArgs,
-  ...
-}:
+{ pkgs, hostArgs, ... }:
 let
   user = hostArgs.username;
 in
@@ -28,7 +24,6 @@ in
     joystickwake
     lazygit
     ncdu
-    neovim
     pv
     rdfind
     ripgrep
@@ -37,7 +32,6 @@ in
     tuckr
     tmux
     yazi
-    yt-dlp
     zoxide
     # include some tools for dev work
     alejandra
@@ -50,6 +44,7 @@ in
     gcc
     kcov
     nil
+    nixfmt
     python3
     statix
     uv
@@ -57,16 +52,16 @@ in
   ];
 
   programs = {
-    gpg.enable = true;
+    # gpg.enable = true;
     home-manager.enable = true;
   };
   services = {
-    gpg-agent = {
-      enable = true;
-      pinentry.package = pkgs.pinentry-qt;
-      enableSshSupport = true;
-      maxCacheTtl = 60480000;
-      defaultCacheTtl = 60480000;
-    };
+    # gpg-agent = {
+    #   enable = true;
+    #   pinentry.package = pkgs.pinentry-qt;
+    #   enableSshSupport = true;
+    #   maxCacheTtl = 60480000;
+    #   defaultCacheTtl = 60480000;
+    # };
   };
 }

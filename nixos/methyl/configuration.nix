@@ -1,16 +1,14 @@
-{
-  pkgs,
-  hostArgs,
-  ...
-}: let
+{ pkgs, hostArgs, ... }:
+let
   user = hostArgs.username;
-in {
-  imports = [../../lib/cache.nix];
+in
+{
+  imports = [ ../../lib/cache.nix ];
 
   nix = {
     optimise = {
       automatic = true;
-      dates = ["09:00"];
+      dates = [ "09:00" ];
     };
   };
 
@@ -20,7 +18,7 @@ in {
       efi.canTouchEfiVariables = true;
     };
 
-    kernelParams = ["amd_pstate=active"];
+    kernelParams = [ "amd_pstate=active" ];
     # kernelPackages = pkgs.linuxPackages_latest;
     kernelPackages = pkgs.linuxPackages_cachyos;
   };
@@ -84,7 +82,7 @@ in {
     printing = {
       enable = true;
       # provide the brother printer lpd's
-      drivers = with pkgs; [brlaser];
+      drivers = with pkgs; [ brlaser ];
     };
 
     # disabled until 25.11
@@ -129,7 +127,12 @@ in {
     isNormalUser = true;
     description = "${user}";
     uid = hostArgs.myuid;
-    extraGroups = ["networkmanager" "wheel" "input" "i2c"];
+    extraGroups = [
+      "networkmanager"
+      "wheel"
+      "input"
+      "i2c"
+    ];
     shell = pkgs.fish;
   };
 
@@ -180,8 +183,8 @@ in {
   };
 
   systemd.services.flatpak-repo = {
-    wantedBy = ["multi-user.target"];
-    path = [pkgs.flatpak];
+    wantedBy = [ "multi-user.target" ];
+    path = [ pkgs.flatpak ];
     # conigure the default remote for both system and user mode
     script = ''
       flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo

@@ -1,10 +1,11 @@
 {
   config,
-  osConfig ? {},
+  osConfig ? { },
   lib,
   pkgs,
   ...
-}: let
+}:
+let
   scriptName = "lightsout";
   description = "OpenRGB lightsout profile service";
   scriptBin = pkgs.writeScriptBin "${scriptName}" ''
@@ -47,7 +48,7 @@
         ExecStart = "${scriptBin}/bin/${scriptName}";
       };
       Install = {
-        WantedBy = ["default.target"];
+        WantedBy = [ "default.target" ];
       };
     };
 
@@ -57,7 +58,7 @@
     };
 
     # expose the script to the user's environment
-    home.packages = [scriptBin];
+    home.packages = [ scriptBin ];
   };
 
   monitorConfigModule = lib.mkIf config.services.monitor-session.enable {
@@ -66,10 +67,14 @@
       "L+ %h/.local/bin/monitor-session/lightsout.sh - - - - ${scriptBin}/bin/lightsout"
     ];
   };
-in {
+in
+{
   options = {
     services."${scriptName}".enable = lib.mkEnableOption "Enable the ${description}";
   };
 
-  config = lib.mkMerge [homeConfigModule monitorConfigModule];
+  config = lib.mkMerge [
+    homeConfigModule
+    monitorConfigModule
+  ];
 }

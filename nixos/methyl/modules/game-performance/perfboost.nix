@@ -1,4 +1,5 @@
-{pkgs, ...}: let
+{ pkgs, ... }:
+let
   scriptName = "perfboost";
   scriptContent = pkgs.writeShellScriptBin "${scriptName}" ''
     #!${pkgs.bash}/bin/bash
@@ -27,6 +28,7 @@
     exec "$INHIBIT" --why "CachyOS game-performance is running" "$PPCTL" launch \
             -p performance -r "Launched with CachyOS game-performance utility" -- "$@"
   '';
-in {
+in
+{
   inherit scriptContent;
 }

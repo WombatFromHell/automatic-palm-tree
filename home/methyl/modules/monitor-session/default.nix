@@ -3,13 +3,15 @@
   config,
   pkgs,
   ...
-}: let
+}:
+let
   moduleName = "monitor-session";
   description = "Lock/Unlock Script Event Functionality for KDE Plasma 6";
 
-  monitorSession = import ./monitor-script.nix {inherit pkgs;};
-  kscreenId = import ./kscreen-id.nix {inherit pkgs;};
-in {
+  monitorSession = import ./monitor-script.nix { inherit pkgs; };
+  kscreenId = import ./kscreen-id.nix { inherit pkgs; };
+in
+{
   options = {
     services."${moduleName}".enable = lib.mkEnableOption "Enable ${description}";
   };
@@ -27,7 +29,7 @@ in {
         RemainAfterExit = "yes";
       };
       Install = {
-        WantedBy = ["graphical-session.target"];
+        WantedBy = [ "graphical-session.target" ];
       };
     };
 
@@ -37,8 +39,6 @@ in {
     ];
 
     # expose 'kscreen-id' so the user's HM can use it
-    home.packages = [
-      kscreenId
-    ];
+    home.packages = [ kscreenId ];
   };
 }

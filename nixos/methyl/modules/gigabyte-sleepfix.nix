@@ -3,9 +3,11 @@
   lib,
   pkgs,
   ...
-}: let
+}:
+let
   description = "Gigabyte USB wakeup trigger fix";
-in {
+in
+{
   options = {
     services.sleepfix.enable = lib.mkEnableOption "${description}";
   };
@@ -13,7 +15,7 @@ in {
   config = lib.mkIf config.services.sleepfix.enable {
     systemd.services.sleepfix = {
       description = "${description}";
-      wantedBy = ["multi-user.target"];
+      wantedBy = [ "multi-user.target" ];
       script = ''
         #!${pkgs.stdenv.shell}
         echo GP12 > /proc/acpi/wakeup
