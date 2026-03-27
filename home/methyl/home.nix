@@ -1,8 +1,10 @@
-{ pkgs, hostArgs, ... }:
-let
-  user = hostArgs.username;
-in
 {
+  pkgs,
+  hostArgs,
+  ...
+}: let
+  user = hostArgs.username;
+in {
   home = {
     username = user;
     homeDirectory = "/home/${user}";
@@ -63,6 +65,13 @@ in
 
   programs = {
     home-manager.enable = true;
+    direnv = {
+      enable = true;
+      nix-direnv.enable = true;
+      config = {
+        global = {log_format = "";};
+      };
+    };
   };
 
   # user-defined HM module enablement

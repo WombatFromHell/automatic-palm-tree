@@ -56,6 +56,13 @@ in {
   programs = {
     gpg.enable = true;
     home-manager.enable = true;
+    direnv = {
+      enable = true;
+      nix-direnv.enable = true;
+      config = {
+        global = {log_format = "";};
+      };
+    };
   };
   services = {
     gpg-agent = {
