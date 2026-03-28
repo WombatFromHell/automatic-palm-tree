@@ -25,6 +25,7 @@ in {
     atuin
     joystickwake
     lazygit
+    libqalculate
     ncdu
     pv
     rdfind

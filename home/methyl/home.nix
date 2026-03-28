@@ -50,6 +50,7 @@ in {
     code-cursor
     kitty
     brave
+    libqalculate
     # include some tools for mason
     alejandra
     bats
