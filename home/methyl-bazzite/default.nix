@@ -45,13 +45,12 @@ in {
     direnv
     nix-direnv
     gcc
-    kcov
+    mise
     nil
     nixfmt
-    python3
     statix
-    uv
     ty
+    uv
   ];
 
   programs = {

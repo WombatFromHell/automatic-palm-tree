@@ -47,7 +47,6 @@ in {
     zoxide
     vesktop
     rustmission
-    code-cursor
     kitty
     brave
     libqalculate
@@ -55,13 +54,13 @@ in {
     alejandra
     bats
     gcc
-    kcov
+    mise
     nil
     nixfmt
     python3
     statix
-    uv
     ty
+    uv
   ];
 
   programs = {
