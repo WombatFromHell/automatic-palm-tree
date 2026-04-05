@@ -12,44 +12,44 @@ in {
   };
 
   home.packages = with pkgs; [
-    nerd-fonts.jetbrains-mono
     nerd-fonts.iosevka
     nerd-fonts.iosevka-term
+    nerd-fonts.jetbrains-mono
     #
-    direnv
-    nix-direnv
-    wl-clipboard
-    git
-    dust
-    fzf
-    helix
-    eza
     bat
-    fd
-    pv
-    gawk
+    brave
     btop
-    unzip
-    openrgb
+    direnv
+    dust
+    eza
+    fd
     firefox
+    fzf
+    gawk
+    git
+    helix
     kdePackages.kate
     kdePackages.kcalc
-    tmux
+    kitty
+    lazygit
+    libqalculate
     mangohud
     mpv
     ncdu
-    squashfuse
-    stow
-    lazygit
-    yazi
+    nix-direnv
+    openrgb
+    pv
     rdfind
     ripgrep
-    zoxide
+    squashfuse
+    stow
+    tmux
+    vdirsyncer
     vesktop
-    rustmission
-    kitty
-    brave
-    libqalculate
+    wl-clipboard
+    unzip
+    yazi
+    zoxide
     # include some tools for mason
     alejandra
     bats
@@ -57,7 +57,10 @@ in {
     mise
     nil
     nixfmt
-    python3
+    prettier
+    python314
+    python314Packages.pytest
+    ruff
     statix
     ty
     uv

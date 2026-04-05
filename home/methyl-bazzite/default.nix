@@ -12,8 +12,10 @@ in {
   };
 
   home.packages = with pkgs; [
+    atuin
     bat
     btdu
+    calcurse
     dust
     eza
     fd
@@ -21,9 +23,8 @@ in {
     fzf
     gdu
     helix
-    sysz
-    atuin
     joystickwake
+    khal
     lazygit
     libqalculate
     ncdu
@@ -32,8 +33,9 @@ in {
     ripgrep
     starship
     squashfuse
-    tuckr
     tmux
+    tuckr
+    vdirsyncer
     yazi
     zoxide
     # include some tools for dev work
@@ -44,10 +46,13 @@ in {
     cachix
     direnv
     nix-direnv
-    gcc
     mise
     nil
     nixfmt
+    prettier
+    python314
+    python314Packages.pytest
+    ruff
     statix
     ty
     uv
