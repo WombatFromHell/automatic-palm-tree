@@ -17,6 +17,7 @@ let
   };
 
   commonModules = [
+    ../home/common.nix
     ../home/${hostname}
     (if !isDarwinHome && !hmOnly then inputs.plasma-manager.homeManagerModules.plasma-manager else { })
   ];

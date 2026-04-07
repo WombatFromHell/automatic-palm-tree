@@ -1,22 +1,3 @@
-{ pkgs, hostArgs, ... }:
-let
-  user = hostArgs.username;
-in
-{
-  home = {
-    username = user;
-    homeDirectory = "/home/${user}";
-    stateVersion = "24.11";
-  };
-
-  home.packages = with pkgs; [
-    # include some tools for mason
-    nil
-    alejandra
-    statix
-  ];
-
-  programs = {
-    home-manager.enable = true;
-  };
-}
+# All common packages, programs, and services are inherited from home/common.nix.
+# This file is intentionally minimal — add host-specific overrides here.
+{ ... }: {}

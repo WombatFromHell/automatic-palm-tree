@@ -12,70 +12,28 @@ in {
   };
 
   home.packages = with pkgs; [
-    nerd-fonts.iosevka
-    nerd-fonts.iosevka-term
-    nerd-fonts.jetbrains-mono
-    #
-    bat
+    # browsers
     brave
-    btop
-    direnv
-    dust
-    eza
-    fd
     firefox
-    fzf
-    gawk
-    git
-    helix
+    # terminal
+    kitty
+    # kde apps
     kdePackages.kate
     kdePackages.kcalc
-    kitty
-    lazygit
-    libqalculate
-    mangohud
+    # media
     mpv
-    ncdu
-    nix-direnv
+    # system / hardware
+    btop
+    mangohud
     openrgb
-    pv
-    rdfind
-    ripgrep
-    squashfuse
-    stow
-    tmux
-    vdirsyncer
-    vesktop
     wl-clipboard
+    # misc
+    gawk
+    git
+    stow
     unzip
-    yazi
-    zoxide
-    # include some tools for mason
-    alejandra
-    bats
-    gcc
-    mise
-    nil
-    nixfmt
-    prettier
-    python314
-    python314Packages.pytest
-    ruff
-    statix
-    ty
-    uv
+    vesktop
   ];
-
-  programs = {
-    home-manager.enable = true;
-    direnv = {
-      enable = true;
-      nix-direnv.enable = true;
-      config = {
-        global = {log_format = "";};
-      };
-    };
-  };
 
   # user-defined HM module enablement
   theming.enable = true;
