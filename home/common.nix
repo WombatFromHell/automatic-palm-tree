@@ -33,6 +33,7 @@ in {
     lazygit
     libqalculate
     ncdu
+    nh
     pv
     rdfind
     ripgrep
