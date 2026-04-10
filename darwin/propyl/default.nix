@@ -1,8 +1,10 @@
-{ pkgs, hostArgs, ... }:
-let
-  user = hostArgs.username;
-in
 {
+  pkgs,
+  hostArgs,
+  ...
+}: let
+  user = hostArgs.username;
+in {
   nix.enable = false;
 
   users.users.${user} = {

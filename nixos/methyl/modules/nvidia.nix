@@ -4,12 +4,11 @@
   pkgs,
   hostArgs,
   ...
-}:
-let
+}: let
   moduleName = "nvidia-support";
 
   mainConfig = lib.mkIf config."${moduleName}".enable {
-    services.xserver.videoDrivers = [ "nvidia" ];
+    services.xserver.videoDrivers = ["nvidia"];
 
     hardware = {
       graphics.enable = true;
@@ -23,7 +22,7 @@ let
       };
     };
 
-    environment.systemPackages = with pkgs; [ nvtopPackages.nvidia ];
+    environment.systemPackages = with pkgs; [nvtopPackages.nvidia];
 
     environment.sessionVariables = {
       NVD_BACKEND = "direct";
@@ -53,18 +52,18 @@ let
   };
 
   cdiConfig = lib.mkIf (config."${moduleName}".cdi.enable && config.virtualisation.podman.enable) {
-    environment.systemPackages = with pkgs; [ nvidia-container-toolkit ];
+    environment.systemPackages = with pkgs; [nvidia-container-toolkit];
 
     # enable nvidia-container-toolkit support
     hardware.nvidia-container-toolkit.enable = true;
 
     # Create CDI directory
-    systemd.tmpfiles.rules = [ "d /etc/cdi 0755 root root -" ];
+    systemd.tmpfiles.rules = ["d /etc/cdi 0755 root root -"];
 
     # Generate CDI spec on boot
     systemd.services.generate-nvidia-cdi-spec = {
-      wantedBy = [ "multi-user.target" ];
-      after = [ "nvidia-container-toolkit.service" ];
+      wantedBy = ["multi-user.target"];
+      after = ["nvidia-container-toolkit.service"];
       serviceConfig.Type = "oneshot";
       script = ''
         ${pkgs.nvidia-container-toolkit}/bin/nvidia-ctk cdi generate --output /etc/cdi/nvidia.yaml
@@ -72,8 +71,7 @@ let
       '';
     };
   };
-in
-{
+in {
   options = {
     "${moduleName}" = {
       enable = lib.mkEnableOption "Enable user configured NVIDIA driver customizations";

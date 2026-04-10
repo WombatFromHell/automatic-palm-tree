@@ -24,7 +24,8 @@ rec {
   # test machines
   oxyl-cachyos = {
     hostname = "oxyl-cachyos";
-    inherit (methyl-bazzite)
+    inherit
+      (methyl-bazzite)
       system
       enable
       hm-only
@@ -34,7 +35,8 @@ rec {
   };
   oxyl-bazzite = {
     hostname = "oxyl-bazzite";
-    inherit (methyl-bazzite)
+    inherit
+      (methyl-bazzite)
       system
       enable
       hm-only

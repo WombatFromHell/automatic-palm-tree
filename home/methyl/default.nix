@@ -1,5 +1,4 @@
-{ lib, ... }:
-{
+{lib, ...}: {
   imports = [
     ./modules/monitor-session
     ./modules/monitor-session/fix-gsync.nix

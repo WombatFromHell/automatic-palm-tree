@@ -1,6 +1,5 @@
-{ pkgs, ... }:
-let
-  onSession = import ./on-session.nix { inherit pkgs; };
+{pkgs, ...}: let
+  onSession = import ./on-session.nix {inherit pkgs;};
   monitorScript = pkgs.writeShellScriptBin "monitor-dbus-session-state" ''
     #!${pkgs.bash}/bin/bash
 
@@ -83,7 +82,6 @@ let
 
     log "Screen lock monitor stopped"
   '';
-in
-{
+in {
   inherit monitorScript;
 }

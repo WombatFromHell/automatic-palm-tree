@@ -1,10 +1,12 @@
-{ config, lib, ... }:
-let
+{
+  config,
+  lib,
+  ...
+}: let
   moduleName = "virtual-surround";
   hrirWav = "hrir.wav";
   atmosPath = "${config.xdg.configHome}/pipewire/${hrirWav}";
-in
-{
+in {
   options."${moduleName}".enable =
     lib.mkEnableOption "Enable virtual surround HRIR sink for pipewire";
 
