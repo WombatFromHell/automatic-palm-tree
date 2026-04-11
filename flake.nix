@@ -8,12 +8,6 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    plasma-manager = {
-      url = "github:nix-community/plasma-manager";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.home-manager.follows = "home-manager";
-    };
-    veridian.url = "github:WombatFromHell/veridian-controller?rev=489fca55e84ca3f647227686cf1ff5da52196979"; # pin to v0.2.9
 
     # darwin inputs
     nixpkgs-darwin.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -37,9 +31,7 @@
     nixpkgs-darwin,
     home-manager,
     home-manager-darwin,
-    plasma-manager,
     nix-darwin,
-    veridian,
     ...
   }: let
     inherit (nixpkgs) lib;
