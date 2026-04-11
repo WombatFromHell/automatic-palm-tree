@@ -28,63 +28,133 @@
     self,
     flake-parts,
     nixpkgs,
-    nixpkgs-darwin,
-    home-manager,
-    home-manager-darwin,
-    nix-darwin,
     ...
   }: let
     inherit (nixpkgs) lib;
 
-    hosts = import ./lib/hosts.nix;
-    # Filter only enabled hosts
-    enabledHosts = lib.filterAttrs (_: v: v.enable or false) hosts;
-    # Filter by 'hm-only'
-    regularHosts = lib.filterAttrs (name: v: !v.hm-only) enabledHosts;
-    hmHosts = lib.filterAttrs (name: v: v.hm-only) enabledHosts;
+    # ── Dendritic host discovery ──────────────────────────────────────
+    # Each host's full config lives in its own module under
+    # modules/hosts/<name>/default.nix
+    hostsDir = ./modules/hosts;
 
-    # Generate a unique list of systems from enabled hosts
-    systems = lib.lists.unique (builtins.attrValues (builtins.mapAttrs (_: v: v.system) enabledHosts));
+    # Discover all host directories automatically
+    hostNames = builtins.attrNames (builtins.readDir hostsDir);
 
-    # shortcut to check if a host is on Darwin based on hosts.nix
-    isDarwin = hostArgs:
-      builtins.elem hostArgs.system [
-        "x86_64-darwin"
-        "aarch64-darwin"
-      ];
-
-    mkHome = import ./lib/mkhome.nix {inherit lib inputs isDarwin;};
-    mkSystem = import ./lib/mksystem.nix {
-      inherit
-        lib
-        inputs
-        isDarwin
-        mkHome
-        ;
+    # Each host file returns: { hostArgs = {...}; imports = [...]; ... }
+    # loadRaw uses pkgs=null since it's only for metadata extraction
+    loadRaw = name: import (hostsDir + "/${name}") {
+      pkgs = null;
+      inherit inputs;
     };
+
+    # getHostModule returns a wrapper module so hostArgs is consumed internally
+    getHostModule = name: {
+      imports = [(hostsDir + "/${name}")];
+      options.hostArgs = lib.mkOption {
+        type = lib.types.raw;
+        default = {};
+        internal = true;
+      };
+    };
+
+    # Filter out hosts that declare disabled = true
+    enabledHostNames =
+      lib.filter (
+        name: let v = (loadRaw name).disabled or null; in v == null || !v
+      )
+      hostNames;
+
+    # Extract hostArgs (metadata) via loadRaw (pkgs=null is fine here)
+    getHostArgs = name: (loadRaw name).hostArgs;
+
+    # Classify by hostType declared in each module (enabled only)
+    nixosHosts = lib.filter (n: ((getHostArgs n).hostType or null) == "nixos") enabledHostNames;
+    darwinHosts = lib.filter (n: ((getHostArgs n).hostType or null) == "darwin") enabledHostNames;
+    hmOnlyHosts = lib.filter (n: ((getHostArgs n).hostType or null) == "home") enabledHostNames;
+
+    # ── Builders ──────────────────────────────────────────────────────
+
+    mkNixOS = name: let
+      hostArgs = getHostArgs name;
+      inherit (hostArgs) system;
+    in
+      lib.nixosSystem {
+        inherit system;
+        modules = [
+          (getHostModule name)
+          {
+            home-manager = {
+              extraSpecialArgs = {inherit self inputs hostArgs;};
+              useGlobalPkgs = true;
+              useUserPackages = true;
+              backupFileExtension = "hm";
+              users.${hostArgs.username}.imports = [
+                ./modules/home-manager
+              ];
+            };
+          }
+        ];
+        specialArgs = {inherit self inputs hostArgs;};
+      };
+
+    mkDarwin = name: let
+      hostArgs = getHostArgs name;
+      inherit (hostArgs) system;
+    in
+      inputs.nix-darwin.lib.darwinSystem {
+        inherit system;
+        modules = [
+          (getHostModule name)
+          {
+            home-manager = {
+              extraSpecialArgs = {inherit self inputs hostArgs;};
+              useGlobalPkgs = true;
+              useUserPackages = true;
+              backupFileExtension = "hm";
+              users.${hostArgs.username}.imports = [
+                ./modules/home-manager
+              ];
+            };
+          }
+        ];
+        specialArgs = {inherit self inputs hostArgs;};
+      };
+
+    # nh auto-detection checks: <user>@<host>, then <host> alone.
+    # We provide both keys pointing to the same config for robustness.
+    mkHomeEntries =
+      lib.foldl' (
+        acc: name: let
+          hostArgs = getHostArgs name;
+          inherit (hostArgs) system;
+          cfg = inputs.home-manager.lib.homeManagerConfiguration {
+            pkgs = import nixpkgs {
+              inherit system;
+              config.allowUnfree = true;
+            };
+            extraSpecialArgs = {inherit self inputs hostArgs;};
+            modules = [(getHostModule name)];
+          };
+        in
+          acc
+          // {
+            "${hostArgs.username}@${hostArgs.hostname}" = cfg;
+            "${hostArgs.hostname}" = cfg;
+          }
+      ) {}
+      hmOnlyHosts;
+
+    allSystems = lib.lists.unique (
+      map (n: (getHostArgs n).system or null) enabledHostNames
+    );
   in
     flake-parts.lib.mkFlake {inherit inputs;} {
-      inherit systems;
+      systems = builtins.filter (s: s != null) allSystems;
 
       flake = {
-        # Auto-generate system configurations for enabled hosts
-        nixosConfigurations = lib.filterAttrs (_: v: v != null) (builtins.mapAttrs (
-            name: hostArgs:
-              if !(isDarwin hostArgs)
-              then mkSystem hostArgs
-              else null
-          )
-          regularHosts);
-
-        darwinConfigurations = lib.filterAttrs (_: v: v != null) (builtins.mapAttrs (
-            name: hostArgs:
-              if (isDarwin hostArgs)
-              then mkSystem hostArgs
-              else null
-          )
-          regularHosts);
-
-        homeConfigurations = builtins.mapAttrs (_: mkHome) hmHosts;
+        nixosConfigurations = lib.genAttrs nixosHosts mkNixOS;
+        darwinConfigurations = lib.genAttrs darwinHosts mkDarwin;
+        homeConfigurations = mkHomeEntries;
       };
     };
 }

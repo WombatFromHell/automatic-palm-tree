@@ -1,5 +1,6 @@
 {
   pkgs,
+  self,
   hostArgs,
   ...
 }: let
@@ -16,6 +17,7 @@ in {
       then "/Users/${user}"
       else "/home/${user}";
     stateVersion = "24.11";
+    sessionVariables.FLAKE = "${self.outPath}";
   };
 
   home.packages = with pkgs; [
@@ -33,7 +35,6 @@ in {
     lazygit
     libqalculate
     ncdu
-    nh
     pv
     rdfind
     ripgrep
@@ -42,7 +43,6 @@ in {
     tmux
     trash-cli
     tuckr
-    vdirsyncer
     yazi
     yt-dlp
     zoxide
@@ -51,38 +51,11 @@ in {
     fish
     helix
     starship
-
-    # Dev tools
-    alejandra
-    ansible
-    ansible-lint
-    bats
-    cachix
-    direnv
-    gcc
-    mise
-    nil
-    nix-direnv
-    nixfmt
-    prettier
-    python314
-    python314Packages.pytest
-    ruff
-    statix
-    ty
-    uv
-
-    # Fonts
-    nerd-fonts.iosevka
-    nerd-fonts.iosevka-term
-    nerd-fonts.jetbrains-mono
-
-    # Wake/peripheral
-    joystickwake
   ];
 
   programs = {
     home-manager.enable = true;
+    nh.enable = true;
     direnv = {
       enable = true;
       nix-direnv.enable = true;
@@ -95,7 +68,6 @@ in {
   services = {
     gpg-agent = {
       enable = true;
-      pinentry.package = pkgs.pinentry-qt;
       enableSshSupport = true;
       maxCacheTtl = 60480000;
       defaultCacheTtl = 60480000;

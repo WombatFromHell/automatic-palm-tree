@@ -1,11 +1,19 @@
+# Base Darwin module — common settings for all macOS hosts.
 {
   pkgs,
+  lib,
   hostArgs,
   ...
 }: let
   user = hostArgs.username;
 in {
+  imports = [../core];
+
+  nixpkgs.config.allowUnfree = true;
   nix.enable = false;
+
+  networking.computerName = lib.mkDefault hostArgs.hostname;
+  networking.hostName = lib.mkDefault hostArgs.hostname;
 
   users.users.${user} = {
     home = "/Users/${user}";
