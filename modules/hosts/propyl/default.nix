@@ -1,8 +1,4 @@
-{
-  pkgs,
-  inputs,
-  ...
-}: {
+{pkgs, ...}: {
   # ── Host metadata ─────────────────────────────────────────────────
   hostArgs = {
     hostname = "propyl";
@@ -15,25 +11,16 @@
   # ── Module imports ────────────────────────────────────────────────
   imports = [
     ../../darwin
-    inputs.home-manager-darwin.darwinModules.home-manager
   ];
 
-  # ── Home-manager (inline, needed for darwin system config) ────────
-  home-manager = {
-    useGlobalPkgs = true;
-    useUserPackages = true;
-    backupFileExtension = "hm";
-    users.josh.imports = [../../home-manager];
-  };
-
-  home.packages = with pkgs; [
-    # Fonts
+  # ── Darwin system packages (not home-manager packages) ────────────
+  environment.systemPackages = with pkgs; [
+    kitty
     nerd-fonts.hack
     nerd-fonts.fira-mono
   ];
   programs = {
     zsh.enable = true;
     fish.enable = true;
-    ghostty.enable = true;
   };
 }

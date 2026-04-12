@@ -105,6 +105,7 @@
         inherit system;
         modules = [
           (getHostModule name)
+          inputs.home-manager-darwin.darwinModules.home-manager
           {
             home-manager = {
               extraSpecialArgs = {inherit self inputs hostArgs;};

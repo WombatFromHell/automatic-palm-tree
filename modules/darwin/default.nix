@@ -10,7 +10,6 @@ in {
   imports = [../core];
 
   nixpkgs.config.allowUnfree = true;
-  nix.enable = false;
 
   networking.computerName = lib.mkDefault hostArgs.hostname;
   networking.hostName = lib.mkDefault hostArgs.hostname;
