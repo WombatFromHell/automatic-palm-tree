@@ -1,18 +1,15 @@
 {
   pkgs,
   lib,
+  config,
   self,
   hostArgs,
   ...
 }: let
-  user = hostArgs.username;
-  isDarwin = builtins.elem hostArgs.system [
-    "x86_64-darwin"
-    "aarch64-darwin"
-  ];
+  user = config.home.username;
+  isDarwin = pkgs.stdenv.isDarwin;
 in {
   home = {
-    username = user;
     homeDirectory =
       if isDarwin
       then "/Users/${user}"
