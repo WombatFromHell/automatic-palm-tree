@@ -1,5 +1,6 @@
 {
   pkgs,
+  lib,
   self,
   hostArgs,
   ...
@@ -20,38 +21,41 @@ in {
     sessionVariables.FLAKE = "${self.outPath}";
   };
 
-  home.packages = with pkgs; [
-    # CLI utilities
-    atuin
-    bat
-    btdu
-    calcurse
-    dust
-    eza
-    fd
-    fzf
-    gdu
-    khal
-    lazygit
-    libqalculate
-    ncdu
-    pv
-    rdfind
-    ripgrep
-    shikane
-    squashfuse
-    tmux
-    trash-cli
-    tuckr
-    yazi
-    yt-dlp
-    zoxide
+  home.packages = with pkgs;
+    [
+      # CLI utilities
+      atuin
+      bat
+      calcurse
+      dust
+      eza
+      fd
+      fzf
+      gdu
+      khal
+      lazygit
+      libqalculate
+      ncdu
+      pv
+      rdfind
+      ripgrep
+      squashfuse
+      tmux
+      trash-cli
+      tuckr
+      yazi
+      yt-dlp
+      zoxide
 
-    # Editors & shells
-    fish
-    helix
-    starship
-  ];
+      # Editors & shells
+      fish
+      helix
+      starship
+    ]
+    ++ lib.optionals (!isDarwin) [
+      # Linux-only
+      btdu
+    ];
 
   programs = {
     home-manager.enable = true;
