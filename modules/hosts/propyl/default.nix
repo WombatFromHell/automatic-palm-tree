@@ -16,6 +16,7 @@
   # ── Darwin system packages (not home-manager packages) ────────────
   environment.systemPackages = with pkgs; [
     git
+    gnupg
     kitty
     neovim
     nodejs_25
