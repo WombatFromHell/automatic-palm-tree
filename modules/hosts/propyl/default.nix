@@ -15,8 +15,13 @@
 
   # ── Darwin system packages (not home-manager packages) ────────────
   environment.systemPackages = with pkgs; [
+    git
     kitty
     neovim
+    nodejs_25
+    corepack
+
+    # fonts
     nerd-fonts.hack
     nerd-fonts.fira-mono
   ];
