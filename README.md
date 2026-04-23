@@ -1,172 +1,87 @@
-# Nix Flake Configuration
+Unified NixOS/Darwin/Home Manager config using **flake-parts** with automatic host discovery.
 
-A unified Nix (Linux/Darwin) and Home Manager configuration using the
-dendritic pattern with automatic host and user discovery.
+## Quick Start
 
-## Directory Structure
+```bash
+# Home Manager (auto-detects $HOSTNAME + $USER)
+home-manager switch --flake . --impure
+
+# Explicit user@host
+home-manager switch --flake .#josh@methyl-bazzite
+
+# NixOS / Darwin
+nixos-rebuild switch --flake .#<hostname>
+darwin-rebuild switch --flake .#<hostname>
+```
+
+## Structure
 
 ```
 modules/
-├── core/              # Shared NixOS/Darwin settings
-├── darwin/            # Base Darwin module
-├── home-manager/      # Base Home Manager modules
-└── hosts/
-    └── <hostname>/
-        ├── home-<user>.nix   # Per-user Home Manager config (required)
-        └── system.nix        # System-level config (optional)
+├── core/          # Discovery, builders, shared nix settings (substituters, prompt)
+├── nixos/         # Base NixOS module (unfree, user groups, stateVersion)
+├── darwin/        # Base Darwin module (shell, direnv, TouchID sudo)
+├── home-manager/  # Base HM modules (base + dev tools; gpg.nix optional)
+└── hosts/<name>/  # Auto-discovered per-host configs
+    ├── home-<user>.nix   # Per-user HM config (required for users)
+    └── system.nix        # System options: { platform, module } (optional)
 ```
 
-### File Roles
+See [DESIGN.md](./DESIGN.md) for the full architecture and dependency graph.
 
-| File              | Purpose                             | Required              |
-| ----------------- | ----------------------------------- | --------------------- |
-| `home-<user>.nix` | Per-user Home Manager config        | At least one per host |
-| `system.nix`      | System-level options (Darwin/NixOS) | Optional              |
+## Adding a Host
 
-### Auto-Inferred Metadata
-
-| Metadata   | Source                                                         |
-| ---------- | -------------------------------------------------------------- |
-| `hostname` | Parent directory name                                          |
-| `username` | Filename pattern `home-<user>.nix`                             |
-| `system`   | `system.nix` top-level `system` attr, default `"x86_64-linux"` |
-| `home.uid` | Set in `home-<user>.nix` via `home.uid` option                 |
-
-## Adding a New Host
-
-### Single-user Linux (Home Manager only)
-
-```
-modules/hosts/my-laptop/
-└── home-someuser.nix
-```
+Create `modules/hosts/<name>/` with at least one `home-<user>.nix`:
 
 ```nix
-# home-someuser.nix
+# home-josh.nix
 {pkgs, ...}: {
-  imports = [ ../../home-manager ];
-
-  home.username = "someuser";
-  home.uid = 1000;
-
-  # Per-user overrides here
+  imports = [ ../../home-manager ];  # base + dev tools
+  # imports = [ ../../home-manager/gpg.nix ];  # optional GPG agent
 }
 ```
 
-No `system.nix` needed — defaults to `x86_64-linux`, type = `"home"`.
-
-### Multi-user Host
-
-```
-modules/hosts/shared-box/
-├── home-someuser.nix
-├── home-alex.nix
-└── system.nix          # optional, shared system config
-```
-
-Both users get separate `homeConfigurations` entries:
-
-- `someuser@shared-box`
-- `alex@shared-box`
-
-### Darwin Host
-
-```
-modules/hosts/my-mac/
-├── home-someuser.nix
-└── system.nix
-```
+For NixOS/Darwin, add `system.nix`:
 
 ```nix
 # system.nix
 {
-  system = "x86_64-darwin";  # or "aarch64-darwin"
-
+  platform = "x86_64-darwin";  # or x86_64-linux (default)
   module = {pkgs, ...}: {
-    imports = [ ../../darwin ];
-
+    imports = [ ../../darwin ];  # or ../../nixos
     environment.systemPackages = with pkgs; [ git neovim ];
-    programs.zsh.enable = true;
   };
 }
 ```
 
-The `system` attr triggers `"darwin"` hostType detection. The `module` function
-is evaluated laziously within the Nix module system (so `pkgs` is available).
+The `platform` attr determines host type: `*-darwin` → Darwin, else NixOS.
+Hosts without `system.nix` are Home Manager–only (defaulting to Linux).
 
-### NixOS Host (full system management)
+## Supported Platforms
 
-```
-modules/hosts/my-server/
-├── home-someuser.nix
-└── system.nix
-```
-
-```nix
-# system.nix
-{
-  system = "x86_64-linux";  # optional — this is the default
-
-  module = {pkgs, ...}: {
-    imports = [ ../../nixos ];
-
-    # system-level NixOS options
-    services.openssh.enable = true;
-  };
-}
-```
-
-## Usage
-
-### Home Manager (standalone)
-
-```bash
-# Auto-detect current host + user
-home-manager switch --flake ~/.nix --impure
-
-# Explicit user@host
-home-manager switch --flake ~/.nix#someuser@methyl-bazzite
-
-# Dry run
-home-manager build --flake ~/.nix#someuser@methyl-bazzite --dry-run
-```
-
-### NixOS
-
-```bash
-nixos-rebuild switch --flake ~/.nix#<hostname>
-```
-
-### Darwin
-
-```bash
-darwin-rebuild switch --flake ~/.nix#<hostname>
-```
-
-### Flake Compositions
-
-Other flakes can import your modules:
-
-```nix
-{
-  inputs.myhost.url = "github:you/nix";
-  outputs = inputs: {
-    homeConfigurations.myuser =
-      inputs.home-manager.lib.homeManagerConfiguration {
-        modules = inputs.myhost.lib.mkHostHomeModule "myhost" "myuser";
-      };
-  };
-}
-```
+| Platform         | NixOS | Darwin | Home Manager |
+| ---------------- | ----- | ------ | ------------ |
+| `x86_64-linux`   | ✅    | —      | ✅           |
+| `aarch64-darwin` | —     | ✅     | ✅           |
+| `aarch64-linux`  | ✅    | —      | ✅           |
 
 ## Flake Outputs
 
-| Output                               | Description                                          |
-| ------------------------------------ | ---------------------------------------------------- |
-| `homeConfigurations."<user>@<host>"` | Home Manager config per user-host pair               |
-| `nixosConfigurations.<host>`         | NixOS system config (if system.nix exists + linux)   |
-| `darwinConfigurations.<host>`        | Darwin system config (if system.nix exists + darwin) |
-| `homeManagerModules.default`         | Shared Home Manager base modules                     |
-| `nixosModules.default`               | Shared NixOS core modules                            |
-| `darwinModules.default`              | Shared Darwin core modules                           |
-| `lib.*`                              | Helper functions for composing configurations        |
+| Output                               | Description                              |
+| ------------------------------------ | ---------------------------------------- |
+| `homeConfigurations."<user>@<host>"` | Per user-host pair                       |
+| `homeConfigurations.default`         | Auto-inferred from `$HOSTNAME` + `$USER` |
+| `nixosConfigurations.<host>`         | If `system.nix` exists on Linux          |
+| `darwinConfigurations.<host>`        | If `system.nix` exists on Darwin         |
+| `devShells.<system>.default`         | Dev shell (`nixpkgs-fmt`, `alejandra`)   |
+
+## Importing from Other Flakes
+
+```nix
+inputs.myhost = { url = "github:you/flakeroot"; };
+{
+  homeConfigurations.myuser = inputs.home-manager.lib.homeManagerConfiguration {
+    modules = [ inputs.myhost.modules.home-manager.default ];
+  };
+}
+```

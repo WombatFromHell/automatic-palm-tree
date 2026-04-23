@@ -3,11 +3,10 @@
   lib,
   config,
   self,
-  hostArgs,
   ...
 }: let
   user = config.home.username;
-  isDarwin = pkgs.stdenv.isDarwin;
+  inherit (pkgs.stdenv) isDarwin;
 in {
   home = {
     homeDirectory =
@@ -40,6 +39,7 @@ in {
       tmux
       trash-cli
       tuckr
+      vdirsyncer
       yazi
       yt-dlp
       zoxide
@@ -63,15 +63,6 @@ in {
       config = {
         global = {log_format = "";};
       };
-    };
-  };
-
-  services = {
-    gpg-agent = {
-      enable = true;
-      enableSshSupport = true;
-      maxCacheTtl = 60480000;
-      defaultCacheTtl = 60480000;
     };
   };
 }

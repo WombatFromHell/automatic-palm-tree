@@ -1,4 +1,4 @@
 {pkgs, ...}: {
-  imports = [ ../../home-manager ];
+  imports = [../../home-manager];
   # Per-user home-manager overrides go here
 }

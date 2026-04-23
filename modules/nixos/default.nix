@@ -1,20 +1,9 @@
 # Base NixOS module — common settings for all NixOS hosts.
-{
-  pkgs,
-  lib,
-  self,
-  hostArgs,
-  ...
-}: {
-  imports = [../core];
-
-  networking.hostName = lib.mkDefault hostArgs.hostname;
-
+{username, ...}: {
   nixpkgs.config.allowUnfree = true;
 
-  users.users.${hostArgs.username} = {
+  users.users.${username} = {
     isNormalUser = true;
-    uid = hostArgs.myuid;
     extraGroups = ["wheel" "networkmanager"];
   };
 

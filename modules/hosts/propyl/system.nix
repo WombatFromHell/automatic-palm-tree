@@ -1,6 +1,6 @@
 {
   # Target platform for this host (overrides default "x86_64-linux")
-  system = "x86_64-darwin";
+  nixpkgs.hostPlatform = "x86_64-darwin";
 
   # System-level configuration (evaluated as a module)
   module = {pkgs, ...}: {
