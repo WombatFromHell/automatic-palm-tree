@@ -1,14 +1,19 @@
-# Base Darwin module — common settings for all macOS hosts.
+# modules/darwin/default.nix
 {
   pkgs,
-  username,
+  lib,
+  config,
   ...
 }: {
-  users.users.${username} = {
-    home = "/Users/${username}";
-    shell = pkgs.fish;
-  };
+  users.users =
+    lib.mapAttrs (_: _: {
+      shell = pkgs.fish;
+    })
+    config.home-manager.users;
 
+  nix.enable = false;
+
+  # home is set automatically by home-manager when useUserPackages = true
   programs = {
     zsh.enable = true;
     fish.enable = true;
@@ -18,8 +23,6 @@
     };
   };
 
-  # enable TouchID support for sudo
   security.pam.services.sudo_local.touchIdAuth = true;
-
   system.stateVersion = 6;
 }
