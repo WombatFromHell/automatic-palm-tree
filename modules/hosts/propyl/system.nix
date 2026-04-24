@@ -1,5 +1,13 @@
-{pkgs, ...}: {
+{
+  pkgs,
+  username,
+  ...
+}: {
   imports = [../../darwin];
+
+  users.users.${username} = {
+    shell = pkgs.fish;
+  };
 
   environment.systemPackages = with pkgs; [
     git

@@ -18,13 +18,14 @@
       entries = builtins.readDir (hostsDir + "/${name}");
       modules = lib.filterAttrs (n: _: n != "default.nix") entries;
     in {
-      platform = meta.platform or "x86_64-linux";
+      system = meta.system or "x86_64-linux";
       hasSystem = modules ? "system.nix";
       users =
         map extractUser
         (lib.attrNames (lib.filterAttrs
           (n: t: t == "regular" && isHomeFile n)
           modules));
+      userDefaults = meta.userDefaults or (_: {});
     })
     (lib.filterAttrs (_: t: t == "directory") (builtins.readDir hostsDir));
 in {inherit discoverHosts;}

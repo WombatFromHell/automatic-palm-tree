@@ -32,6 +32,6 @@
   };
 in {
   inherit (discovery) discoverHosts;
-  inherit (builders) mkNixos mkDarwin mkHome buildConfigs;
+  inherit (builders) mkSystem mkHome buildConfigs;
   inherit coreModules;
 }

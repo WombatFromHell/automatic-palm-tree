@@ -11,10 +11,6 @@
       url = "github:LnL7/nix-darwin/master";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    haumea = {
-      url = "github:nix-community/haumea/v0.2.2";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs = inputs @ {
@@ -24,12 +20,21 @@
   }: let
     inherit (nixpkgs) lib;
     hostsDir = ./modules/hosts;
-
     core = import ./modules/core {inherit lib inputs self hostsDir;};
     configs = core.buildConfigs core.discoverHosts;
+
+    hostname =
+      if builtins.pathExists /etc/hostname
+      then lib.trim (builtins.readFile /etc/hostname)
+      else lib.trim (builtins.getEnv "HOST");
+    username = lib.trim (builtins.getEnv "USER");
   in {
     nixosConfigurations = configs.nixos;
     darwinConfigurations = configs.darwin;
-    homeConfigurations = configs.home;
+    homeConfigurations =
+      configs.home
+      // lib.optionalAttrs
+      (hostname != "" && username != "" && configs.home ? "${username}@${hostname}")
+      {default = configs.home."${username}@${hostname}";};
   };
 }

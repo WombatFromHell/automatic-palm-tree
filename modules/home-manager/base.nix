@@ -1,21 +1,11 @@
 {
   pkgs,
   lib,
-  config,
-  self,
   ...
 }: let
-  user = config.home.username;
   inherit (pkgs.stdenv) isDarwin;
 in {
-  home = {
-    homeDirectory =
-      if isDarwin
-      then "/Users/${user}"
-      else "/home/${user}";
-    stateVersion = "24.11";
-    sessionVariables.FLAKE = "${self.outPath}";
-  };
+  home.stateVersion = "24.11";
 
   home.packages = with pkgs;
     [
@@ -49,10 +39,7 @@ in {
       helix
       starship
     ]
-    ++ lib.optionals (!isDarwin) [
-      # Linux-only
-      btdu
-    ];
+    ++ lib.optionals (!isDarwin) [fish btdu];
 
   programs = {
     home-manager.enable = true;

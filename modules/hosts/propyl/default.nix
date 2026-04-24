@@ -1,3 +1,3 @@
 {
-  platform = "x86_64-darwin";
+  system = "x86_64-darwin";
 }

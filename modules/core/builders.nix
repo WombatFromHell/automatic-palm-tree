@@ -16,37 +16,42 @@
     nixpkgs.hostPlatform = lib.mkDefault system;
   };
 
-  isDarwin = lib.hasSuffix "darwin";
+  isDarwinPlatform = lib.hasSuffix "darwin";
 
   mkSystem = system: name: users: let
-    darwin = isDarwin system;
+    darwin = isDarwinPlatform system;
     entry =
       if darwin
       then inputs.nix-darwin.lib.darwinSystem
       else inputs.nixpkgs.lib.nixosSystem;
 
     hmMod =
-      lib.optional darwin
-      inputs.home-manager.darwinModules.home-manager;
+      if darwin
+      then [inputs.home-manager.darwinModules.home-manager]
+      else [inputs.home-manager.nixosModules.home-manager];
 
-    hmDefaults = lib.optional (darwin && users != []) {
-      home-manager = {
-        useGlobalPkgs = true;
-        useUserPackages = true;
-        extraSpecialArgs = {
-          inherit self inputs;
-          hostname = name;
-        };
-        users = lib.genAttrs users (
-          user:
-            import (hostsDir + "/${name}/home-${user}.nix")
-        );
+    hmCommon = {
+      useGlobalPkgs = true;
+      useUserPackages = true;
+      extraSpecialArgs = {
+        inherit self inputs;
+        hostname = name;
       };
-      # Set per-user home directories directly as nix-darwin options
+      users = lib.genAttrs users (
+        user:
+          import (hostsDir + "/${name}/home-${user}.nix")
+      );
+    };
+
+    hmDarwinDefaults = lib.optionalAttrs (darwin && users != []) {
       users.users = lib.genAttrs users (user: {
         home = "/Users/${user}";
       });
     };
+
+    hmDefaults = lib.optional (users != []) (
+      {home-manager = hmCommon;} // hmDarwinDefaults
+    );
   in
     entry {
       inherit system;
@@ -76,7 +81,7 @@
           {
             home.username = lib.mkDefault user;
             home.homeDirectory = lib.mkDefault (
-              if isDarwin system
+              if isDarwinPlatform system
               then "/Users/${user}"
               else "/home/${user}"
             );
@@ -92,22 +97,22 @@
 
   buildConfigs = discoverHosts:
     lib.foldlAttrs (acc: name: host: let
-      sys = host.platform;
-      darwin = isDarwin sys;
+      inherit (host) system;
+      darwin = isDarwinPlatform system;
     in {
       nixos =
         acc.nixos
         // lib.optionalAttrs (host.hasSystem && !darwin)
-        {${name} = mkSystem sys name host.users;};
+        {${name} = mkSystem system name host.users;};
       darwin =
         acc.darwin
         // lib.optionalAttrs (host.hasSystem && darwin)
-        {${name} = mkSystem sys name host.users;};
+        {${name} = mkSystem system name host.users;};
       home =
         acc.home
         // lib.listToAttrs (map (user: {
             name = "${user}@${name}";
-            value = mkHome sys name user;
+            value = mkHome system name user;
           })
           host.users);
     }) {
