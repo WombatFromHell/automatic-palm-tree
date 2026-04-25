@@ -11,7 +11,7 @@ in {
   home.packages = with pkgsStable;
     [
       # CLI utilities
-      atuin
+      pkgsUnstable.atuin
       bat
       eza
       fd
