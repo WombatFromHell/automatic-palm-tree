@@ -12,41 +12,42 @@ in {
       # CLI utilities
       atuin
       bat
-      calcurse
-      dust
       eza
       fd
       fzf
       gdu
-      khal
       lazygit
-      libqalculate
       ncdu
       pv
       rdfind
       ripgrep
       squashfuse
+      starship
       tmux
-      trash-cli
       tuckr
-      vdirsyncer
       yazi
-      yt-dlp
       zoxide
-
-      # Editors & shells
+    ]
+    ++ lib.optionals (!isDarwin) [
+      # linux-only packages
+      btdu
+      calcurse
+      dust
       fish
       helix
-      starship
-    ]
-    ++ lib.optionals (!isDarwin) [fish btdu];
+      khal
+      libqalculate
+      trash-cli
+      vdirsyncer
+      yt-dlp
+    ];
 
   programs = {
     home-manager.enable = true;
     nh.enable = true;
     direnv = {
       enable = true;
-      nix-direnv.enable = true;
+      nix-direnv.enable = !isDarwin;
       config = {
         global = {log_format = "";};
       };

@@ -6,7 +6,7 @@
 }: let
   discovery = import ./discovery.nix {inherit lib hostsDir;};
 
-  coreModules = [
+  systemModules = [
     {
       nix.settings = {
         experimental-features = ["nix-command" "flakes"];
@@ -27,11 +27,11 @@
     }
   ];
 
-  builders = import ./builders.nix {
-    inherit lib inputs self hostsDir coreModules;
+  builders = import ./builders {
+    inherit lib inputs self hostsDir systemModules;
   };
 in {
   inherit (discovery) discoverHosts;
   inherit (builders) mkSystem mkHome buildConfigs;
-  inherit coreModules;
+  inherit systemModules;
 }

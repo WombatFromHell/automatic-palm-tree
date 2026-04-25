@@ -1,6 +1,6 @@
 # modules/darwin/default.nix
 _: {
-  nix.enable = false;
+  nix.enable = true;
 
   programs = {
     zsh.enable = true;
