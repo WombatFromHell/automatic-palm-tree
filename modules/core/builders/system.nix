@@ -18,11 +18,6 @@
       then inputs.nix-darwin.lib.darwinSystem
       else inputs.nixpkgs.lib.nixosSystem;
 
-    lixMod =
-      if darwin
-      then [inputs.lix-module.darwinModules.default]
-      else [inputs.lix-module.nixosModules.default];
-
     hmMod =
       lib.optional darwin
       inputs.home-manager.darwinModules.home-manager;
@@ -49,7 +44,6 @@
       inherit system;
       modules =
         systemModules
-        ++ lixMod
         ++ hmMod
         ++ hmDefaults
         ++ [

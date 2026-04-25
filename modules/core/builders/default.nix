@@ -10,7 +10,6 @@
     import inputs.nixpkgs {
       inherit system;
       config.allowUnfree = true;
-      overlays = [inputs.lix-module.overlays.default];
     };
 
   system = import ./system.nix {inherit lib inputs self hostsDir systemModules isDarwinPlatform;};
