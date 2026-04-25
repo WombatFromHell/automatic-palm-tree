@@ -1,6 +1,7 @@
 # modules/darwin/default.nix
 _: {
-  nix.enable = true;
+  # don't allow 'nix' binary to be managed via flake
+  nix.enable = false;
 
   programs = {
     zsh.enable = true;

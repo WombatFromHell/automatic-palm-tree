@@ -15,31 +15,23 @@ in {
       eza
       fd
       fzf
-      gdu
       lazygit
-      ncdu
       pv
       rdfind
       ripgrep
-      squashfuse
       starship
       tmux
       tuckr
-      yazi
       zoxide
     ]
     ++ lib.optionals (!isDarwin) [
       # linux-only packages
       btdu
-      calcurse
-      dust
       fish
       helix
-      khal
-      libqalculate
-      trash-cli
-      vdirsyncer
-      yt-dlp
+      ncdu
+      squashfuse
+      yazi
     ];
 
   programs = {
