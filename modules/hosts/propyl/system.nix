@@ -1,22 +1,23 @@
 {
-  pkgs,
+  pkgsStable,
+  pkgsUnstable,
   username,
   ...
 }: {
   imports = [../../darwin];
 
   users.users.${username} = {
-    shell = pkgs.fish;
+    shell = pkgsStable.fish;
   };
 
-  environment.systemPackages = with pkgs; [
+  environment.systemPackages = with pkgsStable; [
     git
     gnupg
     kitty
 
     # node is required for lazyvim
     neovim
-    nodejs_25
+    nodejs_24
     corepack
 
     # fonts

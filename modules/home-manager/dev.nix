@@ -1,11 +1,10 @@
-{pkgs, ...}: {
-  home.packages = with pkgs; [
+{pkgsStable, ...}: {
+  home.packages = with pkgsStable; [
     # Dev tools
     alejandra
     ansible
     ansible-lint
     bats
-    cachix
     gcc
     mise
     nil

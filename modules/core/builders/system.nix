@@ -5,6 +5,8 @@
   hostsDir,
   systemModules,
   isDarwinPlatform,
+  pkgsFor,
+  pkgsUnstableFor,
 }: let
   platformModule = system: name: {
     networking.hostName = lib.mkDefault name;
@@ -13,6 +15,9 @@
 
   mkSystem = system: name: users: let
     darwin = isDarwinPlatform system;
+    pkgsStable = pkgsFor system;
+    pkgsUnstable = pkgsUnstableFor system;
+
     entry =
       if darwin
       then inputs.nix-darwin.lib.darwinSystem
@@ -20,13 +25,17 @@
 
     hmMod =
       lib.optional darwin
-      inputs.home-manager.darwinModules.home-manager;
+      inputs.home-manager-darwin.darwinModules.home-manager;
+
+    nixpkgsMod =
+      lib.optional darwin
+      {nixpkgs.pkgs = pkgsStable;};
 
     hmCommon = {
-      useGlobalPkgs = true;
+      useGlobalPkgs = false; # false so HM can use its own pkgs (unstable)
       useUserPackages = true;
       extraSpecialArgs = {
-        inherit self inputs;
+        inherit self inputs pkgsStable pkgsUnstable;
         hostname = name;
       };
       users = lib.genAttrs users (
@@ -44,6 +53,7 @@
       inherit system;
       modules =
         systemModules
+        ++ nixpkgsMod
         ++ hmMod
         ++ hmDefaults
         ++ [
@@ -51,7 +61,7 @@
           (platformModule system name)
         ];
       specialArgs = {
-        inherit self inputs;
+        inherit self inputs pkgsStable pkgsUnstable;
         username = lib.head users;
       };
     };

@@ -1,11 +1,15 @@
-{pkgs, ...}: {
+{
+  pkgsStable,
+  pkgsUnstable,
+  ...
+}: {
   imports = [
     ../../home-manager
     ../../home-manager/dev.nix
     ../../home-manager/gpg.nix
   ];
 
-  home.packages = with pkgs; [
+  home.packages = with pkgsUnstable; [
     calcurse
     khal
     libqalculate
@@ -14,5 +18,5 @@
     yt-dlp
   ];
 
-  services.gpg-agent.pinentry.package = pkgs.pinentry-qt;
+  services.gpg-agent.pinentry.package = pkgsStable.pinentry-qt;
 }

@@ -5,12 +5,19 @@
   hostsDir,
   isDarwinPlatform,
   pkgsFor,
+  pkgsUnstableFor,
 }: let
+  hmFor = system:
+    if isDarwinPlatform system
+    then inputs.home-manager-darwin
+    else inputs.home-manager;
+
   mkHome = system: name: user: let
-    pkgs = pkgsFor system;
+    pkgs = pkgsUnstableFor system;
+    pkgsStable = pkgsFor system;
   in
-    inputs.home-manager.lib.homeManagerConfiguration {
-      inherit pkgs;
+    (hmFor system).lib.homeManagerConfiguration {
+      inherit pkgs; # nixpkgs for HM itself = unstable
       modules = [
         (hostsDir + "/${name}/home-${user}.nix")
         {
@@ -24,7 +31,8 @@
         }
       ];
       extraSpecialArgs = {
-        inherit self inputs;
+        inherit self inputs pkgsStable;
+        pkgsUnstable = pkgs;
         hostname = name;
       };
     };
