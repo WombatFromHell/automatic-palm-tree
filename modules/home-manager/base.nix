@@ -1,14 +1,14 @@
 {
-  pkgsStable,
+  pkgs,
   pkgsUnstable,
   lib,
   ...
 }: let
-  inherit (pkgsStable.stdenv) isDarwin;
+  inherit (pkgs.stdenv) isDarwin;
 in {
   home.stateVersion = "24.11";
 
-  home.packages = with pkgsStable;
+  home.packages = with pkgs;
     [
       # CLI utilities
       pkgsUnstable.atuin

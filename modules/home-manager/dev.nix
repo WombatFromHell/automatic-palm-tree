@@ -1,5 +1,5 @@
-{pkgsStable, ...}: {
-  home.packages = with pkgsStable; [
+{pkgs, ...}: {
+  home.packages = with pkgs; [
     # Dev tools
     alejandra
     ansible

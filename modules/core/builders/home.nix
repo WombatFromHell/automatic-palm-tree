@@ -1,3 +1,4 @@
+# modules/core/builders/home.nix
 {
   lib,
   inputs,
@@ -13,11 +14,11 @@
     else inputs.home-manager;
 
   mkHome = system: name: user: let
-    pkgs = pkgsUnstableFor system;
-    pkgsStable = pkgsFor system;
+    pkgs = pkgsFor system; # stable nixpkgs by default
+    pkgsUnstable = pkgsUnstableFor system;
   in
     (hmFor system).lib.homeManagerConfiguration {
-      inherit pkgs; # nixpkgs for HM itself = unstable
+      inherit pkgs; # HM uses stable for its internals
       modules = [
         (hostsDir + "/${name}/home-${user}.nix")
         {
@@ -31,8 +32,7 @@
         }
       ];
       extraSpecialArgs = {
-        inherit self inputs pkgsStable;
-        pkgsUnstable = pkgs;
+        inherit self inputs pkgsUnstable;
         hostname = name;
       };
     };

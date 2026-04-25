@@ -1,3 +1,4 @@
+# modules/core/builders/system.nix
 {
   lib,
   inputs,
@@ -32,8 +33,9 @@
       {nixpkgs.pkgs = pkgsStable;};
 
     hmCommon = {
-      useGlobalPkgs = false; # false so HM can use its own pkgs (unstable)
+      useGlobalPkgs = false; # let home-manager determine its own pkgs
       useUserPackages = true;
+      pkgs = pkgsStable;
       extraSpecialArgs = {
         inherit self inputs pkgsStable pkgsUnstable;
         hostname = name;

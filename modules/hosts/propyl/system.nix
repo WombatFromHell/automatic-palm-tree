@@ -1,5 +1,5 @@
 {
-  pkgsStable,
+  pkgs,
   pkgsUnstable,
   username,
   ...
@@ -7,10 +7,10 @@
   imports = [../../darwin];
 
   users.users.${username} = {
-    shell = pkgsStable.fish;
+    shell = pkgs.fish;
   };
 
-  environment.systemPackages = with pkgsStable; [
+  environment.systemPackages = with pkgs; [
     git
     gnupg
     kitty

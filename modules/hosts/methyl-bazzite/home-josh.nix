@@ -1,5 +1,5 @@
 {
-  pkgsStable,
+  pkgs,
   pkgsUnstable,
   ...
 }: {
@@ -18,5 +18,5 @@
     yt-dlp
   ];
 
-  services.gpg-agent.pinentry.package = pkgsStable.pinentry-qt;
+  services.gpg-agent.pinentry.package = pkgs.pinentry-qt;
 }
