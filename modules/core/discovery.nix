@@ -20,6 +20,7 @@
     in {
       system = meta.system or "x86_64-linux";
       hasSystem = modules ? "system.nix";
+      standaloneHome = meta.standaloneHome or false;
       users =
         map extractUser
         (lib.attrNames (lib.filterAttrs

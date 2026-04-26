@@ -9,17 +9,19 @@
     lib.foldlAttrs (acc: name: host: let
       inherit (host) system;
       darwin = isDarwinPlatform system;
-      isNixos = host.hasSystem && !darwin; # we know it's NixOS like this
+      isNixos = host.hasSystem && !darwin;
     in {
-      nixos = acc.nixos // lib.optionalAttrs isNixos {${name} = mkSystem system name host.users;};
-      darwin = acc.darwin // lib.optionalAttrs (host.hasSystem && darwin) {${name} = mkSystem system name host.users;};
+      nixos = acc.nixos // lib.optionalAttrs isNixos {${name} = mkSystem system name host.users false;};
+      darwin = acc.darwin // lib.optionalAttrs (host.hasSystem && darwin) {${name} = mkSystem system name host.users host.standaloneHome;};
       home =
         acc.home
-        // lib.listToAttrs (map (user: {
-            name = "${user}@${name}";
-            value = mkHome system name user isNixos; # let home-manager know
-          })
-          host.users);
+        // lib.optionalAttrs (!darwin || host.standaloneHome) (
+          lib.listToAttrs (map (user: {
+              name = "${user}@${name}";
+              value = mkHome system name user isNixos;
+            })
+            host.users)
+        );
     }) {
       nixos = {};
       darwin = {};

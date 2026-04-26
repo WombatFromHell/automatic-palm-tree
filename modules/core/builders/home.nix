@@ -1,4 +1,3 @@
-# modules/core/builders/home.nix
 {
   lib,
   inputs,
