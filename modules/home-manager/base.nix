@@ -8,6 +8,8 @@
 in {
   home.stateVersion = "24.11";
 
+  manual.html.enable = false;
+
   home.packages = with pkgs;
     [
       # CLI utilities
