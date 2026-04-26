@@ -32,7 +32,7 @@ in {
       helix
       ncdu
       squashfuse
-      yazi
+      pkgsUnstable.yazi
     ];
 
   programs = {
