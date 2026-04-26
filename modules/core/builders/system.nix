@@ -28,16 +28,12 @@
     evalSystem {
       inherit system;
 
-      modules =
-        [
-          systemModules
-          (hostsDir + "/${name}/system.nix")
-          (platformModule system name)
-        ]
-        # Darwin requires explicit nixpkgs assignment
-        ++ lib.optionals darwin [
-          {nixpkgs.pkgs = pkgs;}
-        ];
+      modules = lib.flatten [
+        systemModules
+        (hostsDir + "/${name}/system.nix")
+        (platformModule system name)
+        (lib.optionals darwin {nixpkgs.pkgs = pkgs;})
+      ];
 
       # Pass args down to the 'system.nix'
       specialArgs = {
