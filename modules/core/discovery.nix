@@ -27,6 +27,9 @@
           (n: t: t == "regular" && isHomeFile n)
           modules));
       userDefaults = meta.userDefaults or (_: {});
+      homeFiles = lib.attrNames (lib.filterAttrs
+        (n: t: t == "regular" && isHomeFile n)
+        modules);
     })
     (lib.filterAttrs (_: t: t == "directory") (builtins.readDir hostsDir));
 in {inherit discoverHosts;}
