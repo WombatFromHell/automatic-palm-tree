@@ -1,3 +1,4 @@
+# modules/core/builders/configs.nix
 {
   lib,
   isDarwinPlatform,
@@ -8,14 +9,15 @@
     lib.foldlAttrs (acc: name: host: let
       inherit (host) system;
       darwin = isDarwinPlatform system;
+      isNixos = host.hasSystem && !darwin; # we know it's NixOS like this
     in {
-      nixos = acc.nixos // lib.optionalAttrs (host.hasSystem && !darwin) {${name} = mkSystem system name host.users;};
+      nixos = acc.nixos // lib.optionalAttrs isNixos {${name} = mkSystem system name host.users;};
       darwin = acc.darwin // lib.optionalAttrs (host.hasSystem && darwin) {${name} = mkSystem system name host.users;};
       home =
         acc.home
         // lib.listToAttrs (map (user: {
             name = "${user}@${name}";
-            value = mkHome system name user;
+            value = mkHome system name user isNixos; # let home-manager know
           })
           host.users);
     }) {

@@ -13,26 +13,31 @@
     then inputs.home-manager-darwin
     else inputs.home-manager;
 
-  mkHome = system: name: user: let
-    pkgs = pkgsFor system; # stable nixpkgs by default
+  mkHome = system: name: user: isNixos: let
+    # Accept the new argument
+    pkgs = pkgsFor system;
     pkgsUnstable = pkgsUnstableFor system;
+    darwin = isDarwinPlatform system;
   in
     (hmFor system).lib.homeManagerConfiguration {
-      inherit pkgs; # HM uses stable for its internals
+      inherit pkgs;
       modules = [
         (hostsDir + "/${name}/home-${user}.nix")
         {
           home.username = lib.mkDefault user;
           home.homeDirectory = lib.mkDefault (
-            if isDarwinPlatform system
+            if darwin
             then "/Users/${user}"
             else "/home/${user}"
           );
           nixpkgs.system = lib.mkDefault system;
+
+          targets.genericLinux.enable = lib.mkDefault (!isNixos && !darwin);
         }
       ];
       extraSpecialArgs = {
         inherit self inputs pkgsUnstable;
+        pkgsStable = pkgs;
         hostname = name;
       };
     };

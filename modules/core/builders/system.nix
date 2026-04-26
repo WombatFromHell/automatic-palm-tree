@@ -16,55 +16,34 @@
 
   mkSystem = system: name: users: let
     darwin = isDarwinPlatform system;
-    pkgsStable = pkgsFor system;
+
+    pkgs = pkgsFor system;
     pkgsUnstable = pkgsUnstableFor system;
 
-    entry =
+    evalSystem =
       if darwin
       then inputs.nix-darwin.lib.darwinSystem
       else inputs.nixpkgs.lib.nixosSystem;
-
-    hmMod =
-      lib.optional darwin
-      inputs.home-manager-darwin.darwinModules.home-manager;
-
-    nixpkgsMod =
-      lib.optional darwin
-      {nixpkgs.pkgs = pkgsStable;};
-
-    hmCommon = {
-      useGlobalPkgs = false; # let home-manager determine its own pkgs
-      useUserPackages = true;
-      pkgs = pkgsStable;
-      extraSpecialArgs = {
-        inherit self inputs pkgsStable pkgsUnstable;
-        hostname = name;
-      };
-      users = lib.genAttrs users (
-        user:
-          import (hostsDir + "/${name}/home-${user}.nix")
-      );
-    };
-
-    hmDefaults = lib.optional (darwin && users != []) {
-      home-manager = hmCommon;
-      users.users = lib.genAttrs users (user: {home = "/Users/${user}";});
-    };
   in
-    entry {
+    evalSystem {
       inherit system;
+
       modules =
-        systemModules
-        ++ nixpkgsMod
-        ++ hmMod
-        ++ hmDefaults
-        ++ [
+        [
+          systemModules
           (hostsDir + "/${name}/system.nix")
           (platformModule system name)
+        ]
+        # Darwin requires explicit nixpkgs assignment
+        ++ lib.optionals darwin [
+          {nixpkgs.pkgs = pkgs;}
         ];
+
+      # Pass args down to the 'system.nix'
       specialArgs = {
-        inherit self inputs pkgsStable pkgsUnstable;
-        username = lib.head users;
+        inherit self inputs pkgsUnstable;
+        pkgsStable = pkgs;
+        username = lib.head users; # useful abstraction
       };
     };
 in {inherit mkSystem;}
