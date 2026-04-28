@@ -9,7 +9,7 @@
   systemModules = [
     {
       nix.settings = {
-        experimental-features = ["nix-command" "flakes"];
+        experimental-features = ["nix-command" "flakes" "ca-derivations"];
         bash-prompt-prefix = "(nix:$name) ";
         substituters = [
           "https://cache.nixos.org"
