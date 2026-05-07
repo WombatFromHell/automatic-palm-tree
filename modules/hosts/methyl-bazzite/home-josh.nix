@@ -1,6 +1,7 @@
 {
   pkgs,
   pkgsUnstable,
+  lib,
   ...
 }: {
   imports = [

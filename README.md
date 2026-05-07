@@ -58,8 +58,13 @@ nh home switch --rollback
 modules/
 ├── core/
 │   ├── default.nix          # Entry: imports discovery + builders, exposes coreModules
-│   ├── discovery.nix        # Scans modules/hosts/<name>/ → {system, hasSystem, users}
-│   └── builders.nix         # mkSystem (NixOS/darwin), mkHome (HM), buildConfigs (foldlAttrs)
+│   ├── discovery.nix        # Scans modules/hosts/<name>/ → {system, hasSystem, standaloneHome, users, userDefaults, homeFiles, unfreeStable, unfreeUnstable}
+│   └── builders/
+│       ├── default.nix      # pkgsFor/pkgsUnstableFor, mkAllowUnfree predicate
+│       ├── system.nix       # mkSystem (NixOS/darwin), automaticHomeManagerModule for darwin
+│       ├── home.nix         # mkHome (HM), distinct hm input per platform
+│       ├── home-darwin.nix  # Implicit HM module for Darwin: useGlobalPkgs, per-user imports
+│       └── configs.nix      # buildConfigs (foldlAttrs → nixos | darwin | home)
 ├── nixos/
 │   └── default.nix          # Base NixOS: unfree, user groups, stateVersion
 ├── darwin/
@@ -82,7 +87,10 @@ modules/
 ### How Host Discovery Works
 
 1. `discovery.nix` scans `modules/hosts/` for directories
-2. Each directory's `default.nix` is imported to read `system` (defaults to `x86_64-linux`)
+2. Each directory's `default.nix` is imported to read metadata:
+   - `system` (defaults to `x86_64-linux`)
+   - `standaloneHome` (defaults to `false`; when `true`, Darwin hosts skip system config)
+   - `unfreeStable` / `unfreeUnstable` (whitelisted unfree packages per pkgs input)
 3. Files matching `home-*.nix` are parsed for usernames
 4. Presence of `system.nix` determines if the host is a full system config or HM-only
 5. `system` ending in `darwin` → Darwin; otherwise → NixOS
@@ -136,6 +144,13 @@ Create `modules/hosts/<name>/` with at minimum a `default.nix`:
 Add `system.nix` alongside `home-<user>.nix`:
 
 ```nix
+# modules/hosts/myhost/default.nix
+{
+  system = "x86_64-linux";  # or "aarch64-darwin", etc.
+  unfreeStable = [];
+  unfreeUnstable = [];
+}
+
 # modules/hosts/myhost/system.nix
 { pkgs, username, ... }:
 {
@@ -151,6 +166,33 @@ Add `system.nix` alongside `home-<user>.nix`:
 ```
 
 > **Note:** The `system` attribute in `default.nix` determines host type: `*-darwin` → Darwin, else NixOS. `system.nix` is imported directly as a NixOS/Darwin module — it receives `{ pkgs, username, ... }` as special args, not `{ system, module }`.
+
+### Home Manager–Only Darwin Host
+
+Set `standaloneHome = true` in `default.nix` to skip the system configuration and produce only `homeConfigurations`:
+
+```nix
+# modules/hosts/myhost/default.nix
+{
+  system = "aarch64-darwin";
+  standaloneHome = true;
+}
+```
+
+### Unfree Packages
+
+If you need non-free packages, declare them in `default.nix`. Each pkgs input has its own whitelist — a package must be listed under the correct key:
+
+```nix
+# modules/hosts/myhost/default.nix
+{
+  system = "x86_64-linux";
+  unfreeStable = [ "vscodium" ];       # from nixpkgs (stable)
+  unfreeUnstable = [ "some-unfree-pkg" ];  # from nixpkgs-unstable
+}
+```
+
+To find the exact package name: `nix eval --raw nixpkgs#<pkg>.pname`
 
 ## Supported Platforms
 
@@ -179,7 +221,7 @@ homeConfigurations.myuser = inputs.home-manager.lib.homeManagerConfiguration {
 ## Core Settings (Applied to All Configs)
 
 - **Unfree packages:** allowed
-- **Substituters:** cache.nixos.org, wombatfromhell.cachix.org, nix-community.cachix.org, cache.lix.systems
+- **Substituters:** cache.nixos.org, wombatfromhell.cachix.org, nix-community.cachix.org
 - **Prompt:** `(nix:$name)` when inside a derivation
 - **Experimental features:** `nix-command`, `flakes`
 

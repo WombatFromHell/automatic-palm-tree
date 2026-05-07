@@ -8,6 +8,7 @@
 
   users.users.${username} = {
     shell = pkgs.fish;
+    home = "/Users/${username}";
   };
 
   environment.systemPackages = with pkgs; [

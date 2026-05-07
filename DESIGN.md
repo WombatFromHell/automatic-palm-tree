@@ -14,42 +14,46 @@ graph TB
     end
 
     subgraph Core ["Core Infrastructure"]
-        coreDef["core/default.nix"]
-        disc["core/discovery.nix"]
-        build["core/builders.nix"]
+        coreDef["modules/core/default.nix"]
+        disc["modules/core/discovery.nix"]
+        builders["modules/core/builders/\n(system.nix, home.nix, configs.nix)"]
         coreMod["coreModules\n(nix settings: experimental features, prompt, substituters, trusted keys)"]
     end
 
     subgraph BaseM["Base Modules"]
-        nixosMod["nixos/default.nix"]
-        darwinMod["darwin/default.nix"]
-        hmDef["home-manager/default.nix"]
-        hmBase["home-manager/base.nix"]
-        hmDev["home-manager/dev.nix"]
-        hmGpg["home-manager/gpg.nix"]
+        nixosMod["modules/nixos/default.nix"]
+        darwinMod["modules/darwin/default.nix"]
+        hmDef["modules/home-manager/default.nix"]
+        hmBase["modules/home-manager/base.nix"]
+        hmDev["modules/home-manager/dev.nix"]
+        hmGpg["modules/home-manager/gpg.nix"]
     end
 
     subgraph Hosts ["Host Configs (per directory)"]
+        hostDef["modules/hosts/<name>/default.nix\n(system, standaloneHome, unfreeStable, unfreeUnstable)"]
         sysNix["system.nix"]
         homeNix["home-<user>.nix"]
     end
 
-    nixpkgs --> build
-    hm --> build
-    darwin --> build
+    hostDef --> disc
+
+    nixpkgs --> builders
+    nixpkgs-darwin --> builders
+    nixpkgs-unstable --> builders
+    hm --> builders
+    hm-darwin --> builders
+    darwin --> builders
     fp --> coreDef
 
     coreDef --> disc
-    coreDef --> build
+    coreDef --> builders
     coreDef --> coreMod
 
     hmDef --> hmBase
-    hmDef --> hmDev
 
     sysNix -.-> darwinMod
     sysNix -.-> nixosMod
     homeNix -.-> hmDef
-    homeNix -.-> hmGpg
 
     style Core fill:#e1f5fe
     style BaseM fill:#f3e5f5
@@ -63,19 +67,20 @@ Runtime evaluation flow from flake entry point to final configurations.
 ```mermaid
 flowchart LR
     subgraph E ["Entry: flake.nix"]
-        core["core/default.nix\n(imports discovery + builders)"]
+        core["modules/core/default.nix\n(imports discovery + builders, exposes coreModules)"]
         hostsDir["./modules/hosts/"]
     end
 
     subgraph D ["Discovery Phase"]
         disc["discoverHosts\n(scans hostsDir, reads default.nix per host)"]
-        hInfo{"Host info:\n{hasSystem, users, system}"}
+        hInfo{"Host info:\n{system, hasSystem, standaloneHome,\n users, userDefaults, homeFiles,\n unfreeStable, unfreeUnstable}"}
     end
 
     subgraph B ["Build Phase"]
         buildConfigs["buildConfigs\n(foldlAttrs → nixos | darwin | home)"]
-        mkNixos["mkSystem → nixpkgs.lib.nixosSystem\n(or nix-darwin.darwinSystem)"]
-        mkHome["mkHome\n(homeManagerConfiguration)"]
+        mkSystem["mkSystem (system.nix)\nnixpkgs.lib.nixosSystem / darwin.darwinSystem\npkgsStable + pkgsUnstable per input"]
+        mkHome["mkHome (home.nix)\nhomeManagerConfiguration\ndistinct hm input per platform"]
+        autoHM["automaticHomeManagerModule\n(home-darwin.nix: useGlobalPkgs,\n per-user imports, extraSpecialArgs)"]
     end
 
     subgraph O ["Outputs"]
@@ -91,12 +96,12 @@ flowchart LR
     disc --> hInfo
     hInfo --> buildConfigs
 
-    buildConfigs -.->|Linux + hasSystem| mkNixos
-    buildConfigs -.->|Darwin + hasSystem| mkNixos
+    buildConfigs -.->|Linux + hasSystem| mkSystem
+    buildConfigs -.->|Darwin + hasSystem| mkSystem
     buildConfigs -.->|all hosts with users| mkHome
 
-    mkNixos --> nixosOut
-    mkNixos --> darwinOut
+    mkSystem --> nixosOut
+    mkSystem --> darwinOut
     mkHome --> homeOut
 
     homeOut --> autoDef
@@ -119,7 +124,7 @@ flowchart TD
     classify -->|no| linuxHost["NixOS or HM-only host"]
 
     darwinHost --> hasSys{"system.nix exists?"}
-    hasSys -->|yes| fullDarwin["darwinConfigurations.<host>\n+ homeConfigurations.*"]
+    hasSys -->|yes| fullDarwin["darwinConfigurations.<host>\n+ homeConfigurations.*\n(unless standaloneHome=true)"]
     hasSys -->|no| hmOnlyDarwin["homeConfigurations only"]
 
     linuxHost --> hasSys2{"system.nix exists?"}
@@ -167,9 +172,10 @@ flowchart LR
 
 Same as NixOS, plus:
 
-- `inputs.home-manager.darwinModules.home-manager` used in `hmMod` (vs `nixosModules` on Linux)
-- `hmDefaults` (home-manager.users → per-user home-\*.nix imports) applied when `users != []`
-- `hmDarwinDefaults` (`users.users.<user>.home = "/Users/<user>"`) applied only when `darwin && users != []`
+- Uses `inputs.home-manager-darwin.darwinModules.home-manager` (vs `nixosModules` on Linux)
+- Uses `inputs.nixpkgs-darwin` for stable packages (`pkgsStable`) and `inputs.nixpkgs-unstable` for unstable (`pkgsUnstable`)
+- `automaticHomeManagerModule` from `home-darwin.nix`: sets `useGlobalPkgs = true`, `useUserPackages = true`, per-user imports, and `extraSpecialArgs`
+- `nixpkgs.pkgs = pkgs` override in darwin module list
 - All other modules identical
 
 ### Home Manager Config (`<user>@<host>`)
@@ -177,16 +183,16 @@ Same as NixOS, plus:
 ```mermaid
 flowchart LR
     subgraph M2["Modules (merged in order)"]
-        coreMod2["coreModules\n(nix settings: experimental features, prompt, substituters, trusted keys)"]
         homeHost["home-<user>.nix\n(host-specific HM options)"]
-        defaults["implicit defaults:\n  home.username = <user>\n  home.homeDirectory = /Users/<user> (Darwin)\n                         /home/<user> (Linux)\n  nixpkgs.system = <system>\n  nix.package = pkgs.nix"]
+        defaults["implicit defaults:\n  home.username = <user>\n  home.homeDirectory = /Users/<user> (Darwin)\n                         /home/<user> (Linux)\n  nixpkgs.system = <system>\n  targets.genericLinux.enable"]
     end
     subgraph SA2["extraSpecialArgs"]
         self2["self"]
         inputs2["flake inputs"]
         hostname2["hostname = <host>"]
+        pkgsStable2["pkgsStable (stable nixpkgs)"]
+        pkgsUnstable2["pkgsUnstable (nixpkgs-unstable)"]
     end
-    coreMod2 --> final2
     homeHost --> final2
     defaults --> final2
     self2 --> final2
@@ -204,7 +210,7 @@ graph LR
     end
 
     subgraph Eval ["Evaluation time"]
-        disc["discoverHosts\n→ {<host>: {hasSystem, users, system}}"]
+        disc["discoverHosts\n→ {<host>: {system, hasSystem, standaloneHome,\n users, userDefaults, homeFiles,\n unfreeStable, unfreeUnstable}}"]
         build["buildConfigs\n(foldlAttrs → {nixos, darwin, home})"]
     end
 
@@ -232,9 +238,14 @@ This flake is designed to work seamlessly with [nh (nhctl)](https://github.com/n
 
 ## Key Design Decisions
 
-| Decision                                                     | Rationale                                                                                                                                                          |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `system` read from `default.nix` in discovery                | `discoverHosts` reads `meta.system` directly from each host's `default.nix`, falling back to `x86_64-linux` if undefined                                           |
-| `system.nix` imported as a module (not `{ system, module }`) | `mkSystem` imports `system.nix` directly as a NixOS/Darwin module; `system` is inherited from `default.nix` via `inherit system`                                   |
-| `autoDefault` uses env vars at evaluation time               | Enables `home-manager switch --flake .` without specifying a config key, but only when the current user/host matches a known pair                                  |
-| Home Manager built for all hosts with users                  | `mkHome` runs for every user in every host; both NixOS and Darwin system configs include the home-manager module with per-user configs merged via `hmCommon.users` |
+| Decision                                                                    | Rationale                                                                                                                                                                        |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `system` read from `default.nix` in discovery                               | `discoverHosts` reads `meta.system` directly from each host's `default.nix`, falling back to `x86_64-linux` if undefined                                                         |
+| `system.nix` imported as a module (not `{ system, module }`)                | `mkSystem` imports `system.nix` directly as a NixOS/Darwin module; `system` is inherited from `default.nix` via `inherit system`                                                 |
+| `autoDefault` uses env vars at evaluation time                              | Enables `home-manager switch --flake .` without specifying a config key, but only when the current user/host matches a known pair                                                |
+| Home Manager built for all hosts with users                                 | `mkHome` runs for every user in every host; both NixOS and Darwin system configs include the home-manager module with per-user configs merged via `hmCommon.users`               |
+| Per-pkgs-input unfree predicate (`mkAllowUnfree`)                           | Each pkgs input (stable/unstable) has its own allowUnfreePredicate, so unfree packages are whitelisted per-input. Build fails if an unfree package is used without being listed. |
+| Separate `nixpkgs-darwin` and `home-manager-darwin` inputs for Darwin hosts | Darwin builds use platform-specific nixpkgs and home-manager branches to avoid cross-platform incompatibilities                                                                  |
+| `standaloneHome` metadata field                                             | When `true`, a Darwin host skips `darwinConfigurations` entirely, producing only `homeConfigurations` — useful for HM-only setups on macOS                                       |
+| Stable vs unstable package sets (`pkgsStable` / `pkgsUnstable`)             | Hosts declare `unfreeStable` and `unfreeUnstable` separately; stable uses `nixpkgs-darwin`/`nixpkgs`, unstable always uses `nixpkgs-unstable`                                    |
+| `home-darwin.nix` automatic module for Darwin                               | On Darwin, an implicit home-manager module is injected with `useGlobalPkgs = true`, per-user imports, and shared specialArgs — avoiding duplication in system.nix                |

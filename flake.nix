@@ -31,18 +31,9 @@
     core = import ./modules/core {inherit lib inputs self hostsDir;};
     configs = core.buildConfigs core.discoverHosts;
 
-    hostname =
-      if builtins.pathExists /etc/hostname
-      then lib.trim (builtins.readFile /etc/hostname)
-      else lib.trim (builtins.getEnv "HOST");
-    username = lib.trim (builtins.getEnv "USER");
   in {
     nixosConfigurations = configs.nixos;
     darwinConfigurations = configs.darwin;
-    homeConfigurations =
-      configs.home
-      // lib.optionalAttrs
-      (hostname != "" && username != "" && configs.home ? "${username}@${hostname}")
-      {default = configs.home."${username}@${hostname}";};
+    homeConfigurations = configs.home;
   };
 }

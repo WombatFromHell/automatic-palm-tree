@@ -9,28 +9,22 @@
   pkgsUnstable,
 }: {
   home-manager = {
-    useGlobalPkgs = false;
+    useGlobalPkgs = true;
     useUserPackages = true;
 
     extraSpecialArgs = {
-      inherit self inputs;
-      inherit pkgsUnstable;
+      inherit self inputs pkgsUnstable;
       pkgsStable = pkgs;
       hostname = name;
     };
 
     users = lib.genAttrs users (user: {
-      config,
-      pkgs,
-      ...
-    }: {
-      imports =
-        lib.optional
-        (builtins.pathExists (hostsDir + "/${name}/home-${user}.nix"))
-        (hostsDir + "/${name}/home-${user}.nix");
+      imports = let
+        userHomeFile = hostsDir + "/${name}/home-${user}.nix";
+      in
+        lib.optional (builtins.pathExists userHomeFile) userHomeFile;
 
       home.username = lib.mkDefault user;
-      home.homeDirectory = lib.mkForce "/Users/${user}";
     });
   };
 }

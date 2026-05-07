@@ -10,8 +10,8 @@
     nil
     nixfmt
     prettier
-    python314
-    python314Packages.pytest
+    python3
+    python3Packages.pytest
     ruff
     shellcheck
     shfmt

@@ -12,10 +12,9 @@
     then inputs.home-manager-darwin
     else inputs.home-manager;
 
-  mkHome = system: name: user: isNixos: let
-    # Accept the new argument
-    pkgs = pkgsFor system;
-    pkgsUnstable = pkgsUnstableFor system;
+  mkHome = system: name: user: isNixos: unfreeStable: unfreeUnstable: let
+    pkgs = pkgsFor system unfreeStable;
+    pkgsUnstable = pkgsUnstableFor system unfreeUnstable;
     darwin = isDarwinPlatform system;
   in
     (hmFor system).lib.homeManagerConfiguration {
@@ -24,13 +23,12 @@
         (hostsDir + "/${name}/home-${user}.nix")
         {
           home.username = lib.mkDefault user;
-          home.homeDirectory = lib.mkDefault (
+          home.homeDirectory = lib.mkForce (
             if darwin
             then "/Users/${user}"
             else "/home/${user}"
           );
           nixpkgs.system = lib.mkDefault system;
-
           targets.genericLinux.enable = lib.mkDefault (!isNixos && !darwin);
         }
       ];

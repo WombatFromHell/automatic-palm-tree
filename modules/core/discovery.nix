@@ -30,6 +30,8 @@
       homeFiles = lib.attrNames (lib.filterAttrs
         (n: t: t == "regular" && isHomeFile n)
         modules);
+      unfreeStable = meta.unfreeStable or [];
+      unfreeUnstable = meta.unfreeUnstable or [];
     })
     (lib.filterAttrs (_: t: t == "directory") (builtins.readDir hostsDir));
 in {inherit discoverHosts;}

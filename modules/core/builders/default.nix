@@ -7,20 +7,23 @@
 }: let
   isDarwinPlatform = lib.hasSuffix "darwin";
 
-  pkgsFor = system:
+  # Predicate builder: checks if a package's name (pname > name) is in the unfree list.
+  mkAllowUnfree = unfreeList: pkg: builtins.elem (lib.getName pkg) unfreeList;
+
+  pkgsFor = system: unfreeList:
     import (
       if isDarwinPlatform system
       then inputs.nixpkgs-darwin
       else inputs.nixpkgs
     ) {
       inherit system;
-      config.allowUnfree = true;
+      config.allowUnfreePredicate = mkAllowUnfree unfreeList;
     };
 
-  pkgsUnstableFor = system:
+  pkgsUnstableFor = system: unfreeList:
     import inputs.nixpkgs-unstable {
       inherit system;
-      config.allowUnfree = true;
+      config.allowUnfreePredicate = mkAllowUnfree unfreeList;
     };
 
   system = import ./system.nix {

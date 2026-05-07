@@ -13,10 +13,10 @@
     nixpkgs.hostPlatform = lib.mkDefault system;
   };
 
-  mkSystem = system: name: users: standaloneHome: let
+  mkSystem = system: name: users: standaloneHome: unfreeStable: unfreeUnstable: let
     darwin = isDarwinPlatform system;
-    pkgs = pkgsFor system;
-    pkgsUnstable = pkgsUnstableFor system;
+    pkgs = pkgsFor system unfreeStable;
+    pkgsUnstable = pkgsUnstableFor system unfreeUnstable;
 
     automaticHomeManagerModule = lib.optionalAttrs (darwin && !standaloneHome) (
       import ./home-darwin.nix {
