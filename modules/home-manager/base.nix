@@ -8,7 +8,11 @@
 in {
   home.stateVersion = "24.11";
 
-  manual.html.enable = false;
+  manual = {
+    html.enable = false;
+    json.enable = false;
+    manpages.enable = false;
+  };
 
   home.packages = with pkgs;
     [
