@@ -43,7 +43,10 @@ in {
 
   programs = {
     home-manager.enable = true;
-    nh.enable = true;
+    nh = {
+      enable = true;
+      package = pkgsUnstable.nh;
+    };
     direnv = {
       enable = true;
       nix-direnv.enable = !isDarwin;
