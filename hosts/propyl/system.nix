@@ -1,10 +1,11 @@
 {
+  self,
   pkgs,
   pkgsUnstable,
   username,
   ...
 }: {
-  imports = [../../darwin];
+  imports = [self.flakeModules.darwin];
 
   users.users.${username} = {
     shell = pkgs.fish;

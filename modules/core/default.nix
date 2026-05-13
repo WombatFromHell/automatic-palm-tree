@@ -1,15 +1,16 @@
 {
+  config,
   lib,
   inputs,
   self,
-  hostsDir,
+  ...
 }: let
-  discovery = import ./discovery.nix {inherit lib hostsDir;};
+  discovery = import ./discovery.nix {inherit lib self;};
 
   systemModules = [
     {
       nix.settings = {
-        experimental-features = ["nix-command" "flakes" "ca-derivations"];
+        experimental-features = ["nix-command" "flakes"];
         bash-prompt-prefix = "(nix:$name) ";
         substituters = [
           "https://cache.nixos.org"
@@ -30,10 +31,14 @@
   ];
 
   builders = import ./builders {
-    inherit lib inputs self hostsDir systemModules;
+    inherit lib inputs self systemModules;
+    inherit (discovery) discoverHosts;
   };
 in {
-  inherit (discovery) discoverHosts;
-  inherit (builders) mkSystem mkHome buildConfigs;
-  inherit systemModules;
+  # Merge the final configurations into the flake outputs
+  config.flake = {
+    nixosConfigurations = builders.buildConfigs.nixos;
+    darwinConfigurations = builders.buildConfigs.darwin;
+    homeConfigurations = builders.buildConfigs.home;
+  };
 }

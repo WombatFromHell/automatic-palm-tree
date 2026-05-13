@@ -1,13 +1,13 @@
 {
+  self,
   pkgs,
   pkgsUnstable,
-  lib,
   ...
 }: {
   imports = [
-    ../../home-manager
-    ../../home-manager/dev.nix
-    ../../home-manager/gpg.nix
+    self.flakeModules.home-manager
+    (self.flakeModules.home-manager + "/dev.nix")
+    (self.flakeModules.home-manager + "/gpg.nix")
   ];
 
   home.packages = with pkgsUnstable; [

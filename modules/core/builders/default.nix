@@ -2,12 +2,11 @@
   lib,
   inputs,
   self,
-  hostsDir,
   systemModules,
+  discoverHosts,
 }: let
   isDarwinPlatform = lib.hasSuffix "darwin";
 
-  # Predicate builder: checks if a package's name (pname > name) is in the unfree list.
   mkAllowUnfree = unfreeList: pkg: builtins.elem (lib.getName pkg) unfreeList;
 
   pkgsFor = system: unfreeList:
@@ -27,13 +26,13 @@
     };
 
   system = import ./system.nix {
-    inherit lib inputs self hostsDir systemModules isDarwinPlatform pkgsFor pkgsUnstableFor;
+    inherit lib inputs self systemModules isDarwinPlatform pkgsFor pkgsUnstableFor;
   };
   home = import ./home.nix {
-    inherit lib inputs self hostsDir isDarwinPlatform pkgsFor pkgsUnstableFor;
+    inherit lib inputs self isDarwinPlatform pkgsFor pkgsUnstableFor;
   };
   configs = import ./configs.nix {
-    inherit lib isDarwinPlatform;
+    inherit lib isDarwinPlatform discoverHosts;
     inherit (system) mkSystem;
     inherit (home) mkHome;
   };

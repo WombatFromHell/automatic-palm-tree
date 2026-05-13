@@ -19,21 +19,23 @@
       url = "github:LnL7/nix-darwin/nix-darwin-25.11";
       inputs.nixpkgs.follows = "nixpkgs-darwin";
     };
+
+    flake-parts.url = "github:hercules-ci/flake-parts";
   };
 
   outputs = inputs @ {
     self,
-    nixpkgs,
+    flake-parts,
     ...
-  }: let
-    inherit (nixpkgs) lib;
-    hostsDir = ./modules/hosts;
-    core = import ./modules/core {inherit lib inputs self hostsDir;};
-    configs = core.buildConfigs core.discoverHosts;
+  }:
+    flake-parts.lib.mkFlake {inherit inputs;} {
+      imports = [./modules];
 
-  in {
-    nixosConfigurations = configs.nixos;
-    darwinConfigurations = configs.darwin;
-    homeConfigurations = configs.home;
-  };
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
+    };
 }

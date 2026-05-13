@@ -2,7 +2,6 @@
   lib,
   inputs,
   self,
-  hostsDir,
   systemModules,
   isDarwinPlatform,
   pkgsFor,
@@ -13,14 +12,21 @@
     nixpkgs.hostPlatform = lib.mkDefault system;
   };
 
-  mkSystem = system: name: users: standaloneHome: unfreeStable: unfreeUnstable: let
+  mkSystem = {
+    system,
+    name,
+    users,
+    standaloneHome ? false,
+    unfreeStable ? [],
+    unfreeUnstable ? [],
+  }: let
     darwin = isDarwinPlatform system;
     pkgs = pkgsFor system unfreeStable;
     pkgsUnstable = pkgsUnstableFor system unfreeUnstable;
 
     automaticHomeManagerModule = lib.optionalAttrs (darwin && !standaloneHome) (
       import ./home-darwin.nix {
-        inherit lib inputs self hostsDir name users pkgs pkgsUnstable;
+        inherit lib inputs self name users pkgs pkgsUnstable;
       }
     );
 
@@ -34,7 +40,7 @@
 
       modules = lib.flatten [
         systemModules
-        (hostsDir + "/${name}/system.nix")
+        (self + /hosts/${name}/system.nix)
         (platformModule system name)
         (lib.optionals darwin [
           {nixpkgs.pkgs = pkgs;}

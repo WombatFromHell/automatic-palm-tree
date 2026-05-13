@@ -2,7 +2,6 @@
   lib,
   inputs,
   self,
-  hostsDir,
   name,
   users,
   pkgs,
@@ -20,7 +19,7 @@
 
     users = lib.genAttrs users (user: {
       imports = let
-        userHomeFile = hostsDir + "/${name}/home-${user}.nix";
+        userHomeFile = self + /hosts/${name}/home-${user}.nix;
       in
         lib.optional (builtins.pathExists userHomeFile) userHomeFile;
 

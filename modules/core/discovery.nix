@@ -1,7 +1,9 @@
 {
   lib,
-  hostsDir,
+  self,
 }: let
+  hostsDir = self + /hosts;
+
   readMeta = name: let
     path = hostsDir + "/${name}/default.nix";
   in
@@ -26,7 +28,6 @@
         (lib.attrNames (lib.filterAttrs
           (n: t: t == "regular" && isHomeFile n)
           modules));
-      userDefaults = meta.userDefaults or (_: {});
       homeFiles = lib.attrNames (lib.filterAttrs
         (n: t: t == "regular" && isHomeFile n)
         modules);
