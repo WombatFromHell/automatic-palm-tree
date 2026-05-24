@@ -1,14 +1,14 @@
-{self, ...}: {
+_: {
   system = "x86_64-linux";
   username = "josh";
   isNixOS = false;
   unfreeStable = [];
   unfreeUnstable = [];
 
-  imports = [
-    self.flakeModules.home-manager
-    (self.flakeModules.home-manager + "/dev.nix")
-    (self.flakeModules.home-manager + "/gpg.nix")
+  features = [
+    "hm-base"
+    "hm-dev"
+    "hm-gpg"
   ];
 
   home = {
@@ -17,11 +17,9 @@
     ...
   }: {
     home.packages = with pkgsUnstable; [
-      calcurse
       khal
       libqalculate
       trash-cli
-      vdirsyncer
       yt-dlp
     ];
 
