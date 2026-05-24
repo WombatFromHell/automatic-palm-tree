@@ -9,18 +9,27 @@
   featuresLib = import ../features.nix {inherit lib self;};
 
   # Filter strictly for Standalone Home Manager hosts
-  hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or true)) discovery;
+  # Note: changed `or true` to `or false` so HM is the default if omitted
+  hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or false)) discovery;
 in {
   flake.homeConfigurations =
     lib.mapAttrs' (
       filename: h: let
         inherit (h) name config;
         host = config;
-        pkgs = pkgsLib.mkPkgs host.system (host.unfreeStable or []);
-        pkgsUnstable = pkgsLib.mkPkgsUnstable host.system (host.unfreeUnstable or []);
+
+        # 1. Extract attributes and apply defaults safely
+        system = host.system or "x86_64-linux";
+        unfreeStable = host.unfreeStable or [];
+        unfreeUnstable = host.unfreeUnstable or [];
+
+        pkgs = pkgsLib.mkPkgs system unfreeStable;
+        pkgsUnstable = pkgsLib.mkPkgsUnstable system unfreeUnstable;
 
         hostContext = {
-          inherit (host) system username unfreeStable unfreeUnstable;
+          # 2. Inherit from the local scope
+          inherit system unfreeStable unfreeUnstable;
+          inherit (host) username;
           hostname = name;
           inherit pkgs pkgsUnstable inputs self;
         };

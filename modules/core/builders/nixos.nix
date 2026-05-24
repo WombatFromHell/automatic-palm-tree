@@ -9,18 +9,26 @@
   featuresLib = import ../features.nix {inherit lib self;};
 
   # Filter strictly for NixOS hosts
-  nixosHosts = lib.filterAttrs (_: h: h.config.isNixOS or true) discovery;
+  nixosHosts = lib.filterAttrs (_: h: h.config.isNixOS or false) discovery;
 in {
   flake.nixosConfigurations =
     lib.mapAttrs' (
       filename: h: let
         inherit (h) name config;
         host = config;
-        pkgs = pkgsLib.mkPkgs host.system (host.unfreeStable or []);
-        pkgsUnstable = pkgsLib.mkPkgsUnstable host.system (host.unfreeUnstable or []);
+
+        # 1. Extract attributes and apply defaults safely
+        system = host.system or "x86_64-linux";
+        unfreeStable = host.unfreeStable or [];
+        unfreeUnstable = host.unfreeUnstable or [];
+
+        pkgs = pkgsLib.mkPkgs system unfreeStable;
+        pkgsUnstable = pkgsLib.mkPkgsUnstable system unfreeUnstable;
 
         hostContext = {
-          inherit (host) system username unfreeStable unfreeUnstable;
+          # 2. Inherit from the local scope, NOT from `host`
+          inherit system unfreeStable unfreeUnstable;
+          inherit (host) username; # Username is still strictly required
           hostname = name;
           inherit pkgs pkgsUnstable inputs self;
         };
@@ -30,7 +38,8 @@ in {
       in
         lib.nameValuePair name (
           inputs.nixpkgs.lib.nixosSystem {
-            inherit (host) system pkgs;
+            # 3. Inherit the local `system` variable
+            inherit system pkgs;
             modules = lib.flatten [
               ../nix-settings.nix
               self.flakeModules.nixos

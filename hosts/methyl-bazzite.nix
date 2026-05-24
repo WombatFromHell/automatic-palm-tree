@@ -1,21 +1,16 @@
-_: {
-  system = "x86_64-linux";
+{self, ...}: {
   username = "josh";
-  isNixOS = false;
-  unfreeStable = [];
-  unfreeUnstable = [];
-
-  features = [
-    "hm-base"
-    "hm-dev"
-    "hm-gpg"
-  ];
 
   home = {
     pkgs,
     pkgsUnstable,
     ...
   }: {
+    imports = [
+      self.features.hm-base.home
+      self.features.hm-dev.home
+      self.features.hm-gpg.home
+    ];
     home.packages = with pkgsUnstable; [
       khal
       libqalculate
