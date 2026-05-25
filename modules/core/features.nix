@@ -5,7 +5,6 @@
 }: let
   featuresDir = self + /modules/features;
 
-  # 1. Auto-discover features from the filesystem
   entries =
     if builtins.pathExists featuresDir
     then builtins.readDir featuresDir
@@ -29,11 +28,12 @@
         nixFiles
     )
     featureDirs;
+
+  # Sorted for stable, readable error output
+  availableFeatures = lib.concatStringsSep ", " (lib.naturalSort (lib.attrNames discoveredFeatures));
 in {
-  # 2. Expose the discovered tree so the core loader can assign it to `flake.features`
   inherit discoveredFeatures;
 
-  # 3. The resolver function used by the builders
   resolve = featureList: attrPath: let
     safeList =
       if featureList == null
@@ -42,9 +42,13 @@ in {
   in
     map (
       f:
-        if discoveredFeatures ? ${f} && discoveredFeatures.${f} ? ${attrPath}
-        then discoveredFeatures.${f}.${attrPath}
-        else throw "Feature '${f}' has no '${attrPath}' module defined in modules/features/"
+      # Layer 1: is the feature name known at all?
+        if !(discoveredFeatures ? ${f})
+        then throw "Unknown feature '${f}'. Available features: ${availableFeatures}"
+        # Layer 2: does this feature have a module for the requested platform?
+        else if !(discoveredFeatures.${f} ? ${attrPath})
+        then throw "Feature '${f}' has no '${attrPath}' module defined in modules/features/. Available platforms for this feature: ${lib.concatStringsSep ", " (lib.attrNames discoveredFeatures.${f})}"
+        else discoveredFeatures.${f}.${attrPath}
     )
     safeList;
 }
