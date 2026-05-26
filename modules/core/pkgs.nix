@@ -23,7 +23,7 @@
       "Host '${host.username}' does not declare 'system'. Evaluation cannot continue. Add e.g. system = \"x86_64-linux\"; to the host file."
       (throw "Host '${host.username}' does not declare 'system'.")
     else let
-      system = host.system;
+      inherit (host) system;
       unfreeStable = host.unfreeStable or [];
       unfreeUnstable = host.unfreeUnstable or [];
     in {

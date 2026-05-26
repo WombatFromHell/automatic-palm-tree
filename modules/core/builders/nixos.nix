@@ -4,11 +4,26 @@
   inputs,
   ...
 }: let
-  discovery = import ../discovery.nix {inherit lib self inputs;};
+  hostLib = import ../host-lib.nix;
+  discovery = import ../discovery.nix {inherit lib self inputs hostLib;};
   pkgsLib = import ../pkgs.nix {inherit lib inputs;};
   featuresLib = import ../features.nix {inherit lib self;};
 
   nixosHosts = lib.filterAttrs (_: h: h.config.isNixOS or false) discovery;
+
+  # Extract modules tagged for nixos or shared
+  resolveNixosModules = hostModules:
+    lib.pipe hostModules [
+      (lib.filter (m: m.platform == "nixos" || m.platform == "shared"))
+      (map (m: m.module))
+    ];
+
+  # Extract modules tagged for home-manager or shared
+  resolveHmModules = hostModules:
+    lib.pipe hostModules [
+      (lib.filter (m: m.platform == "home" || m.platform == "shared"))
+      (map (m: m.module))
+    ];
 in {
   flake.nixosConfigurations =
     lib.mapAttrs' (
@@ -16,7 +31,6 @@ in {
         inherit (h) name config;
         host = config;
 
-        # CHANGED: one call replaces the four separate lines
         hostPkgs = pkgsLib.mkHostPkgs host;
         inherit (hostPkgs) system pkgs pkgsUnstable;
 
@@ -29,6 +43,8 @@ in {
 
         nixosFeatures = featuresLib.resolve (host.features or []) "nixos";
         homeFeatures = featuresLib.resolve (host.features or []) "home";
+        hostNixosModules = resolveNixosModules (host.modules or []);
+        hostHmModules = resolveHmModules (host.modules or []);
       in
         lib.nameValuePair name (
           inputs.nixpkgs.lib.nixosSystem {
@@ -37,9 +53,9 @@ in {
               ../nix-settings.nix
               self.flakeModules.nixos
               nixosFeatures
+              hostNixosModules # replaces (host.nixos or {})
               ({config, ...}: {
                 _module.args.hostContext = hostContext;
-                imports = [(host.nixos or {})];
               })
               inputs.home-manager.nixosModules.home-manager
               {
@@ -53,7 +69,7 @@ in {
                   users.${host.username} = lib.mkMerge (
                     [self.flakeModules.home-manager]
                     ++ homeFeatures
-                    ++ [(host.home or {})]
+                    ++ hostHmModules # replaces (host.home or {})
                   );
                 };
               }
