@@ -1,4 +1,3 @@
-# modules/core/lib/features.nix
 {
   lib,
   self,
@@ -29,7 +28,6 @@
     )
     featureDirs;
 
-  # Sorted for stable, readable error output
   availableFeatures = lib.concatStringsSep ", " (lib.naturalSort (lib.attrNames discoveredFeatures));
 in {
   inherit discoveredFeatures;
@@ -39,16 +37,55 @@ in {
       if featureList == null
       then []
       else featureList;
-  in
-    map (
-      f:
-      # Layer 1: is the feature name known at all?
-        if !(discoveredFeatures ? ${f})
-        then throw "Unknown feature '${f}'. Available features: ${availableFeatures}"
-        # Layer 2: does this feature have a module for the requested platform?
-        else if !(discoveredFeatures.${f} ? ${attrPath})
-        then throw "Feature '${f}' has no '${attrPath}' module defined in modules/features/. Available platforms for this feature: ${lib.concatStringsSep ", " (lib.attrNames discoveredFeatures.${f})}"
-        else discoveredFeatures.${f}.${attrPath}
-    )
-    safeList;
+
+    # 1. Validate and get paths
+    paths =
+      map (
+        f:
+          if !(discoveredFeatures ? ${f})
+          then throw "Unknown feature '${f}'. Available features: ${availableFeatures}"
+          else if !(discoveredFeatures.${f} ? ${attrPath})
+          then throw "Feature '${f}' has no '${attrPath}' module defined. Available: ${lib.concatStringsSep ", " (lib.attrNames discoveredFeatures.${f})}"
+          else discoveredFeatures.${f}.${attrPath}
+      )
+      safeList;
+
+    # 2. Evaluate in isolation JUST to extract the unfree lists
+    extracted = lib.evalModules {
+      modules =
+        paths
+        ++ [
+          {
+            options = {
+              unfree = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [];
+                internal = true;
+              };
+              unfreeUnstable = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [];
+                internal = true;
+              };
+            };
+          }
+        ];
+      # Provide dummy args so modules don't crash on destructuring,
+      # but throw if they actually try to EVALUATE pkgs to build the list.
+      specialArgs = {
+        pkgs = throw "pkgs cannot be used to define 'unfree' lists due to circular dependency.";
+        pkgsUnstable = throw "pkgsUnstable cannot be used to define 'unfreeUnstable' lists due to circular dependency.";
+        inherit lib;
+        config = {};
+        options = {};
+        inputs = {};
+        self = {};
+        hostContext = {};
+      };
+    };
+  in {
+    # 3. Return the ORIGINAL paths. No wrapping needed!
+    modules = paths;
+    inherit (extracted.config) unfree unfreeUnstable;
+  };
 }

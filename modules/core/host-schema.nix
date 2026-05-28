@@ -1,9 +1,5 @@
 # modules/core/host-schema.nix
-{
-  lib,
-  config,
-  ...
-}: {
+{lib, ...}: {
   options = {
     system = lib.mkOption {
       type = lib.types.str;
@@ -23,28 +19,16 @@
       default = [];
     };
 
-    # 'modules' is intentionally REMOVED from here!
-
     unfree = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
-    };
-
-    unfreeStable = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [];
-      internal = true;
+      description = "Unfree packages permitted from pkgs (stable channel).";
     };
 
     unfreeUnstable = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
-      internal = true;
+      description = "Unfree packages permitted from pkgsUnstable (unstable channel).";
     };
-  };
-
-  config = {
-    unfreeStable = lib.mkDefault config.unfree;
-    unfreeUnstable = lib.mkDefault config.unfree;
   };
 }

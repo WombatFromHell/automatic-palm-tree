@@ -14,27 +14,26 @@
       config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) unfree;
     };
 
-  mkHostPkgs = host:
-  # `system` is required — no default is provided intentionally.
-  # A silent wrong-arch build is worse than a clear failure.
+  mkHostPkgs = host: extraUnfree: extraUnfreeUnstable: let
+    allUnfree = (host.unfree or []) ++ extraUnfree;
+    allUnfreeUnstable = (host.unfreeUnstable or []) ++ extraUnfreeUnstable;
+  in
     if !(host ? system)
     then
       lib.warn
-      "Host '${host.username}' does not declare 'system'. Evaluation cannot continue. Add e.g. system = \"x86_64-linux\"; to the host file."
+      "Host '${host.username}' does not declare 'system'. Evaluation cannot continue."
       (throw "Host '${host.username}' does not declare 'system'.")
-    else let
+    else {
       inherit (host) system;
-      unfreeStable = host.unfreeStable or [];
-      unfreeUnstable = host.unfreeUnstable or [];
-    in {
-      inherit system unfreeStable unfreeUnstable;
       pkgs = import inputs.nixpkgs {
-        inherit system;
-        config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) unfreeStable;
+        inherit (host) system;
+        config.allowUnfreePredicate = pkg:
+          builtins.elem (lib.getName pkg) allUnfree;
       };
       pkgsUnstable = import inputs.nixpkgs-unstable {
-        inherit system;
-        config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) unfreeUnstable;
+        inherit (host) system;
+        config.allowUnfreePredicate = pkg:
+          builtins.elem (lib.getName pkg) allUnfreeUnstable;
       };
     };
 }

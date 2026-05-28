@@ -1,4 +1,3 @@
-# modules/core/builders/nixos.nix
 {
   lib,
   self,
@@ -16,6 +15,21 @@
 
   resolveHmModules = hostModules:
     (hostModules.home or []) ++ (hostModules.shared or []);
+
+  unfreeOptionsModule = {
+    options = {
+      unfree = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        internal = true;
+      };
+      unfreeUnstable = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        internal = true;
+      };
+    };
+  };
 in {
   imports = [../discovery.nix];
 
@@ -25,7 +39,15 @@ in {
         inherit (h) name config;
         host = config;
 
-        hostPkgs = pkgsLib.mkHostPkgs host;
+        nixosFeaturesData = featuresLib.resolve (host.features or []) "nixos";
+        homeFeaturesData = featuresLib.resolve (host.features or []) "home";
+        hostNixosModules = resolveNixosModules (host.modules or []);
+        hostHmModules = resolveHmModules (host.modules or []);
+
+        allUnfree = (host.unfree or []) ++ nixosFeaturesData.unfree ++ homeFeaturesData.unfree;
+        allUnfreeUnstable = (host.unfreeUnstable or []) ++ nixosFeaturesData.unfreeUnstable ++ homeFeaturesData.unfreeUnstable;
+
+        hostPkgs = pkgsLib.mkHostPkgs host allUnfree allUnfreeUnstable;
         inherit (hostPkgs) system pkgs pkgsUnstable;
 
         hostContext = {
@@ -34,19 +56,15 @@ in {
           hostname = name;
           inherit pkgs pkgsUnstable inputs self;
         };
-
-        nixosFeatures = featuresLib.resolve (host.features or []) "nixos";
-        homeFeatures = featuresLib.resolve (host.features or []) "home";
-        hostNixosModules = resolveNixosModules (host.modules or []);
-        hostHmModules = resolveHmModules (host.modules or []);
       in
         lib.nameValuePair name (
           inputs.nixpkgs.lib.nixosSystem {
             inherit system pkgs;
             modules = lib.flatten [
+              unfreeOptionsModule # <--- For NixOS system modules
               ../nix-settings.nix
               self.flakeModules.nixos
-              nixosFeatures
+              nixosFeaturesData.modules
               hostNixosModules
               ({config, ...}: {
                 _module.args.hostContext = hostContext;
@@ -61,10 +79,12 @@ in {
                     pkgsStable = pkgs;
                   };
                   users.${host.username} = lib.mkMerge (
-                    [self.flakeModules.home-manager]
-                    ++ homeFeatures
+                    [
+                      unfreeOptionsModule # <--- For HM user modules
+                      self.flakeModules.home-manager
+                    ]
+                    ++ homeFeaturesData.modules
                     ++ hostHmModules
-                    # Explicitly ensure genericLinux is disabled for NixOS hosts
                     ++ [{targets.genericLinux.enable = lib.mkDefault false;}]
                   );
                 };

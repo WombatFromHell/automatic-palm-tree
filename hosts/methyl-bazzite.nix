@@ -17,10 +17,12 @@ in {
   system = "x86_64-linux";
   username = "josh";
   isNixOS = false;
+
   features = [
     "hm-base"
     "hm-dev"
     "hm-gpg"
+    "hm-media"
   ];
 
   modules = {

@@ -1,4 +1,3 @@
-# modules/core/builders/home-manager.nix
 {
   lib,
   self,
@@ -10,6 +9,22 @@
   featuresLib = import ../features.nix {inherit lib self;};
 
   hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or false)) config.discoveredHosts;
+
+  # Declare the options so HM doesn't throw "unknown option" errors
+  unfreeOptionsModule = {
+    options = {
+      unfree = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        internal = true;
+      };
+      unfreeUnstable = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        internal = true;
+      };
+    };
+  };
 in {
   imports = [../discovery.nix];
 
@@ -19,7 +34,14 @@ in {
         inherit (h) name config;
         host = config;
 
-        hostPkgs = pkgsLib.mkHostPkgs host;
+        homeFeaturesData = featuresLib.resolve (host.features or []) "home";
+        hostHmModules = (host.modules.home or []) ++ (host.modules.shared or []);
+        hmOutputName = "${host.username}@${name}";
+
+        allUnfree = (host.unfree or []) ++ homeFeaturesData.unfree;
+        allUnfreeUnstable = (host.unfreeUnstable or []) ++ homeFeaturesData.unfreeUnstable;
+
+        hostPkgs = pkgsLib.mkHostPkgs host allUnfree allUnfreeUnstable;
         inherit (hostPkgs) system pkgs pkgsUnstable;
 
         hostContext = {
@@ -28,25 +50,20 @@ in {
           hostname = name;
           inherit pkgs pkgsUnstable inputs self;
         };
-
-        homeFeatures = featuresLib.resolve (host.features or []) "home";
-        hostHmModules = (host.modules.home or []) ++ (host.modules.shared or []);
-        hmOutputName = "${host.username}@${name}";
       in
         lib.nameValuePair hmOutputName (
           inputs.home-manager.lib.homeManagerConfiguration {
             inherit pkgs;
             modules = lib.flatten [
+              unfreeOptionsModule # <--- Injected here
               ../nix-settings.nix
               self.flakeModules.home-manager
-              homeFeatures
+              homeFeaturesData.modules
               hostHmModules
               {
                 _module.args.hostContext = hostContext;
                 home.username = host.username;
                 home.homeDirectory = "/home/${host.username}";
-
-                # If isNixOS is false genericLinux must be enabled
                 targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);
               }
             ];

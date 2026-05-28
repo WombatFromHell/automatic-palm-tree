@@ -6,6 +6,8 @@
     ansible-lint
     bats
     gcc
+    lazydocker
+    lazygit
     mise
     nil
     nixfmt

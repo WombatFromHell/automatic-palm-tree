@@ -1,7 +1,6 @@
 {
   pkgs,
   pkgsUnstable,
-  lib,
   ...
 }: {
   home.packages = with pkgs; [
@@ -11,7 +10,6 @@
     eza
     fd
     fzf
-    lazygit
     pv
     rdfind
     ripgrep
