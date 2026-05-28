@@ -1,23 +1,18 @@
+# modules/core/builders/home-manager.nix
 {
   lib,
   self,
   inputs,
+  config,
   ...
 }: let
-  hostLib = import ../host-lib.nix;
-  discovery = import ../discovery.nix {inherit lib self inputs hostLib;};
   pkgsLib = import ../pkgs.nix {inherit lib inputs;};
   featuresLib = import ../features.nix {inherit lib self;};
 
-  hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or false)) discovery;
-
-  # Extract modules tagged for home-manager or shared
-  resolveHmModules = hostModules:
-    lib.pipe hostModules [
-      (lib.filter (m: m.platform == "home" || m.platform == "shared"))
-      (map (m: m.module))
-    ];
+  hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or false)) config.discoveredHosts;
 in {
+  imports = [../discovery.nix];
+
   flake.homeConfigurations =
     lib.mapAttrs' (
       filename: h: let
@@ -35,7 +30,7 @@ in {
         };
 
         homeFeatures = featuresLib.resolve (host.features or []) "home";
-        hostHmModules = resolveHmModules (host.modules or []);
+        hostHmModules = (host.modules.home or []) ++ (host.modules.shared or []);
         hmOutputName = "${host.username}@${name}";
       in
         lib.nameValuePair hmOutputName (
@@ -45,12 +40,14 @@ in {
               ../nix-settings.nix
               self.flakeModules.home-manager
               homeFeatures
-              hostHmModules # replaces (host.home or {})
+              hostHmModules
               {
                 _module.args.hostContext = hostContext;
                 home.username = host.username;
                 home.homeDirectory = "/home/${host.username}";
-                targets.genericLinux.enable = true;
+
+                # If isNixOS is false genericLinux must be enabled
+                targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);
               }
             ];
             extraSpecialArgs = {

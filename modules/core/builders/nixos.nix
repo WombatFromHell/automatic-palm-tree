@@ -1,30 +1,24 @@
+# modules/core/builders/nixos.nix
 {
   lib,
   self,
   inputs,
+  config,
   ...
 }: let
-  hostLib = import ../host-lib.nix;
-  discovery = import ../discovery.nix {inherit lib self inputs hostLib;};
   pkgsLib = import ../pkgs.nix {inherit lib inputs;};
   featuresLib = import ../features.nix {inherit lib self;};
 
-  nixosHosts = lib.filterAttrs (_: h: h.config.isNixOS or false) discovery;
+  nixosHosts = lib.filterAttrs (_: h: h.config.isNixOS or false) config.discoveredHosts;
 
-  # Extract modules tagged for nixos or shared
   resolveNixosModules = hostModules:
-    lib.pipe hostModules [
-      (lib.filter (m: m.platform == "nixos" || m.platform == "shared"))
-      (map (m: m.module))
-    ];
+    (hostModules.nixos or []) ++ (hostModules.shared or []);
 
-  # Extract modules tagged for home-manager or shared
   resolveHmModules = hostModules:
-    lib.pipe hostModules [
-      (lib.filter (m: m.platform == "home" || m.platform == "shared"))
-      (map (m: m.module))
-    ];
+    (hostModules.home or []) ++ (hostModules.shared or []);
 in {
+  imports = [../discovery.nix];
+
   flake.nixosConfigurations =
     lib.mapAttrs' (
       filename: h: let
@@ -53,7 +47,7 @@ in {
               ../nix-settings.nix
               self.flakeModules.nixos
               nixosFeatures
-              hostNixosModules # replaces (host.nixos or {})
+              hostNixosModules
               ({config, ...}: {
                 _module.args.hostContext = hostContext;
               })
@@ -69,7 +63,9 @@ in {
                   users.${host.username} = lib.mkMerge (
                     [self.flakeModules.home-manager]
                     ++ homeFeatures
-                    ++ hostHmModules # replaces (host.home or {})
+                    ++ hostHmModules
+                    # Explicitly ensure genericLinux is disabled for NixOS hosts
+                    ++ [{targets.genericLinux.enable = lib.mkDefault false;}]
                   );
                 };
               }
