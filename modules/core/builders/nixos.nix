@@ -39,60 +39,95 @@ in {
         inherit (h) name config;
         host = config;
 
-        nixosFeaturesData = featuresLib.resolve (host.features or []) "nixos";
-        homeFeaturesData = featuresLib.resolve (host.features or []) "home";
+        hostFeatures = host.features or [];
+        nixosFeatures = lib.filter (f: (featuresLib.discoveredFeatures ? ${f}) && (featuresLib.discoveredFeatures.${f} ? nixos)) hostFeatures;
+        homeFeatures = lib.filter (f: (featuresLib.discoveredFeatures ? ${f}) && (featuresLib.discoveredFeatures.${f} ? home)) hostFeatures;
+        nixosFeaturesData = featuresLib.resolve nixosFeatures "nixos";
+        homeFeaturesData = featuresLib.resolve homeFeatures "home";
         hostNixosModules = resolveNixosModules (host.modules or []);
         hostHmModules = resolveHmModules (host.modules or []);
 
-        allUnfree = (host.unfree or []) ++ nixosFeaturesData.unfree ++ homeFeaturesData.unfree;
-        allUnfreeUnstable = (host.unfreeUnstable or []) ++ nixosFeaturesData.unfreeUnstable ++ homeFeaturesData.unfreeUnstable;
+        userModulePaths = featuresLib.resolveUserModules (self + /hosts) name host.usernames;
 
-        hostPkgs = pkgsLib.mkHostPkgs host allUnfree allUnfreeUnstable;
-        inherit (hostPkgs) system pkgs pkgsUnstable;
-
-        hostContext = {
-          inherit system;
-          inherit (host) username;
-          hostname = name;
-          inherit pkgs pkgsUnstable inputs self;
+        userUnfreeExtraction = lib.evalModules {
+          modules = userModulePaths ++ [unfreeOptionsModule];
+          specialArgs = {
+            pkgs = throw "pkgs cannot be used to define 'unfree' lists due to circular dependency.";
+            pkgsUnstable = throw "pkgsUnstable cannot be used to define 'unfreeUnstable' lists due to circular dependency.";
+            inherit lib;
+            config = {};
+            options = {};
+            inputs = {};
+            self = {};
+          };
         };
+
+        allUnfree =
+          (host.unfree or [])
+          ++ nixosFeaturesData.unfree
+          ++ homeFeaturesData.unfree
+          ++ userUnfreeExtraction.config.unfree;
+        allUnfreeUnstable =
+          (host.unfreeUnstable or [])
+          ++ nixosFeaturesData.unfreeUnstable
+          ++ homeFeaturesData.unfreeUnstable
+          ++ userUnfreeExtraction.config.unfreeUnstable;
+
+        # Build pkgsUnstable here — NixOS owns stable pkgs via nixpkgs.* options
+        pkgsUnstable = pkgsLib.mkPkgsUnstable host.system allUnfreeUnstable;
       in
         lib.nameValuePair name (
           inputs.nixpkgs.lib.nixosSystem {
-            inherit system pkgs;
             modules = lib.flatten [
-              unfreeOptionsModule # <--- For NixOS system modules
+              unfreeOptionsModule
               ../nix-settings.nix
+              # Let NixOS own pkgs — no specialArgs.pkgs needed
+              {
+                nixpkgs.hostPlatform = host.system;
+                nixpkgs.config.allowUnfreePredicate = pkg:
+                  builtins.elem (lib.getName pkg) allUnfree;
+              }
               self.flakeModules.nixos
               nixosFeaturesData.modules
               hostNixosModules
-              ({config, ...}: {
-                _module.args.hostContext = hostContext;
-              })
               inputs.home-manager.nixosModules.home-manager
               {
                 home-manager = {
                   useGlobalPkgs = true;
                   useUserPackages = true;
                   extraSpecialArgs = {
-                    inherit hostContext pkgsUnstable inputs self;
-                    pkgsStable = pkgs;
+                    inherit pkgsUnstable inputs self;
                   };
-                  users.${host.username} = lib.mkMerge (
-                    [
-                      unfreeOptionsModule # <--- For HM user modules
-                      self.flakeModules.home-manager
-                    ]
-                    ++ homeFeaturesData.modules
-                    ++ hostHmModules
-                    ++ [{targets.genericLinux.enable = lib.mkDefault false;}]
+                  users = lib.genAttrs host.usernames (
+                    user: let
+                      userModPath = self + /hosts/${name}/home-${user}.nix;
+                      userMod = lib.optional (builtins.pathExists userModPath) userModPath;
+                    in
+                      lib.mkMerge (
+                        [unfreeOptionsModule self.flakeModules.home-manager]
+                        ++ homeFeaturesData.modules
+                        ++ hostHmModules
+                        ++ userMod
+                        ++ [
+                          {
+                            home.username = user;
+                            home.homeDirectory = "/home/${user}";
+                          }
+                        ]
+                      )
                   );
                 };
               }
             ];
             specialArgs = {
-              inherit hostContext;
-              inherit (host) username;
+              inherit inputs self;
+              inherit (host) usernames;
+              mkUser = {groups ? [], ...} @ args:
+                (removeAttrs args ["groups"])
+                // {
+                  isNormalUser = true;
+                  extraGroups = ["wheel" "networkmanager"] ++ groups;
+                };
             };
           }
         )

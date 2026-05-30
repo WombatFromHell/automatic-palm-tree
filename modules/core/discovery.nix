@@ -51,10 +51,20 @@ in {
             safeConfig
           ];
         };
+
+        # 5. Derive `usernames` from `users` attrset (or fall back to legacy `username`)
+        usernames =
+          if evaluatedHost.config.users != {}
+          then lib.attrNames (lib.filterAttrs (_: u: u.enabled) evaluatedHost.config.users)
+          else lib.optional (evaluatedHost.config.username != null) evaluatedHost.config.username;
       in {
         inherit name;
-        # 5. Stitch the untouched modules back onto the validated config
-        config = evaluatedHost.config // {modules = hostModules;};
+        config =
+          evaluatedHost.config
+          // {
+            modules = hostModules;
+            inherit usernames;
+          };
       }
     )
     hostEntries;

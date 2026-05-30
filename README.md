@@ -1,6 +1,6 @@
-# flakeroot — Unified Nix (Linux/Darwin) & Home Manager Configuration
+# flakeroot — Unified Nix & Home Manager Configuration
 
-A **flake-driven**, host-discovering config system for NixOS, macOS (darwin), and Home Manager — all from one repository.
+A **flake-driven**, host-discovering config system for NixOS and Home Manager — all from one repository.
 
 ## Quick Start
 
@@ -11,14 +11,12 @@ A **flake-driven**, host-discovering config system for NixOS, macOS (darwin), an
 
 ### Switching Configurations
 
-| Tool                                               | Command                                      | Use Case                                   |
-| -------------------------------------------------- | -------------------------------------------- | ------------------------------------------ |
-| **[nh](https://github.com/nhdb/nh)** (recommended) | `nh os switch`                               | NixOS system + HM                          |
-|                                                    | `nh darwin switch`                           | Darwin system + HM                         |
-|                                                    | `nh home switch`                             | Home Manager only (auto-detects user@host) |
-| **home-manager**                                   | `home-manager switch --flake . --impure`     | Auto-detects `$HOST` + `$USER`             |
-| **nixos-rebuild**                                  | `nixos-rebuild switch --flake .#<hostname>`  | NixOS system only                          |
-| **darwin-rebuild**                                 | `darwin-rebuild switch --flake .#<hostname>` | Darwin system only                         |
+| Tool                                               | Command                                     | Use Case                                              |
+| -------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------- |
+| **[nh](https://github.com/nhdb/nh)** (recommended) | `nh os switch`                              | NixOS system + HM                                     |
+|                                                    | `nh home switch`                            | Home Manager only (auto-detects user@host)            |
+| **home-manager**                                   | `home-manager switch --flake . --impure`    | Auto-detects `$HOST` + `$USER`                        |
+| **nixos-rebuild**                                  | `nixos-rebuild switch --flake .#<hostname>` | NixOS system only (requires an `isNixOS = true` host) |
 
 ### Dry-Run & Inspect
 
@@ -55,257 +53,228 @@ nh home switch --rollback
 ## Architecture
 
 ```
+hosts/
+├── methyl-bazzite.nix    # Flat host file: system, username, isNixOS, features, modules
+├── family-desktop/       # [illustrative] Multi-user host directory
+│   ├── default.nix       # Barrel loader: system, users attrset, features, module imports
+│   ├── nixos.nix         # NixOS system config + user account definitions
+│   ├── shared.nix        # Shared between NixOS and HM contexts
+│   ├── home-mainuser.nix # Home Manager module for mainuser (plain HM module)
+│   └── home-anotheruser.nix
+└── ...
+
 modules/
 ├── core/
-│   ├── default.nix          # Entry: imports discovery + builders, exposes coreModules
-│   ├── discovery.nix        # Scans modules/hosts/<name>/ → {system, hasSystem, standaloneHome, users, userDefaults, homeFiles, unfreeStable, unfreeUnstable}
+│   ├── default.nix       # Entry: imports discovery + builders, exposes flake.features
+│   ├── discovery.nix     # Scans hosts/ for .nix files → validates against schema
+│   ├── host-schema.nix   # Strict schema: system, users, usernames, username, isNixOS, features, unfree, unfreeUnstable
+│   ├── host-lib.nix      # Wrapper helpers: hmModule(), nixosModule(), sharedModule()
+│   ├── features.nix      # Feature resolver + resolveUserModules helper
+│   ├── pkgs.nix          # mkPkgs / mkPkgsUnstable: creates pkgs with allowUnfreePredicate per host
+│   ├── nix-settings.nix  # Nix config: experimental features, prompt, substituters, trusted keys
 │   └── builders/
-│       ├── default.nix      # pkgsFor/pkgsUnstableFor, mkAllowUnfree predicate
-│       ├── system.nix       # mkSystem (NixOS/darwin), automaticHomeManagerModule for darwin
-│       ├── home.nix         # mkHome (HM), distinct hm input per platform
-│       ├── home-darwin.nix  # Implicit HM module for Darwin: useGlobalPkgs, per-user imports
-│       └── configs.nix      # buildConfigs (foldlAttrs → nixos | darwin | home)
+│       ├── nixos.nix     # Builds nixosConfigurations for isNixOS=true hosts
+│       └── home-manager.nix  # Builds homeConfigurations for isNixOS=false hosts
 ├── nixos/
-│   └── default.nix          # Base NixOS: unfree, user groups, stateVersion
-├── darwin/
-│   └── default.nix          # Base Darwin: shells (zsh/fish), TouchID sudo, stateVersion
+│   └── default.nix       # Base NixOS: user groups, stateVersion, fish shell
 ├── home-manager/
-│   ├── default.nix          # Re-exports base + dev
-│   ├── base.nix             # CLI tools, editors, shells, direnv, nh
-│   ├── dev.nix              # Nix dev tools (alejandra, nil, cachix, uv, ruff, etc.)
-│   └── gpg.nix              # Optional: GPG agent with SSH support
-└── hosts/
-    ├── methyl-bazzite/      # NixOS host (x86_64-linux)
-    │   ├── default.nix      # system = "x86_64-linux"
-    │   └── home-<user>.nix  # HM for the user (base + gpg)
-    └── propyl/              # Darwin host (x86_64-darwin)
-        ├── default.nix      # system = "x86_64-darwin"
-        ├── system.nix       # Darwin system config (fish, neovim, fonts, etc.)
-        └── home-<user>.nix    # HM for the user (base only)
+│   └── default.nix       # HM defaults: stateVersion, nh, manual settings
+└── features/
+    ├── hm-base/          # CLI utilities: bat, eza, fd, fzf, helix, tmux, yazi, zoxide, …
+    │   └── home.nix
+    ├── hm-dev/           # Dev tools: alejandra, ansible, mise, nil, nixfmt, uv, …
+    │   └── home.nix
+    ├── hm-gpg/           # GPG agent with SSH support (7-day cache)
+    │   └── home.nix
+    └── hm-media/         # Media: yt-dlp (unfree)
+        └── home.nix
 ```
 
 ### How Host Discovery Works
 
-1. `discovery.nix` scans `modules/hosts/` for directories
-2. Each directory's `default.nix` is imported to read metadata:
-   - `system` (defaults to `x86_64-linux`)
-   - `standaloneHome` (defaults to `false`; when `true`, Darwin hosts skip system config)
-   - `unfreeStable` / `unfreeUnstable` (whitelisted unfree packages per pkgs input)
-3. Files matching `home-*.nix` are parsed for usernames
-4. Presence of `system.nix` determines if the host is a full system config or HM-only
-5. `system` ending in `darwin` → Darwin; otherwise → NixOS
+1. `discovery.nix` scans `hosts/` for `.nix` files and directories with `default.nix`
+2. Each host is imported, its `modules` block extracted, and the remainder validated against `host-schema.nix`
+3. The `modules` block is stitched back onto the validated config
+4. `usernames` is derived from the `users` attrset (multi-user) or falls back to `username` (flat files)
+5. The `isNixOS` flag determines host type: `true` → NixOS system config, `false` → Home Manager only
 
 ### Configuration Composition
 
-**NixOS / Darwin host** (has `system.nix`):
+**NixOS host** (`isNixOS = true`):
 
 ```
-coreModules → home-manager module → hmDefaults → system.nix → platformModule
+nix-settings → flake.nixos → feature nixos modules → host nixos modules → home-manager → feature home modules → host home modules → per-user modules
 ```
 
-**Home Manager config** (`<user>@<host>`):
+**Home Manager–only host** (`isNixOS = false`):
 
 ```
-coreModules → home-<user>.nix → defaults (username, homeDirectory, nixpkgs.system)
+nix-settings → flake.home-manager → feature home modules → host home modules → per-user modules
 ```
 
-## Flake Outputs
+### Feature System
 
-| Output                               | Description                                                    | Example                            |
-| ------------------------------------ | -------------------------------------------------------------- | ---------------------------------- |
-| `homeConfigurations."<user>@<host>"` | Per user-host Home Manager config                              | `homeConfigurations.<user>@<host>` |
-| `homeConfigurations.default`         | Auto-inferred from `$HOST` + `$USER` (if matching pair exists) | `homeConfigurations.default`       |
-| `nixosConfigurations.<host>`         | NixOS system config (Linux + `system.nix` only)                | `nixosConfigurations.<hostname>`   |
-| `darwinConfigurations.<host>`        | Darwin system config (Darwin + `system.nix` only)              | `darwinConfigurations.<hostname>`  |
+Features are directories under `modules/features/<name>/` containing platform-specific `.nix` files (e.g., `home.nix`, `nixos.nix`). Hosts declare which features they want via the `features` list, and the resolver:
+
+1. Validates that each feature name exists
+2. Extracts `unfree` / `unfreeUnstable` lists from each feature module in isolation (without evaluating `pkgs`)
+3. Returns the module paths and accumulated unfree lists
+
+A host just lists features, and each feature contributes its own modules and unfree packages automatically.
 
 ## Adding a New Host
 
-Create `modules/hosts/<name>/` with at minimum a `default.nix`:
+Create a new `.nix` file in `hosts/`:
 
 ```nix
-# modules/hosts/myhost/default.nix
-{
-  system = "x86_64-linux";  # or "aarch64-darwin", "aarch64-linux", etc.
+# hosts/myhost.nix
+_: {
+  system = "x86_64-linux";
+  username = "josh";
+  isNixOS = false;
+
+  features = [ "hm-base" "hm-dev" ];
+
+  unfree = [];                    # Unfree packages from stable nixpkgs
+  unfreeUnstable = [];            # Unfree packages from nixpkgs-unstable
+
+  modules = {
+    nixos  = [ (nixosModule ./myhost-system.nix) ];
+    home   = [ (hmModule ./myhost-home.nix) ];
+    shared = [ (sharedModule ./myhost-shared.nix) ];
+  };
 }
 ```
 
-### Home Manager–Only Host
+### Multi-User Hosts
+
+Hosts can declare multiple users via a `users` attrset in `default.nix`, with per-user Home Manager configs in `home-<user>.nix` files.
+
+```
+hosts/family-desktop/
+├── default.nix              # Barrel loader: system, users attrset, features, module imports
+├── nixos.nix                # NixOS system config + user account definitions
+├── shared.nix               # Shared between NixOS and HM contexts
+├── home-mainuser.nix        # Home Manager module for mainuser (plain HM module)
+└── home-anotheruser.nix     # Home Manager module for anotheruser
+```
+
+**`default.nix`** — barrel loader:
 
 ```nix
-# modules/hosts/myhost/home-<user>.nix
-{pkgs, ...}: {
-  imports = [ ../../home-manager ];
-  # imports = [ ../../home-manager/gpg.nix ];  # add GPG agent if needed
+{ self, inputs, lib, ... }: {
+  system   = "x86_64-linux";
+  isNixOS  = true;
+  features = [ "hm-base" "hm-gpg" "hm-media" ];
+
+  users = {
+    mainuser    = { enabled = true; };
+    anotheruser = { enabled = false; };
+  };
+
+  modules = {
+    nixos  = [ ./nixos.nix ];
+    shared = [ ./shared.nix ];
+  };
 }
 ```
 
-### Full NixOS / Darwin Host
-
-Add `system.nix` alongside `home-<user>.nix`:
+**`nixos.nix`** — NixOS system config and user account definitions:
 
 ```nix
-# modules/hosts/myhost/default.nix
-{
-  system = "x86_64-linux";  # or "aarch64-darwin", etc.
-  unfreeStable = [];
-  unfreeUnstable = [];
-}
+{ lib, pkgs, usernames, ... }: {
+  networking.hostName = "family-desktop";
 
-# modules/hosts/myhost/system.nix
-{ pkgs, username, ... }:
-{
-  imports = [ ../../nixos ];  # or ../../darwin for macOS
-  environment.systemPackages = with pkgs; [ git neovim ];
-}
+  users.users = lib.genAttrs usernames (user: {
+    isNormalUser = true;
+    extraGroups  = [ "wheel" "networkmanager" ];
+    home         = "/home/${user}";
+    shell        = pkgs.bash;
+  });
 
-# modules/hosts/myhost/home-<user>.nix
-{ pkgs, ... }:
-{
-  imports = [ ../../home-manager ];
+  users.users.mainuser.shell = pkgs.fish;
 }
 ```
 
-> **Note:** The `system` attribute in `default.nix` determines host type: `*-darwin` → Darwin, else NixOS. `system.nix` is imported directly as a NixOS/Darwin module — it receives `{ pkgs, username, ... }` as special args, not `{ system, module }`.
-
-### Home Manager–Only Darwin Host
-
-Set `standaloneHome = true` in `default.nix` to skip the system configuration and produce only `homeConfigurations`:
+**`home-<user>.nix`** — plain Home Manager module, no wrapper:
 
 ```nix
-# modules/hosts/myhost/default.nix
-{
-  system = "aarch64-darwin";
-  standaloneHome = true;
+{ pkgs, pkgsUnstable, ... }: {
+  home.packages = with pkgsUnstable; [ khal yt-dlp lazygit ];
+  programs.fish.enable = true;
 }
 ```
+
+The `enabled` flag lives in `default.nix`'s `users` attrset, so `home-<user>.nix` files are ordinary HM modules. The `usernames` option is **derived** from `users` (falls back to `[ username ]` for flat host files), so builders always call `host.usernames` uniformly.
+
+#### Unfree Packages in Per-User Modules
+
+Per-user `home-<user>.nix` modules can declare `unfree` / `unfreeUnstable` lists just like feature modules — they participate in the dry unfree-extraction pass automatically.
+
+### Platform Module Helpers (`host-lib.nix`)
+
+Three wrapper functions tag modules with their target platform:
+
+| Helper         | Target       | Description                            |
+| -------------- | ------------ | -------------------------------------- |
+| `nixosModule`  | NixOS        | Imported only in `nixosConfigurations` |
+| `hmModule`     | Home Manager | Imported in `homeConfigurations`       |
+| `sharedModule` | Both         | Imported in both NixOS and HM contexts |
 
 ### Unfree Packages
 
-This flake defaults to **non-unfree** — any package with a non-free license will cause a build failure unless explicitly whitelisted. Whitelists are declared once per host in `default.nix` and propagate automatically to both system configs (`system.nix`) and all home configs (`home-<user>.nix`) for that host.
-
-#### Declaring unfree packages
-
-Each pkgs input has its own whitelist — a package must be listed under the correct key:
+This flake defaults to **non-unfree** — any non-free package causes a build failure unless whitelisted. Whitelists are declared once per host and propagate to both system and home configs.
 
 ```nix
-# modules/hosts/myhost/default.nix
-{
+# hosts/myhost.nix
+_: {
   system = "x86_64-linux";
-  unfreeStable = [ "vscodium" ];       # from nixpkgs (stable)
+  unfree = [ "vscodium" ];              # from stable nixpkgs
   unfreeUnstable = [ "some-unfree-pkg" ];  # from nixpkgs-unstable
 }
 ```
 
-To find the exact package name: `nix eval --raw nixpkgs#<pkg>.pname`
+Find the exact package name: `nix eval --raw nixpkgs#<pkg>.pname`
 
-#### Using unfree packages in home configs
+### Using Unfree Packages
 
-No additional declaration is needed in `home-<user>.nix` — the predicate from `default.nix` carries through. Simply reference unfree packages via `pkgs` (stable) or `pkgsStable` / `pkgsUnstable` (special args):
+No additional declaration is needed in host modules — the predicate carries through automatically. Reference unfree packages via `pkgs` (stable) or `pkgsUnstable` (special args):
 
 ```nix
-# modules/hosts/myhost/home-josh.nix
-{ pkgs, pkgsStable, pkgsUnstable, ... }:
+# myhost-home.nix
+{ pkgs, pkgsUnstable, ... }:
 {
-  home.packages = with pkgs; [
-    # These work because "vscodium" is in unfreeStable:
-    pkgsStable.vscodium   # or just pkgs.vscodium (same set)
-
-    # These work because "some-unfree-pkg" is in unfreeUnstable:
-    pkgsUnstable.someUnfreePkg
+  home.packages = [
+    pkgs.vscodium        # unfree stable — allowed by unfree = [ "vscodium" ]
+    pkgsUnstable.someUnfreePkg  # unfree unstable — allowed by unfreeUnstable
   ];
 }
 ```
 
-**Key points:**
-
-- `pkgs` and `pkgsStable` are identical — both use the stable nixpkgs with the `unfreeStable` predicate.
+- `pkgs` uses stable nixpkgs with the `unfree` predicate.
 - `pkgsUnstable` uses nixpkgs-unstable with the `unfreeUnstable` predicate.
-- If a package is missing from the correct whitelist, the build will fail with a license error listing the required package name.
-- The same whitelist serves every `home-<user>.nix` under that host — no per-user duplication.
+- Missing from the whitelist → build fails with a license error listing the required package name.
+- The same whitelist serves every module under that host — no per-module duplication.
 
-#### Hardware requiring unfree packages (e.g. NVIDIA GPUs)
+**Never set `nixpkgs.config.allowUnfree = true`.** nixpkgs has a known bug where `allowUnfree` silently overrides `allowUnfreePredicate`, breaking per-host isolation. This flake uses only the predicate approach.
 
-Hardware drivers like NVIDIA's proprietary GPU stack are unfree and must be whitelisted using the same mechanism as any other package. The key difference is that these packages are typically referenced via NixOS/Darwin module options rather than directly in `home.packages`, but the predicate still gates them.
+**CUDA / compute packages** (e.g. `cudatoolkit`) are also unfree and must be whitelisted.
 
-**Example: NVIDIA GPU on a NixOS host**
+## Flake Outputs
 
-```nix
-# modules/hosts/myhost/default.nix — declare the hardware unfree packages
-{
-  system = "x86_64-linux";
+| Output                               | Description                                   | Example                                  |
+| ------------------------------------ | --------------------------------------------- | ---------------------------------------- |
+| `homeConfigurations."<user>@<host>"` | Per user-host Home Manager config             | `homeConfigurations.josh@methyl-bazzite` |
+| `nixosConfigurations.<host>`         | NixOS system config (`isNixOS = true` only)   | `nixosConfigurations.family-desktop`     |
+| `flake.features`                     | Discovered feature modules (for other flakes) | `flake.features.hm-base.home`            |
+| `flake.flakeModules.nixos`           | NixOS base module (from `modules/nixos/`)     | `self.flakeModules.nixos`                |
+| `flake.flakeModules.home-manager`    | HM base module (from `modules/home-manager/`) | `self.flakeModules.home-manager`         |
 
-  # nvidia-x11 = proprietary X.org driver + kernel module
-  # nvidia-settings = GUI configuration utility
-  # (nvidia-open is also unfree — only the kernel module is open-source)
-  unfreeStable = [ "nvidia-x11" "nvidia-settings" ];
-  unfreeUnstable = [];
-}
-```
-
-```nix
-# modules/hosts/myhost/system.nix — use the driver normally
-{ pkgs, ... }:
-{
-  imports = [ ../../nixos ];
-
-  hardware.nvidia = {
-    powerManagement.enable = true;
-    powerManagement.finegrained = true;
-    open = false;                        # set true for nvidia-open (still unfree userspace)
-    nvidiaSettings = true;
-    package = config.boot.kernelPackages.nvidiaPackages.stable;
-  };
-
-  environment.systemPackages = with pkgs; [
-    # Allowed because "nvidia-settings" is in unfreeStable:
-    pkgs.nvidia-settings
-  ];
-}
-```
-
-```nix
-# modules/hosts/myhost/home-josh.nix — same whitelist applies automatically
-{ pkgs, pkgsStable, ... }:
-{
-  home.packages = with pkgs; [
-    # Both resolve to the same whitelisted set:
-    pkgsStable.nvidia-settings   # explicit stable reference
-    pkgs.nvidia-settings          # implicit (identical)
-  ];
-}
-```
-
-**How it works under the hood:**
-
-1. `discovery.nix` reads `unfreeStable = [ "nvidia-x11" … ]` from the host's `default.nix`.
-2. `pkgsFor(system, unfreeStable)` imports nixpkgs with `config.allowUnfreePredicate = mkAllowUnfree [ "nvidia-x11" … ]`.
-3. The NixOS `hardware.nvidia` module resolves `config.boot.kernelPackages.nvidiaPackages.stable` → `nvidia-x11` → the predicate allows it through.
-4. Every `home-<user>.nix` for that host receives the same `pkgs` set — no per-user declaration needed.
-
-**Important caveats:**
-
-- **`nvidia-open` is unfree too.** Only the kernel module is open-source; the userspace libraries remain proprietary. If you use `open = true`, add `"nvidia-open"` to the whitelist instead of (or alongside) `"nvidia-x11"`.
-- **Never set `nixpkgs.config.allowUnfree = true`.** nixpkgs has a known bug where `allowUnfree` silently overrides `allowUnfreePredicate`, breaking the per-host isolation. This flake uses only the predicate approach — keep it that way.
-- **CUDA / compute packages** (e.g. `cudatoolkit`) are also unfree and must be whitelisted under the correct key (`unfreeStable` or `unfreeUnstable`).
-
-## Supported Platforms
-
-| Platform         | NixOS | Darwin | Home Manager |
-| ---------------- | ----- | ------ | ------------ |
-| `x86_64-linux`   | ✅    | —      | ✅           |
-| `aarch64-linux`  | ✅    | —      | ✅           |
-| `x86_64-darwin`  | —     | ✅     | ✅           |
-| `aarch64-darwin` | —     | ✅     | ✅           |
-
-> **macOS (Darwin) / Home Manager:** On Darwin systems, use `nh darwin switch` for full system + Home Manager configuration, or `nh home switch` for Home Manager only. Home Manager works independently on both Linux and Darwin regardless of the host's `system` attribute.
+For multi-user hosts, the builder generates one `homeConfigurations.<user>@<host>` output per enabled user. Disabled users (via `users.<name>.enabled = false`) are excluded.
 
 ## Core Settings (Applied to All Configs)
 
-- **Unfree packages:** per-host whitelist via `unfreeStable` / `unfreeUnstable` in each host's `default.nix`
+- **Unfree packages:** per-host whitelist via `unfree` / `unfreeUnstable`
 - **Substituters:** cache.nixos.org, wombatfromhell.cachix.org, nix-community.cachix.org
 - **Prompt:** `(nix:$name)` when inside a derivation
 - **Experimental features:** `nix-command`, `flakes`
-
-## See Also
-
-- [DESIGN.md](./DESIGN.md) — Full architecture, dependency graph, and build pipeline diagrams

@@ -1,4 +1,3 @@
-# modules/core/default.nix
 {
   lib,
   self,
