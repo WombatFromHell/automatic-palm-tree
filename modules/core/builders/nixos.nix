@@ -125,8 +125,8 @@
         ../nix-settings.nix
         baseModule
         self.flakeModules.nixos
-        # uncomment detsys' nix module after initial deployment (for caching)
-        #inputs.determinate.nixosModules.default
+        # detsys' nix binary only enabled if attr 'bootstrap = false;' set on outputs
+        (lib.optional (!host.bootstrap) inputs.determinate.nixosModules.default)
         (hostNixosModules host)
         inputs.home-manager.nixosModules.home-manager
         homeManagerModule

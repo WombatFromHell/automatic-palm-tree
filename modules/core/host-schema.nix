@@ -1,5 +1,11 @@
 {lib, ...}: {
   options = {
+    bootstrap = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Disable cache-dependent options during initial deployment.";
+    };
+
     system = lib.mkOption {
       type = lib.types.str;
     };

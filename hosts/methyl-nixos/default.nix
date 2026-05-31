@@ -1,4 +1,5 @@
 _: let
+  bootstrap = true; # set to false once flake is initialized (for caching)
   system = "x86_64-linux";
   username = "josh";
   isNixOS = true;
@@ -7,17 +8,17 @@ _: let
     pkgs,
     pkgsUnstable,
     ...
-  }: let
-    inherit username;
-  in {
+  }: {
     imports = [./hardware-configuration.nix];
 
     boot = {
       loader.systemd-boot.enable = true;
       loader.efi.canTouchEfiVariables = true;
-      kernelPackages = pkgs.linuxPackages_latest;
-      # uncomment the cachyos kernel after initial deployment (for caching)
-      #kernelPackages = pkgs.cachyosKernels.linuxPackages-cachyos-latest;
+      # cachyos kernel only enabled if attr 'bootstrap = false;' set
+      kernelPackages =
+        if bootstrap
+        then pkgs.linuxPackages_latest
+        else pkgs.cachyosKernels.linuxPackages-cachyos-latest;
     };
     networking.hostName = "methyl-nixos";
 
@@ -51,7 +52,7 @@ _: let
     services.gpg-agent.pinentry.package = pkgs.pinentry-qt;
   };
 in {
-  inherit system username isNixOS;
+  inherit bootstrap system username isNixOS;
 
   features = [
     "hm-base"
