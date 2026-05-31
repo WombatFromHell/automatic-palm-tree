@@ -50,7 +50,7 @@ in {
         userModulePaths = featuresLib.resolveUserModules (self + /hosts) name host.usernames;
 
         userUnfreeExtraction = lib.evalModules {
-          modules = userModulePaths ++ [unfreeOptionsModule];
+          modules = userModulePaths ++ [unfreeOptionsModule {_module.check = false;}];
           specialArgs = {
             pkgs = throw "pkgs cannot be used to define 'unfree' lists due to circular dependency.";
             pkgsUnstable = throw "pkgsUnstable cannot be used to define 'unfreeUnstable' lists due to circular dependency.";
@@ -74,51 +74,67 @@ in {
           ++ userUnfreeExtraction.config.unfreeUnstable;
 
         pkgsUnstable = pkgsLib.mkPkgsUnstable host.system allUnfreeUnstable;
+
+        # -------------------------------------------------------
+        # Grouped Module Definitions
+        # -------------------------------------------------------
+
+        # 1. Core NixOS configuration
+        baseModule = {
+          nixpkgs = {
+            hostPlatform = host.system;
+            config.allowUnfreePredicate = pkg:
+              builtins.elem (lib.getName pkg) allUnfree;
+          };
+          # Make pkgsUnstable available as an argument to all NixOS modules
+          _module.args = {inherit pkgsUnstable;};
+        };
+
+        # 2. Home Manager setup
+        homeManagerModule = {
+          nixpkgs.overlays = [
+            inputs.nix-cachyos-kernel.overlays.default
+          ];
+          home-manager = {
+            useGlobalPkgs = true;
+            useUserPackages = true;
+            extraSpecialArgs = {
+              inherit pkgsUnstable inputs self;
+            };
+            users = lib.genAttrs host.usernames (
+              user: let
+                userModPath = self + /hosts/${name}/home-${user}.nix;
+                userMod = lib.optional (builtins.pathExists userModPath) userModPath;
+              in
+                lib.mkMerge (
+                  [
+                    unfreeOptionsModule
+                    self.flakeModules.home-manager
+                    {
+                      home.username = user;
+                      home.homeDirectory = "/home/${user}";
+                    }
+                  ]
+                  ++ homeFeaturesData.modules
+                  ++ hostHmModules
+                  ++ userMod
+                )
+            );
+          };
+        };
       in
         lib.nameValuePair name (
           inputs.nixpkgs.lib.nixosSystem {
-            modules = lib.flatten [
+            # The module list is now flat, clearly ordered, and easy to reason about
+            modules = [
               unfreeOptionsModule
               ../nix-settings.nix
-              {
-                nixpkgs.hostPlatform = host.system;
-                nixpkgs.config.allowUnfreePredicate = pkg:
-                  builtins.elem (lib.getName pkg) allUnfree;
-              }
+              baseModule
               self.flakeModules.nixos
               nixosFeaturesData.modules
               hostNixosModules
               inputs.home-manager.nixosModules.home-manager
-              {
-                nixpkgs.overlays = [
-                  inputs.nix-cachyos-kernel.overlays.default
-                ];
-                home-manager = {
-                  useGlobalPkgs = true;
-                  useUserPackages = true;
-                  extraSpecialArgs = {
-                    inherit pkgsUnstable inputs self;
-                  };
-                  users = lib.genAttrs host.usernames (
-                    user: let
-                      userModPath = self + /hosts/${name}/home-${user}.nix;
-                      userMod = lib.optional (builtins.pathExists userModPath) userModPath;
-                    in
-                      lib.mkMerge (
-                        [unfreeOptionsModule self.flakeModules.home-manager]
-                        ++ homeFeaturesData.modules
-                        ++ hostHmModules
-                        ++ userMod
-                        ++ [
-                          {
-                            home.username = user;
-                            home.homeDirectory = "/home/${user}";
-                          }
-                        ]
-                      )
-                  );
-                };
-              }
+              homeManagerModule
             ];
             specialArgs = {
               inherit inputs self;
