@@ -15,6 +15,7 @@ _: let
         loader.systemd-boot.enable = true;
         loader.efi.canTouchEfiVariables = true;
         kernelPackages = pkgs.linuxPackages_latest;
+        # uncomment the cachyos kernel after initial deployment (for caching)
         #kernelPackages = pkgs.cachyosKernels.linuxPackages-cachyos-latest;
       };
       networking = {
@@ -34,7 +35,6 @@ _: let
 
       security.rtkit.enable = true;
       services = {
-        #xserver.videoDrivers = ["amdgpu"];
         displayManager.sddm.enable = true;
         desktopManager.plasma6.enable = true;
         xserver.xkb = {
