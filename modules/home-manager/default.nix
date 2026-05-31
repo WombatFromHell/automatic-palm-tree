@@ -1,4 +1,4 @@
-{pkgsUnstable, ...}: {
+_: {
   home.stateVersion = "24.11";
 
   manual = {
@@ -7,11 +7,5 @@
     manpages.enable = false;
   };
 
-  programs = {
-    home-manager.enable = true;
-    nh = {
-      enable = true;
-      package = pkgsUnstable.nh;
-    };
-  };
+  programs.home-manager.enable = true;
 }

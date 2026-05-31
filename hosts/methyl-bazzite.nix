@@ -23,6 +23,7 @@ in {
     "hm-dev"
     "hm-gpg"
     "hm-media"
+    "hm-nh"
   ];
 
   modules = {

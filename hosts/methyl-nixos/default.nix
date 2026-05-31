@@ -66,6 +66,7 @@ in {
     "nixos-kde"
     "nixos-print"
     "nixos-gaming"
+    "nixos-justnh"
   ];
 
   modules = {
