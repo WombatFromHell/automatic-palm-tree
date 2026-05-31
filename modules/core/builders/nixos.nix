@@ -73,7 +73,6 @@ in {
           ++ homeFeaturesData.unfreeUnstable
           ++ userUnfreeExtraction.config.unfreeUnstable;
 
-        # Build pkgsUnstable here — NixOS owns stable pkgs via nixpkgs.* options
         pkgsUnstable = pkgsLib.mkPkgsUnstable host.system allUnfreeUnstable;
       in
         lib.nameValuePair name (
@@ -81,7 +80,6 @@ in {
             modules = lib.flatten [
               unfreeOptionsModule
               ../nix-settings.nix
-              # Let NixOS own pkgs — no specialArgs.pkgs needed
               {
                 nixpkgs.hostPlatform = host.system;
                 nixpkgs.config.allowUnfreePredicate = pkg:
@@ -92,6 +90,9 @@ in {
               hostNixosModules
               inputs.home-manager.nixosModules.home-manager
               {
+                nixpkgs.overlays = [
+                  inputs.nix-cachyos-kernel.overlays.default
+                ];
                 home-manager = {
                   useGlobalPkgs = true;
                   useUserPackages = true;

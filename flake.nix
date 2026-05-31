@@ -11,11 +11,13 @@
     };
 
     flake-parts.url = "github:hercules-ci/flake-parts";
+    nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
   };
 
   outputs = inputs @ {
     self,
     flake-parts,
+    nix-cachyos-kernel,
     ...
   }:
     flake-parts.lib.mkFlake {inherit inputs;} {
