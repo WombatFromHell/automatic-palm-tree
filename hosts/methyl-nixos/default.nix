@@ -114,16 +114,26 @@ _: let
 
       environment.systemPackages = with pkgs; [
         curl
+        gamescope
         git
         helix
         python3
+        steam-run
         vulkan-tools
         wget
       ];
 
       programs = {
         firefox.enable = true;
-        steam.enable = true;
+        appimage = {
+          enable = true;
+          binfmt = true;
+        };
+        nix-ld.enable = true;
+        steam = {
+          enable = true;
+          package = pkgsUnstable.steam;
+        };
       };
     };
 
@@ -145,6 +155,8 @@ in {
   system = "x86_64-linux";
   inherit username;
   isNixOS = true;
+
+  unfreeUnstable = ["steam"];
 
   features = [
     "hm-base"
