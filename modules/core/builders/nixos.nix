@@ -125,6 +125,7 @@
         ../nix-settings.nix
         baseModule
         self.flakeModules.nixos
+        inputs.determinate.nixosModules.default
         (hostNixosModules host)
         inputs.home-manager.nixosModules.home-manager
         homeManagerModule
