@@ -47,20 +47,10 @@
           modules =
             userModulePaths
             ++ [
-              {
-                options = {
-                  unfree = lib.mkOption {
-                    type = lib.types.listOf lib.types.str;
-                    default = [];
-                    internal = true;
-                  };
-                  unfreeUnstable = lib.mkOption {
-                    type = lib.types.listOf lib.types.str;
-                    default = [];
-                    internal = true;
-                  };
-                };
-              }
+              unfreeOptionsModule
+              # Prevent evalModules from throwing errors on unrecognized HM options
+              # during this dry-run extraction pass
+              {_module.check = false;}
             ];
           specialArgs = {
             pkgs = throw "pkgs cannot be used to define 'unfree' lists due to circular dependency.";
@@ -92,22 +82,30 @@
               userModPath = self + /hosts/${hostname}/home-${user}.nix;
               userMod = lib.optional (builtins.pathExists userModPath) userModPath;
               hmOutputName = "${user}@${name}";
+
+              # -------------------------------------------------------
+              # Grouped Module Definitions (Inside user scope)
+              # -------------------------------------------------------
+
+              # 1. Core Home-Manager configuration
+              baseModule = {
+                home.username = user;
+                home.homeDirectory = "/home/${user}";
+                targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);
+              };
             in
               lib.nameValuePair hmOutputName (
                 inputs.home-manager.lib.homeManagerConfiguration {
                   inherit pkgs;
-                  modules = lib.flatten [
+                  # The module list is now flat, clearly ordered, and easy to reason about
+                  modules = [
                     unfreeOptionsModule
                     ../nix-settings.nix
                     self.flakeModules.home-manager
                     homeFeaturesData.modules
                     hostHmModules
                     userMod
-                    {
-                      home.username = user;
-                      home.homeDirectory = "/home/${user}";
-                      targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);
-                    }
+                    baseModule
                   ];
                   extraSpecialArgs = {
                     inherit pkgsUnstable inputs self;
