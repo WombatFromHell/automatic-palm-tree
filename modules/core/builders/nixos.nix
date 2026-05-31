@@ -125,7 +125,7 @@
         ../nix-settings.nix
         baseModule
         self.flakeModules.nixos
-        # uncomment determinate flake module after initial deployment (for caching)
+        # uncomment detsys' nix module after initial deployment (for caching)
         #inputs.determinate.nixosModules.default
         (hostNixosModules host)
         inputs.home-manager.nixosModules.home-manager
