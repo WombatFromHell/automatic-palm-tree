@@ -156,7 +156,11 @@ in {
   inherit username;
   isNixOS = true;
 
-  unfreeUnstable = ["steam"];
+  unfree = [
+    "steam"
+    "steam-run"
+    "steam-unwrapped"
+  ];
 
   features = [
     "hm-base"

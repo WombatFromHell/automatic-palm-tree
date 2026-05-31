@@ -71,11 +71,6 @@ in {
                 default = [];
                 internal = true;
               };
-              unfreeUnstable = lib.mkOption {
-                type = lib.types.listOf lib.types.str;
-                default = [];
-                internal = true;
-              };
             };
           }
           {_module.check = false;}
@@ -83,8 +78,8 @@ in {
       # Provide dummy args so modules don't crash on destructuring,
       # but throw if they actually try to EVALUATE pkgs to build the list.
       specialArgs = {
-        pkgs = throw "pkgs cannot be used to define 'unfree' lists due to circular dependency.";
-        pkgsUnstable = throw "pkgsUnstable cannot be used to define 'unfreeUnstable' lists due to circular dependency.";
+        pkgs = throw "'unfree' lists must be static — they cannot reference pkgs.";
+        pkgsUnstable = throw "'unfree' lists must be static — they cannot reference pkgsUnstable.";
         inherit lib;
         config = {};
         options = {};
@@ -95,6 +90,6 @@ in {
   in {
     # 3. Return the ORIGINAL paths. No wrapping needed!
     modules = paths;
-    inherit (extracted.config) unfree unfreeUnstable;
+    inherit (extracted.config) unfree;
   };
 }

@@ -1,5 +1,5 @@
 {pkgsUnstable, ...}: {
-  unfreeUnstable = ["yt-dlp"];
+  unfree = ["yt-dlp"];
 
   home.packages = [
     pkgsUnstable.yt-dlp

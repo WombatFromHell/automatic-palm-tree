@@ -8,118 +8,115 @@
   pkgsLib = import ../pkgs.nix {inherit lib inputs;};
   featuresLib = import ../features.nix {inherit lib self;};
 
-  hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or false)) config.discoveredHosts;
-
-  # Declare the options so HM doesn't throw "unknown option" errors
+  # ── Schema module re-used in several evalModules dry-runs ──────────────────
   unfreeOptionsModule = {
-    options = {
-      unfree = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        internal = true;
-      };
-      unfreeUnstable = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        internal = true;
-      };
+    options.unfree = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      internal = true;
     };
   };
 
-  # Build home configurations for all non-NixOS hosts
-  allHomeConfigs = lib.foldl' lib.recursiveUpdate {} (
-    lib.mapAttrsToList (
-      hostname: h: let
-        inherit (h) name config;
-        host = config;
+  # ── Only build standalone HM configurations for non-NixOS hosts ────────────
+  hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or false)) config.discoveredHosts;
 
-        # Only resolve features that actually have modules for the requested platform
-        hostFeatures = host.features or [];
-        homeFeatures = lib.filter (f: (featuresLib.discoveredFeatures ? ${f}) && (featuresLib.discoveredFeatures.${f} ? home)) hostFeatures;
-        homeFeaturesData = featuresLib.resolve homeFeatures "home";
-        hostHmModules = (host.modules.home or []) ++ (host.modules.shared or []);
+  # ── Helpers ─────────────────────────────────────────────────────────────────
 
-        # Discover per-user home module paths for the dry unfree-extraction pass
-        userModulePaths = featuresLib.resolveUserModules (self + /hosts) hostname host.usernames;
+  hostHmModules = host:
+    lib.flatten [
+      (host.modules.home or [])
+      (host.modules.shared or [])
+    ];
 
-        # Dry eval to extract unfree lists from per-user modules too
-        userUnfreeExtraction = lib.evalModules {
-          modules =
-            userModulePaths
-            ++ [
-              unfreeOptionsModule
-              # Prevent evalModules from throwing errors on unrecognized HM options
-              # during this dry-run extraction pass
-              {_module.check = false;}
-            ];
-          specialArgs = {
-            pkgs = throw "pkgs cannot be used to define 'unfree' lists due to circular dependency.";
-            pkgsUnstable = throw "pkgsUnstable cannot be used to define 'unfreeUnstable' lists due to circular dependency.";
-            inherit lib;
-            config = {};
-            options = {};
-            inputs = {};
-            self = {};
-          };
-        };
+  resolveHomeFeatures = host: let
+    relevant =
+      lib.filter
+      (f:
+        featuresLib.discoveredFeatures ? ${f}
+        && featuresLib.discoveredFeatures.${f} ? home)
+      (host.features or []);
+  in
+    featuresLib.resolve relevant "home";
 
-        # Final unfree lists including per-user module contributions
-        allUnfree =
-          (host.unfree or [])
-          ++ homeFeaturesData.unfree
-          ++ userUnfreeExtraction.config.unfree;
-        allUnfreeUnstable =
-          (host.unfreeUnstable or [])
-          ++ homeFeaturesData.unfreeUnstable
-          ++ userUnfreeExtraction.config.unfreeUnstable;
+  extractUnfree = modulePaths:
+    lib.evalModules {
+      modules =
+        modulePaths
+        ++ [
+          unfreeOptionsModule
+          {_module.check = false;}
+        ];
+      specialArgs = {
+        pkgs = throw "'unfree' lists must be static — they cannot reference pkgs.";
+        pkgsUnstable = throw "'unfree' lists must be static — they cannot reference pkgsUnstable.";
+        inherit lib;
+        config = {};
+        options = {};
+        inputs = {};
+        self = {};
+      };
+    };
 
-        pkgs = pkgsLib.mkPkgs host.system allUnfree;
-        pkgsUnstable = pkgsLib.mkPkgsUnstable host.system allUnfreeUnstable;
-      in
-        lib.listToAttrs (
-          map (
-            user: let
-              userModPath = self + /hosts/${hostname}/home-${user}.nix;
-              userMod = lib.optional (builtins.pathExists userModPath) userModPath;
-              hmOutputName = "${user}@${name}";
+  # ── Build one homeConfiguration for a single (hostname, user) pair ─────────
+  mkHomeConfig = hostname: h: user: let
+    host = h.config;
 
-              # -------------------------------------------------------
-              # Grouped Module Definitions (Inside user scope)
-              # -------------------------------------------------------
+    homeFeaturesData = resolveHomeFeatures host;
 
-              # 1. Core Home-Manager configuration
-              baseModule = {
-                home.username = user;
-                home.homeDirectory = "/home/${user}";
-                targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);
-              };
-            in
-              lib.nameValuePair hmOutputName (
-                inputs.home-manager.lib.homeManagerConfiguration {
-                  inherit pkgs;
-                  # The module list is now flat, clearly ordered, and easy to reason about
-                  modules = [
-                    unfreeOptionsModule
-                    ../nix-settings.nix
-                    self.flakeModules.home-manager
-                    homeFeaturesData.modules
-                    hostHmModules
-                    userMod
-                    baseModule
-                  ];
-                  extraSpecialArgs = {
-                    inherit pkgsUnstable inputs self;
-                    inherit (host) usernames;
-                    pkgsStable = pkgs;
-                  };
-                }
-              )
-          )
-          host.usernames
-        )
-    )
-    hmHosts
-  );
+    perUserModPath = self + /hosts/${hostname}/home-${user}.nix;
+    perUserMod = lib.optional (builtins.pathExists perUserModPath) perUserModPath;
+
+    userModulePaths = featuresLib.resolveUserModules (self + /hosts) hostname host.usernames;
+    userUnfree = extractUnfree userModulePaths;
+
+    allUnfree = lib.unique (lib.flatten [
+      (host.unfree or [])
+      homeFeaturesData.unfree
+      userUnfree.config.unfree
+    ]);
+
+    pkgs = pkgsLib.mkPkgs host.system allUnfree;
+    pkgsUnstable = pkgsLib.mkPkgsUnstable host.system allUnfree;
+
+    # ── Module group ──────────────────────────────────────────────────────────
+
+    baseModule = {
+      imports = lib.flatten [
+        homeFeaturesData.modules
+        (hostHmModules host)
+        perUserMod
+      ];
+
+      home.username = user;
+      home.homeDirectory = "/home/${user}";
+      targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);
+    };
+  in
+    inputs.home-manager.lib.homeManagerConfiguration {
+      inherit pkgs;
+      modules = lib.flatten [
+        unfreeOptionsModule
+        ../nix-settings.nix
+        self.flakeModules.home-manager
+        baseModule
+      ];
+      extraSpecialArgs = {
+        inherit pkgsUnstable inputs self;
+        inherit (host) usernames;
+        pkgsStable = pkgs;
+      };
+    };
+
+  # ── Build all home configurations across all non-NixOS hosts ───────────────
+  allHomeConfigs =
+    lib.foldl' lib.recursiveUpdate {}
+    (lib.mapAttrsToList
+      (hostname: h:
+        lib.listToAttrs
+        (map
+          (user: lib.nameValuePair "${user}@${h.name}" (mkHomeConfig hostname h user))
+          h.config.usernames))
+      hmHosts);
 in {
   imports = [../discovery.nix];
 
