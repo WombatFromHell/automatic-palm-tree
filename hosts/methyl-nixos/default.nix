@@ -67,21 +67,6 @@ _: let
           enable = true;
           enable32Bit = true; # For 32-bit apps/games
         };
-        printers = {
-          ensureDefaultPrinter = "HL2270DW";
-          ensurePrinters = [
-            {
-              name = "HL2270DW";
-              description = "Brother HL-2270DW";
-              deviceUri = "ipp://192.168.1.10";
-              model = "drv:///brlaser.drv/br2270dw.ppd";
-              ppdOptions = {
-                PageSize = "A4";
-                Duplex = "None"; # Or "DuplexNoTumble" for double-sided
-              };
-            }
-          ];
-        };
       };
 
       time.timeZone = "America/Denver";
