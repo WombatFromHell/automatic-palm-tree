@@ -59,7 +59,6 @@ _: let
         lact.enable = true;
         tailscale.enable = true;
         flatpak.enable = true;
-        openssh.enable = true;
       };
 
       hardware = {
@@ -67,6 +66,21 @@ _: let
         graphics = {
           enable = true;
           enable32Bit = true; # For 32-bit apps/games
+        };
+        printers = {
+          ensureDefaultPrinter = "HL2270DW";
+          ensurePrinters = [
+            {
+              name = "HL2270DW";
+              description = "Brother HL-2270DW";
+              deviceUri = "lpd://192.168.1.10/queue";
+              model = "drv:///brlaser.drv/br2270d.ppd";
+              ppdOptions = {
+                PageSize = "A4";
+                Duplex = "None";
+              };
+            }
+          ];
         };
       };
 
