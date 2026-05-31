@@ -59,6 +59,7 @@ _: let
         lact.enable = true;
         tailscale.enable = true;
         flatpak.enable = true;
+        openssh.enable = true;
       };
 
       hardware = {
