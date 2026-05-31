@@ -78,6 +78,7 @@ in {
               };
             };
           }
+          {_module.check = false;}
         ];
       # Provide dummy args so modules don't crash on destructuring,
       # but throw if they actually try to EVALUATE pkgs to build the list.
