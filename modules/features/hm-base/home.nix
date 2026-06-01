@@ -10,6 +10,7 @@
     eza
     fd
     fzf
+    nvd
     pv
     rdfind
     ripgrep
