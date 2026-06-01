@@ -90,7 +90,11 @@
         hostPlatform = host.system;
         config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) allUnfree;
       };
-      _module.args = {inherit pkgsUnstable;};
+
+      _module.args = {
+        inherit pkgsUnstable;
+        hostConfig = host;
+      };
     };
 
     homeManagerModule = {

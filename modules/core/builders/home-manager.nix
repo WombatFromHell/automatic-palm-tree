@@ -100,10 +100,11 @@
         self.flakeModules.home-manager
         baseModule
       ];
+
       extraSpecialArgs = {
         inherit pkgsUnstable inputs self;
-        inherit (host) usernames;
         pkgsStable = pkgs;
+        hostConfig = host;
       };
     };
 
