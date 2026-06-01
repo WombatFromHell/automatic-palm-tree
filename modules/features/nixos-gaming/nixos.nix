@@ -9,6 +9,16 @@
     "steam-unwrapped"
   ];
 
+  boot.extraKernelParams = [
+    "split_lock_detect=off"
+    "amdgpu.ppfeaturemask=0xfffd7fff"
+    "amdgpu.dcdebugmask=0x410"
+    "amdgpu.lockup_timeout=100000"
+    "amdgpu.runpm=0"
+    "amdgpu.aspm=0"
+    "amdgpu.gpu_recovery=1"
+  ];
+
   environment.systemPackages = with pkgs; [
     gamescope
     steam-run
@@ -22,7 +32,9 @@
     };
   };
 
-  services.lact.enable = true;
+  services = {
+    lact.enable = true;
+  };
 
   hardware = {
     bluetooth.enable = true;
