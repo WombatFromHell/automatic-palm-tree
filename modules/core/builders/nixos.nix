@@ -19,11 +19,14 @@
     ];
 
   resolveFeatures = host: platform: let
-    relevant = lib.filter
-      (f: featuresLib.discoveredFeatures ? ${f}
-           && featuresLib.discoveredFeatures.${f} ? ${platform})
+    relevant =
+      lib.filter
+      (f:
+        featuresLib.discoveredFeatures ? ${f}
+        && featuresLib.discoveredFeatures.${f} ? ${platform})
       (host.features or []);
-  in featuresLib.resolve relevant platform;
+  in
+    featuresLib.resolve relevant platform;
 
   # ── Build one nixosConfiguration ───────────────────────────────────────────
   mkNixosConfig = name: h: let
