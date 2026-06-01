@@ -22,6 +22,7 @@ in {
     "nixos-print"
     "nixos-gaming"
     "nixos-justnh"
+    "nixos-udev"
     #
     "nixos-niri"
   ];

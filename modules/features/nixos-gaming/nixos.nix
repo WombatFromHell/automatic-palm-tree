@@ -26,15 +26,10 @@
   ];
 
   programs = {
-    steam = {
-      enable = true;
-      package = pkgsUnstable.steam;
-    };
+    steam.enable = true;
   };
 
-  services = {
-    lact.enable = true;
-  };
+  services.lact.enable = true;
 
   hardware = {
     bluetooth.enable = true;
