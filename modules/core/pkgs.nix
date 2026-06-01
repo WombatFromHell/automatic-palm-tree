@@ -2,14 +2,11 @@
   lib,
   inputs,
 }: {
-  mkPkgs = system: unfree:
-    import inputs.nixpkgs {
-      inherit system;
-      config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) unfree;
-    };
-
-  mkPkgsUnstable = system: unfree:
-    import inputs.nixpkgs-unstable {
+  # Single parameterized pkgs factory. Callers bind the input:
+  #   mkPkgs inputs.nixpkgs         → stable
+  #   mkPkgs inputs.nixpkgs-unstable → unstable
+  mkPkgs = pkgsInput: system: unfree:
+    import pkgsInput {
       inherit system;
       config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) unfree;
     };

@@ -7,55 +7,17 @@
 }: let
   pkgsLib = import ../pkgs.nix {inherit lib inputs;};
   featuresLib = import ../features.nix {inherit lib self;};
-
-  # ── Schema module re-used in several evalModules dry-runs ──────────────────
-  unfreeOptionsModule = {
-    options.unfree = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [];
-      internal = true;
-    };
-  };
+  helpers = import ../helpers.nix {inherit lib inputs self;};
 
   # ── Only build standalone HM configurations for non-NixOS hosts ────────────
   hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or false)) config.discoveredHosts;
 
-  # ── Helpers ─────────────────────────────────────────────────────────────────
-
-  hostHmModules = host:
-    lib.flatten [
-      (host.modules.home or [])
-      (host.modules.shared or [])
-    ];
-
   resolveHomeFeatures = host: let
-    relevant =
-      lib.filter
-      (f:
-        featuresLib.discoveredFeatures ? ${f}
-        && featuresLib.discoveredFeatures.${f} ? home)
+    relevant = lib.filter
+      (f: featuresLib.discoveredFeatures ? ${f}
+           && featuresLib.discoveredFeatures.${f} ? "home")
       (host.features or []);
-  in
-    featuresLib.resolve relevant "home";
-
-  extractUnfree = modulePaths:
-    lib.evalModules {
-      modules =
-        modulePaths
-        ++ [
-          unfreeOptionsModule
-          {_module.check = false;}
-        ];
-      specialArgs = {
-        pkgs = throw "'unfree' lists must be static — they cannot reference pkgs.";
-        pkgsUnstable = throw "'unfree' lists must be static — they cannot reference pkgsUnstable.";
-        inherit lib;
-        config = {};
-        options = {};
-        inputs = {};
-        self = {};
-      };
-    };
+  in featuresLib.resolve relevant "home";
 
   # ── Build one homeConfiguration for a single (hostname, user) pair ─────────
   mkHomeConfig = hostname: h: user: let
@@ -67,7 +29,7 @@
     perUserMod = lib.optional (builtins.pathExists perUserModPath) perUserModPath;
 
     userModulePaths = featuresLib.resolveUserModules (self + /hosts) hostname host.usernames;
-    userUnfree = extractUnfree userModulePaths;
+    userUnfree = helpers.extractUnfree helpers.mkUnfreeOptionsModule userModulePaths;
 
     allUnfree = lib.unique (lib.flatten [
       (host.unfree or [])
@@ -75,15 +37,15 @@
       userUnfree.config.unfree
     ]);
 
-    pkgs = pkgsLib.mkPkgs host.system allUnfree;
-    pkgsUnstable = pkgsLib.mkPkgsUnstable host.system allUnfree;
+    pkgs = pkgsLib.mkPkgs inputs.nixpkgs host.system allUnfree;
+    pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree;
 
     # ── Module group ──────────────────────────────────────────────────────────
 
     baseModule = {
       imports = lib.flatten [
         homeFeaturesData.modules
-        (hostHmModules host)
+        (helpers.hostHmModules host)
         perUserMod
       ];
 
@@ -95,7 +57,7 @@
     inputs.home-manager.lib.homeManagerConfiguration {
       inherit pkgs;
       modules = lib.flatten [
-        unfreeOptionsModule
+        helpers.mkUnfreeOptionsModule
         ../nix-settings.nix
         self.flakeModules.home-manager
         baseModule
