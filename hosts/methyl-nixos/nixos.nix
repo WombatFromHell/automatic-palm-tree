@@ -13,7 +13,7 @@
       if hostConfig.bootstrap
       then pkgs.linuxPackages_latest
       else pkgs.cachyosKernels.linuxPackages-cachyos-latest;
-    extraKernelParams = [
+    kernelParams = [
       "kvm.ignore_msrs=1"
       "kvm.report_ignored_msrs=0"
     ];

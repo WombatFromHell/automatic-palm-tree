@@ -9,7 +9,7 @@
     "steam-unwrapped"
   ];
 
-  boot.extraKernelParams = [
+  boot.kernelParams = [
     "split_lock_detect=off"
     "amdgpu.ppfeaturemask=0xfffd7fff"
     "amdgpu.dcdebugmask=0x410"
