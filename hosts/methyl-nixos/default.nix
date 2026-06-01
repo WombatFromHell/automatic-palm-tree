@@ -22,6 +22,8 @@ in {
     "nixos-print"
     "nixos-gaming"
     "nixos-justnh"
+    #
+    "nixos-niri"
   ];
 
   modules = {

@@ -4,6 +4,7 @@
   ...
 }: {
   home.packages = with pkgsUnstable; [
+    heroic
     khal
     libqalculate
     trash-cli

@@ -42,5 +42,6 @@
       enable = true;
       enable32Bit = true; # For 32-bit apps/games
     };
+    steam-hardware.enable = true;
   };
 }
