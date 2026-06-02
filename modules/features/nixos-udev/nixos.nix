@@ -23,17 +23,8 @@
       ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="28de", ATTRS{idProduct}=="1142", ATTR{power/wakeup}="enabled"
     '';
   };
-
-  # ── Helper to convert the attrset into etc files ───────────────────────────
-  mkUdevEtcFiles = rules:
-    lib.mapAttrs' (filename: content:
-      lib.nameValuePair "udev/rules.d/${filename}" {
-        mode = "0644";
-        text = content;
-      })
-    rules;
 in {
-  environment.etc = mkUdevEtcFiles customUdevRules;
+  services.udev.extraRules = lib.concatStringsSep "\n\n" (lib.attrValues customUdevRules);
   system.activationScripts.udevReloadRules = lib.stringAfter ["etc"] ''
     echo "Reloading udev rules..."
     udevadm control --reload-rules || true
