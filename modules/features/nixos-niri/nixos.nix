@@ -11,6 +11,7 @@
 
   environment.systemPackages = with pkgs; [
     pkgsUnstable.niri
+    pkgsUnstable.dsearch
     kanshi
     kdePackages.qt6ct
     liberation_ttf
