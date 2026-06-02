@@ -25,6 +25,7 @@ in {
     "nixos-udev"
     #
     "nixos-automounts"
+    "nixos-zram"
     #
     "nixos-niri"
   ];
