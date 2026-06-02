@@ -3,17 +3,29 @@
   pkgsUnstable,
   ...
 }: {
-  environment.systemPackages = with pkgs; [kanshi];
+  imports = [
+    ./niri.nix
+    ./niri-portals.nix
+    ./qt6ct.nix
+  ];
+
+  environment.systemPackages = with pkgs; [
+    pkgsUnstable.niri
+    kanshi
+    kdePackages.qt6ct
+    liberation_ttf
+    noto-fonts
+    xwayland-satellite
+  ];
+
+  security.polkit.enable = true;
 
   programs = {
+    uwsm.enable = true;
     dms-shell = {
       enable = true;
       package = pkgsUnstable.dms-shell;
       quickshell.package = pkgsUnstable.quickshell;
-    };
-    niri = {
-      enable = true;
-      package = pkgsUnstable.niri;
     };
   };
 }

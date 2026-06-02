@@ -1,4 +1,8 @@
-{lib, ...}: let
+{
+  lib,
+  pkgs,
+  ...
+}: let
   customUdevRules = {
     "99-bluetooth-wakeup.rules" = ''
       # Enable wakeups from MediaTek Bluetooth Radio (MT7922)
@@ -27,7 +31,7 @@ in {
   services.udev.extraRules = lib.concatStringsSep "\n\n" (lib.attrValues customUdevRules);
   system.activationScripts.udevReloadRules = lib.stringAfter ["etc"] ''
     echo "Reloading udev rules..."
-    udevadm control --reload-rules || true
-    udevadm trigger|| true
+    ${pkgs.systemd}/bin/udevadm control --reload-rules || true
+    ${pkgs.systemd}/bin/udevadm trigger || true
   '';
 }

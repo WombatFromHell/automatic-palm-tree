@@ -35,4 +35,6 @@
       "wheel"
     ];
   };
+
+  features.niri.enable = true;
 }

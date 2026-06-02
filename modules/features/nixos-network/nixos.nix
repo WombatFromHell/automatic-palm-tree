@@ -13,4 +13,6 @@ _: {
       };
     };
   };
+
+  systemd.services.NetworkManager.wantedBy = ["multi-user.target"];
 }
