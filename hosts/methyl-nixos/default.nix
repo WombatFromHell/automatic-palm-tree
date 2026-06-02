@@ -24,6 +24,8 @@ in {
     "nixos-justnh"
     "nixos-udev"
     #
+    "nixos-automounts"
+    #
     "nixos-niri"
   ];
 
