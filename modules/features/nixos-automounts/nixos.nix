@@ -3,7 +3,7 @@
     uuid,
     where,
   }: let
-    unitName = builtins.replaceStrings ["/"] ["-"] where;
+    unitName = builtins.replaceStrings ["/"] ["-"] (builtins.substring 1 (builtins.stringLength where - 1) where);
   in {
     mount = {
       description = "Mount for ${where}";
