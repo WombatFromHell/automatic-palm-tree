@@ -24,12 +24,12 @@
       etc."justfile".text = ''
         rebuild:
         ${"\t"}nh os switch ${config.system.justHelper.flakeRoot}
-        test:
+        dry-build:
         ${"\t"}nh os switch --dry-run ${config.system.justHelper.flakeRoot}
         list:
         ${"\t"}nh os info
         clean:
-        ${"\t"}nh clean all --keep 2 --optimise
+        ${"\t"}nh clean all --keep 3 --optimise
       '';
     };
   };
