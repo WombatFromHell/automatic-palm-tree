@@ -18,6 +18,7 @@
 
   environment.systemPackages = with pkgs; [
     curl
+    ghostty
     git
     helix
     python3
