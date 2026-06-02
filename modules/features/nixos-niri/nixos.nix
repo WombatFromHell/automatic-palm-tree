@@ -1,4 +1,10 @@
-{pkgsUnstable, ...}: {
+{
+  pkgs,
+  pkgsUnstable,
+  ...
+}: {
+  environment.systemPackages = with pkgs; [kanshi];
+
   programs = {
     dms-shell = {
       enable = true;
