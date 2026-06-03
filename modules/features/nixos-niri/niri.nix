@@ -25,8 +25,6 @@ in {
   config = lib.mkIf cfg.enable {
     systemd.tmpfiles.rules = [
       "d /etc/niri 0755 root root - -"
-      # fix busted settings menus
-      "L+ /etc/xdg/menus/applications.menu - - - - ${pkgs.kdePackages.plasma-desktop}/share/applications-merged/plasma-applications.menu"
     ];
 
     environment = {
@@ -48,6 +46,8 @@ in {
       };
     };
 
+    # use a workaround to fix brokenness in KDE menus
+    environment.etc."xdg/menus/applications.menu".source = "${pkgs.kdePackages.plasma-workspace}/etc/xdg/menus/plasma-applications.menu";
     system.activationScripts.kbuildsycoca6 = {
       # post activation rebuild via kbuildsycoca6 to fix menus
       text = ''
