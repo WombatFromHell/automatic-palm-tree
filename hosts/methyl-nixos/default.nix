@@ -20,6 +20,7 @@ in {
     "nixos-audio"
     "nixos-network"
     "nixos-kde"
+    "nixos-plymouth"
     "nixos-print"
     "nixos-gaming"
     "nixos-justnh"
