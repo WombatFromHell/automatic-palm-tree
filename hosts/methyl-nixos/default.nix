@@ -23,6 +23,8 @@ in {
     "nixos-gaming"
     "nixos-justnh"
     "nixos-udev"
+    "nixos-flatpak"
+    "nixos-podman"
     #
     "nixos-automounts"
     "nixos-zram"

@@ -36,7 +36,6 @@
 
   services = {
     tailscale.enable = true;
-    flatpak.enable = true;
     gvfs.enable = true;
   };
 }
