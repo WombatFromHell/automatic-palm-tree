@@ -25,12 +25,14 @@ in {
   config = lib.mkIf cfg.enable {
     systemd.tmpfiles.rules = [
       "d /etc/niri 0755 root root - -"
+      # fix busted settings menus
+      "L+ /etc/xdg/menus/applications.menu - - - - ${pkgs.kdePackages.plasma-desktop}/share/applications-merged/plasma-applications.menu"
     ];
 
     environment = {
       systemPackages = [niri-tools];
       etc."niri/config.kdl".source =
-        pkgs.writeText "niri-config.kdl" (builtins.readFile ./config.kdl);
+        pkgs.writeText "config.kdl" (builtins.readFile ./config.kdl);
       etc."niri/services.kdl".text = ''
         // Auto-generated: startup services with correct Nix paths.
         spawn-at-startup "${pkgs.kdePackages.polkit-kde-agent-1}/libexec/polkit-kde-authentication-agent-1"
@@ -39,7 +41,22 @@ in {
 
       sessionVariables = {
         NIXOS_OZONE_WL = "1";
+        QML2_IMPORT_PATH = lib.concatStringsSep ":" [
+          "${pkgs.kdePackages.kirigami-addons}/lib/qt-6/qml"
+          "${pkgs.kdePackages.plasma-desktop}/lib/qt-6/qml"
+        ];
       };
+    };
+
+    system.activationScripts.kbuildsycoca6 = {
+      # post activation rebuild via kbuildsycoca6 to fix menus
+      text = ''
+        echo "Rebuilding KDE service cache..."
+        export XDG_MENU_PREFIX=plasma-
+        export XDG_DATA_DIRS="${pkgs.kdePackages.plasma-desktop}/share:${pkgs.kdePackages.kservice}/share:/run/current-system/sw/share"
+        ${pkgs.kdePackages.kservice}/bin/kbuildsycoca6 --noincremental 2>/dev/null || true
+      '';
+      deps = ["specialfs"];
     };
 
     programs.uwsm.waylandCompositors.niri = {

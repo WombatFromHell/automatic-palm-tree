@@ -6,7 +6,6 @@
   imports = [
     ./niri.nix
     ./niri-portals.nix
-    ./qt6ct.nix
   ];
 
   environment.systemPackages = with pkgs; [
