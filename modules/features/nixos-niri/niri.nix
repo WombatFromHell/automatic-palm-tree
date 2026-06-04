@@ -36,14 +36,6 @@ in {
         spawn-at-startup "${pkgs.kdePackages.polkit-kde-agent-1}/libexec/polkit-kde-authentication-agent-1"
         spawn-at-startup "${pkgs.kdePackages.kwallet-pam}/libexec/pam_kwallet_init"
       '';
-
-      sessionVariables = {
-        NIXOS_OZONE_WL = "1";
-        QML2_IMPORT_PATH = lib.concatStringsSep ":" [
-          "${pkgs.kdePackages.kirigami-addons}/lib/qt-6/qml"
-          "${pkgs.kdePackages.plasma-desktop}/lib/qt-6/qml"
-        ];
-      };
     };
 
     # use a workaround to fix brokenness in KDE menus
