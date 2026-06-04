@@ -3,6 +3,6 @@ _: {
     enable = true;
     priority = 100;
     algorithm = "zstd";
-    memoryPercent = 13;
+    zram-size = "min(ram * 0.25, 4096)";
   };
 }
