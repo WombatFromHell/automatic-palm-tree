@@ -42,7 +42,7 @@ in {
         enable = true;
         enableRootSlice = true;
         enableUserSlices = true;
-        extraConfig = lib.mkIf (cfg.swapUsedLimit != null) {
+        settings.OOM = lib.mkIf (cfg.swapUsedLimit != null) {
           "SwapUsedLimit" = cfg.swapUsedLimit;
           "DefaultMemoryPressureDurationSec" = cfg.memPressureDuration;
         };

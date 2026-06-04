@@ -10,11 +10,20 @@
     pname = "niri-tools";
     version = "0.1.0";
     src = ./bin;
+    shell = pkgs.bash;
     installPhase = ''
-      mkdir -p $out/bin
-      cp spawn-browser.sh $out/bin/spawn-browser.sh
-      cp hyprpicker.sh $out/bin/hyprpicker.sh
-      chmod +x $out/bin/spawn-browser.sh $out/bin/hyprpicker.sh
+      set -euo pipefail
+      mkdir -p "$out/bin"
+      files=(
+        "brave-wrapper.sh"
+        "spawn-browser.sh"
+        "chromium-flags.sh"
+        "hyprpicker.sh"
+      )
+      for file in "''${files[@]}"; do
+        cp "$file" "$out/bin/$file"
+        chmod 0755 "$out/bin/$file"
+      done
     '';
   };
 in {
