@@ -20,16 +20,24 @@
       systemPackages = with pkgs; [
         just
       ];
-      variables.JUST_JUSTFILE = "/etc/justfile";
-      etc."justfile".text = ''
-        rebuild:
+      variables.JUST_JUSTFILE = "/etc/Justfile";
+      etc."Justfile".text = ''
+        default:
+        ${"\t"}@just --list
+        switch:
         ${"\t"}nh os switch ${config.system.justHelper.flakeRoot}
-        dry-build:
-        ${"\t"}nh os switch --dry-run ${config.system.justHelper.flakeRoot}
+        rswitch:
+        ${"\t"}sudo nixos-rebuild switch --flake ${config.system.justHelper.flakeRoot}
+        dswitch:
+        ${"\t"}nh os switch -n ${config.system.justHelper.flakeRoot}
+        dry:
+        ${"\t"}sudo nixos-rebuild build --flake ${config.system.justHelper.flakeRoot} --show-trace
         list:
         ${"\t"}nh os info
-        clean:
-        ${"\t"}nh clean all --keep 3 --optimise
+        clean *args="--keep 3":
+        ${"\t"}#!/usr/bin/env bash
+        ${"\t"}set -euo pipefail
+        ${"\t"}nh clean all {{args}} --optimise
       '';
     };
   };
