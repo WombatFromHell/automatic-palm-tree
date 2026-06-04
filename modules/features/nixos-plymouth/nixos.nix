@@ -11,7 +11,7 @@
     ];
     initrd = {
       systemd.enable = true;
-      kernelModules = [ "amdgpu" "virtio_gpu" ];
+      kernelModules = ["amdgpu" "virtio_gpu"];
     };
   };
 }

@@ -1,5 +1,5 @@
 _: {
-  imports = [./patch.nix];
+  #imports = [./patch.nix];
   services = {
     displayManager.sddm.enable = true;
     desktopManager.plasma6.enable = true;

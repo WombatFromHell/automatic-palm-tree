@@ -30,6 +30,7 @@ in {
     #
     "nixos-automounts"
     "nixos-zram"
+    "nixos-oom"
     #
     "nixos-niri"
   ];

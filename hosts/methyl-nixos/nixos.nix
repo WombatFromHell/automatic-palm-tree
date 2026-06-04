@@ -39,5 +39,8 @@
     ];
   };
 
-  features.niri.enable = true;
+  features = {
+    niri.enable = true;
+    oomd.enable = true;
+  };
 }

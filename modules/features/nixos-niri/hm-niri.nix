@@ -1,4 +1,8 @@
-{lib, pkgs, ...}: {
+{
+  lib,
+  pkgs,
+  ...
+}: {
   systemd.user.sessionVariables = {
     XDG_MENU_PREFIX = "plasma-";
     QT_QPA_PLATFORM = "wayland";
