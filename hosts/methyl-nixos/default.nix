@@ -14,7 +14,6 @@ in {
     "hm-dev"
     "hm-gpg"
     "hm-media"
-    "hm-theme"
     #
     "nixos-base"
     "nixos-audio"

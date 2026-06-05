@@ -11,6 +11,7 @@
   ];
 
   features = {
+    theming.enable = true;
     dms.enable = true;
     kanshi.enable = true;
     niri-watcher.enable = true;

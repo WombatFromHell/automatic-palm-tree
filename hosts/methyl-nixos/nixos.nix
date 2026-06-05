@@ -42,5 +42,10 @@
   features = {
     niri.enable = true;
     oomd.enable = true;
+    kde = {
+      enable = true;
+      dedupEnv.enable = true;
+      overlay.enable = false;
+    };
   };
 }
