@@ -21,6 +21,7 @@
     ghostty
     git
     helix
+    neovim
     python3
     sshfs
     wget
