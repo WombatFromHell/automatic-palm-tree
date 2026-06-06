@@ -4,12 +4,7 @@ _: let
   username = "josh";
   isNixOS = true;
 
-  myNixOS = ./nixos.nix;
-  myHome = ./home.nix;
-in {
-  inherit bootstrap system username isNixOS;
-
-  features = [
+  myFeatures = [
     "hm-base"
     "hm-dev"
     "hm-gpg"
@@ -36,7 +31,12 @@ in {
     "nixos-lsfg"
     "nixos-korthos"
   ];
+  myNixOS = ./nixos.nix;
+  myHome = ./home.nix;
+in {
+  inherit bootstrap system username isNixOS;
 
+  features = myFeatures;
   modules = {
     home = [myHome];
     nixos = [myNixOS];

@@ -18,5 +18,6 @@
     oomd.notify = true;
   };
 
+  programs.gpg.enable = true;
   services.gpg-agent.pinentry.package = pkgs.pinentry-qt;
 }
