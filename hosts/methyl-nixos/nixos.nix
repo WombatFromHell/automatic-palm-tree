@@ -45,7 +45,7 @@
     kde = {
       enable = true;
       dedupEnv.enable = true;
-      overlay.enable = false;
+      overlay.enable = true;
     };
     korthos.enable = true;
     lsfg.enable = true;
