@@ -32,6 +32,8 @@ in {
     "nixos-oom"
     #
     "nixos-niri"
+    #
+    "nixos-korthos"
   ];
 
   modules = {
