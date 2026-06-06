@@ -22,6 +22,7 @@
     git
     helix
     python3
+    sshfs
     wget
   ];
 

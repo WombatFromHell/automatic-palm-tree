@@ -21,6 +21,7 @@
 
   environment.systemPackages = with pkgs; [
     gamescope
+    pkgsUnstable.mesa
     steam-run
     vulkan-tools
   ];
