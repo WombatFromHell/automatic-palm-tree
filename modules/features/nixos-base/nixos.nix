@@ -17,6 +17,7 @@
   };
 
   environment.systemPackages = with pkgs; [
+    cachix
     curl
     ghostty
     git
