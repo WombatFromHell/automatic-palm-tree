@@ -1,6 +1,4 @@
 {
-  lib,
-  config,
   pkgs,
   hostConfig,
   ...
@@ -41,7 +39,7 @@
     ];
   };
 
-  features = lib.mkIf (config ? system) {
+  features = {
     niri.enable = true;
     oomd.enable = true;
     kde = {
@@ -50,5 +48,6 @@
       overlay.enable = false;
     };
     korthos.enable = true;
+    lsfg.enable = true;
   };
 }

@@ -33,6 +33,7 @@ in {
     #
     "nixos-niri"
     #
+    "nixos-lsfg"
     "nixos-korthos"
   ];
 
