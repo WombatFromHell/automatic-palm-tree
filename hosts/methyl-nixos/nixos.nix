@@ -44,7 +44,6 @@
     oomd.enable = true;
     kde = {
       enable = true;
-      dedupEnv.enable = true;
       overlay.enable = true;
     };
     korthos.enable = true;
