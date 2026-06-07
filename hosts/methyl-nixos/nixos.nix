@@ -42,7 +42,10 @@
   features = {
     niri.enable = true;
     oomd.enable = true;
+    #
     korthos.enable = true;
     lsfg.enable = true;
+    #
+    podman.enableUser = hostConfig.username; # opt into containers
   };
 }
