@@ -27,11 +27,11 @@
         switch:
         ${"\t"}nh os switch ${config.system.justHelper.flakeRoot}
         rswitch:
-        ${"\t"}sudo nixos-rebuild switch --flake ${config.system.justHelper.flakeRoot}
+        ${"\t"}sudo nixos-rebuild switch --flake ${config.system.justHelper.flakeRoot} -L -v
         dswitch:
         ${"\t"}nh os switch -n ${config.system.justHelper.flakeRoot}
         dry:
-        ${"\t"}sudo nixos-rebuild build --flake ${config.system.justHelper.flakeRoot} --show-trace
+        ${"\t"}sudo nixos-rebuild build --flake ${config.system.justHelper.flakeRoot} --show-trace -L -v
         list:
         ${"\t"}nh os info
         clean *args="--keep 3":
