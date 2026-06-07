@@ -15,6 +15,8 @@
     dms.enable = true;
     kanshi.enable = true;
     niri-watcher.enable = true;
+    dmemcg-booster.enable = true;
+    #
     oomd.notify = true;
   };
 

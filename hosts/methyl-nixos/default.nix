@@ -30,6 +30,7 @@ _: let
     #
     "nixos-lsfg"
     "nixos-korthos"
+    "nixos-dmemcg"
   ];
   myNixOS = ./nixos.nix;
   myHome = ./home.nix;
