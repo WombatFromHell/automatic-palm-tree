@@ -42,10 +42,6 @@
   features = {
     niri.enable = true;
     oomd.enable = true;
-    kde = {
-      enable = true;
-      overlay.enable = true;
-    };
     korthos.enable = true;
     lsfg.enable = true;
   };
