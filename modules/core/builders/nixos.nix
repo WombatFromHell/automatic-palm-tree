@@ -54,6 +54,7 @@
       nixpkgs = {
         hostPlatform = host.system;
         config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) allUnfree;
+        overlays = [inputs.nix-cachyos-kernel.overlays.default]; # expose 'linux-cachyos-latest' pkg
       };
 
       _module.args = {
@@ -63,7 +64,6 @@
     };
 
     homeManagerModule = {
-      nixpkgs.overlays = [inputs.nix-cachyos-kernel.overlays.default];
       home-manager = {
         useGlobalPkgs = true;
         useUserPackages = true;
