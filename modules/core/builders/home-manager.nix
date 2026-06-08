@@ -40,8 +40,8 @@
       userUnfree.config.unfree
     ]);
 
-    pkgs = pkgsLib.mkPkgs inputs.nixpkgs host.system allUnfree;
-    pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree;
+    pkgs = pkgsLib.mkPkgs inputs.nixpkgs host.system allUnfree [inputs.nixgl.overlay];
+    pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree [];
 
     # ── Module group ──────────────────────────────────────────────────────────
 
@@ -70,6 +70,7 @@
         inherit pkgsUnstable inputs self;
         pkgsStable = pkgs;
         hostConfig = host;
+        inherit (inputs) nixgl;
       };
     };
 

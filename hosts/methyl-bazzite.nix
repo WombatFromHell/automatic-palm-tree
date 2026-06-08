@@ -11,6 +11,10 @@ _: let
       yt-dlp
     ];
 
+    features = {
+      zed-editor.enable = true;
+    };
+
     services.gpg-agent.pinentry.package = pkgs.pinentry-qt;
   };
 in {
@@ -24,6 +28,10 @@ in {
     "hm-gpg"
     "hm-media"
     "hm-nh"
+    #
+    "hm-nixgl"
+    #
+    "hm-zed"
   ];
 
   modules = {

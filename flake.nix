@@ -13,13 +13,15 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/*";
+    nixgl.url = "github:nix-community/nixGL";
   };
 
   outputs = inputs @ {
     self,
+    determinate,
     flake-parts,
     nix-cachyos-kernel,
-    determinate,
+    nixgl,
     ...
   }:
     flake-parts.lib.mkFlake {inherit inputs;} {

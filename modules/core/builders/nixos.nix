@@ -45,7 +45,7 @@
       userUnfree.config.unfree
     ]);
 
-    pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree;
+    pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree [];
 
     # ── Module groups ──────────────────────────────────────────────────────────
 
