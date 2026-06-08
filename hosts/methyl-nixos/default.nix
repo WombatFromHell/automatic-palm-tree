@@ -9,6 +9,7 @@ _: let
     "hm-dev"
     "hm-gpg"
     "hm-media"
+    "hm-zed"
     #
     "nixos-base"
     "nixos-audio"

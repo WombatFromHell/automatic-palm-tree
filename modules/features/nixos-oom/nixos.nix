@@ -1,4 +1,3 @@
-# ./modules/features/nixos-oom/nixos.nix
 {
   pkgs,
   lib,

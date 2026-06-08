@@ -16,6 +16,7 @@
     kanshi.enable = true;
     niri-watcher.enable = true;
     dmemcg-booster.enable = true;
+    zed-editor.enable = true;
     #
     oomd.notify = true;
   };
