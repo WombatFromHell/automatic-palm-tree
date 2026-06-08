@@ -10,6 +10,7 @@
     lazygit
     mise
     nil
+    nixd
     nixfmt
     prettier
     python3
