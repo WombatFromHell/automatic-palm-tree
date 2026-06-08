@@ -21,7 +21,6 @@
 }: let
   version = "1.6.1-pre";
 
-  # Map from Nix system → { url, sha256 }
   assets = {
     "x86_64-linux" = {
       url = "https://github.com/zed-industries/zed/releases/download/v${version}/zed-linux-x86_64.tar.gz";
@@ -51,10 +50,9 @@
   ];
 
   libPath = lib.makeLibraryPath nixDeps;
-  executableName = "zeditor";
+  executableName = "zed";
 
-  # buildFHSEnv allows for users to use the existing Zed
-  # extension tooling without significant pain.
+  # buildFHSEnv allows for users to use the existing Zed extensions
   fhs = {
     zed-editor,
     additionalPkgs ? pkgs: [],
@@ -70,6 +68,10 @@
         ln -s "${zed-editor}/share" "$out/"
       '';
       runScript = "${zed-editor}/bin/${executableName}";
+
+      # Prevent the FHS env from creating a user namespace.
+      unshareUser = false;
+
       passthru = {
         inherit executableName;
         inherit (zed-editor) pname version;
@@ -104,11 +106,8 @@ in
 
       mkdir -p $out/{bin,libexec,share}
 
-      # copy the executables
       cp "$appdir/bin/zed"       $out/bin/
       cp "$appdir/libexec/zed-editor" $out/libexec/
-
-      # copy the share tree (icons, desktop files, etc)
       cp -R "$appdir/share"/* $out/share/
 
       patchelf \
@@ -121,15 +120,11 @@ in
         --set-rpath "${lib.makeLibraryPath ([stdenv.cc.cc] ++ nixDeps)}" \
         "$out/libexec/zed-editor"
 
-      # wrap them so they pick up our Nix store libraries
       wrapProgram $out/bin/zed \
         --prefix LD_LIBRARY_PATH ":" ${libPath}
 
       wrapProgram $out/libexec/zed-editor \
         --prefix LD_LIBRARY_PATH ":" ${libPath}
-
-      # provide a zeditor alias
-      ln -s zed $out/bin/zeditor
     '';
 
     passthru = {
@@ -145,6 +140,7 @@ in
           zed-editor = finalAttrs.finalPackage;
           additionalPkgs = f;
         };
+      noFHS = finalAttrs.finalPackage;
       tests = {
         remoteServerVersion = testers.testVersion {
           package = finalAttrs.finalPackage.remote_server;
