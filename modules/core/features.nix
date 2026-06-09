@@ -41,7 +41,8 @@
 in {
   inherit discoveredFeatures resolveUserModules;
 
-  resolve = featureList: attrPath: let
+  resolve = featureList: attrPath: host: let
+    inherit (host) hostConfig;
     safeList =
       if featureList == null
       then []
@@ -80,7 +81,7 @@ in {
       specialArgs = {
         pkgs = throw "'unfree' lists must be static — they cannot reference pkgs.";
         pkgsUnstable = throw "'unfree' lists must be static — they cannot reference pkgsUnstable.";
-        inherit lib;
+        inherit lib hostConfig;
         config = {};
         options = {};
         inputs = {};

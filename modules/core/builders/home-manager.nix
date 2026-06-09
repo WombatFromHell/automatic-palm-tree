@@ -20,7 +20,7 @@
         && featuresLib.discoveredFeatures.${f} ? "home")
       (host.features or []);
   in
-    featuresLib.resolve relevant "home";
+    featuresLib.resolve relevant "home" host;
 
   # ── Build one homeConfiguration for a single (hostname, user) pair ─────────
   mkHomeConfig = hostname: h: user: let

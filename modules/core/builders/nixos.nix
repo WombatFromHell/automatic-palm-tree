@@ -26,11 +26,12 @@
         && featuresLib.discoveredFeatures.${f} ? ${platform})
       (host.features or []);
   in
-    featuresLib.resolve relevant platform;
+    featuresLib.resolve relevant platform host;
 
   # ── Build one nixosConfiguration ───────────────────────────────────────────
   mkNixosConfig = name: h: let
     host = h.config;
+    hostConfig = host;
 
     nixosFeaturesData = resolveFeatures host "nixos";
     homeFeaturesData = resolveFeatures host "home";
@@ -67,7 +68,7 @@
       home-manager = {
         useGlobalPkgs = true;
         useUserPackages = true;
-        extraSpecialArgs = {inherit pkgsUnstable inputs self;};
+        extraSpecialArgs = {inherit pkgsUnstable inputs self hostConfig;};
 
         users = lib.genAttrs host.usernames (user: let
           perUserModPath = self + /hosts/${name}/home-${user}.nix;
