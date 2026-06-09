@@ -1,15 +1,21 @@
 {
-  lib,
   self,
+  lib,
   inputs,
   config,
   ...
 }: let
-  pkgsLib = import ../pkgs.nix {inherit lib inputs;};
-  featuresLib = import ../features.nix {inherit lib self;};
-  helpers = import ../helpers.nix {inherit lib inputs self;};
+  shared = import ./shared.nix {inherit lib self inputs;};
+  inherit
+    (shared)
+    pkgsLib
+    featuresLib
+    resolveFeatures
+    collectUnfree
+    hostHmModules
+    resolvePerUserMod
+    ;
 
-  # ── Only build NixOS configurations for hosts that set isNixOS = true ──────
   nixosHosts = lib.filterAttrs (_: h: h.config.isNixOS or false) config.discoveredHosts;
 
   hostNixosModules = host:
@@ -18,17 +24,6 @@
       (host.modules.shared or [])
     ];
 
-  resolveFeatures = host: platform: let
-    relevant =
-      lib.filter
-      (f:
-        featuresLib.discoveredFeatures ? ${f}
-        && featuresLib.discoveredFeatures.${f} ? ${platform})
-      (host.features or []);
-  in
-    featuresLib.resolve relevant platform host;
-
-  # ── Build one nixosConfiguration ───────────────────────────────────────────
   mkNixosConfig = name: h: let
     host = h.config;
     hostConfig = host;
@@ -37,27 +32,16 @@
     homeFeaturesData = resolveFeatures host "home";
 
     userModulePaths = featuresLib.resolveUserModules (self + /hosts) name host.usernames;
-    userUnfree = helpers.extractUnfree helpers.mkUnfreeOptionsModule userModulePaths;
-
-    allUnfree = lib.unique (lib.flatten [
-      (host.unfree or [])
-      nixosFeaturesData.unfree
-      homeFeaturesData.unfree
-      userUnfree.config.unfree
-    ]);
-
+    allUnfree = collectUnfree host [nixosFeaturesData homeFeaturesData] userModulePaths;
     pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree [];
-
-    # ── Module groups ──────────────────────────────────────────────────────────
 
     baseModule = {
       imports = lib.flatten nixosFeaturesData.modules;
       nixpkgs = {
         hostPlatform = host.system;
         config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) allUnfree;
-        overlays = [inputs.nix-cachyos-kernel.overlays.default]; # expose 'linux-cachyos-latest' pkg
+        overlays = [inputs.nix-cachyos-kernel.overlays.default];
       };
-
       _module.args = {
         inherit pkgsUnstable;
         hostConfig = host;
@@ -68,17 +52,21 @@
       home-manager = {
         useGlobalPkgs = true;
         useUserPackages = true;
-        extraSpecialArgs = {inherit pkgsUnstable inputs self hostConfig;};
+        extraSpecialArgs = {
+          inherit
+            pkgsUnstable
+            inputs
+            self
+            hostConfig
+            ;
+        };
 
-        users = lib.genAttrs host.usernames (user: let
-          perUserModPath = self + /hosts/${name}/home-${user}.nix;
-          perUserMod = lib.optional (builtins.pathExists perUserModPath) perUserModPath;
-        in {
+        users = lib.genAttrs host.usernames (user: {
           imports = lib.flatten [
             homeFeaturesData.modules
-            (helpers.hostHmModules host)
-            perUserMod
-            helpers.mkUnfreeOptionsModule
+            (hostHmModules host)
+            (resolvePerUserMod (self + /hosts) name user)
+            pkgsLib.mkUnfreeOptionsModule
             self.flakeModules.home-manager
             {
               home.username = user;
@@ -91,11 +79,10 @@
   in
     inputs.nixpkgs.lib.nixosSystem {
       modules = lib.flatten [
-        helpers.mkUnfreeOptionsModule
+        pkgsLib.mkUnfreeOptionsModule
         ../nix-settings.nix
         baseModule
         self.flakeModules.nixos
-        # detsys' nix binary only enabled if attr 'bootstrap = false;' set on outputs
         (lib.optional (!host.bootstrap) inputs.determinate.nixosModules.default)
         (hostNixosModules host)
         inputs.home-manager.nixosModules.home-manager
@@ -109,12 +96,16 @@
           (removeAttrs args ["groups"])
           // {
             isNormalUser = true;
-            extraGroups = ["wheel" "networkmanager"] ++ groups;
+            extraGroups =
+              [
+                "wheel"
+                "networkmanager"
+              ]
+              ++ groups;
           };
       };
     };
 in {
   imports = [../discovery.nix];
-
   flake.nixosConfigurations = lib.mapAttrs mkNixosConfig nixosHosts;
 }

@@ -1,6 +1,7 @@
 {
-  lib,
   self,
+  lib,
+  pkgsLib,
 }: let
   featuresDir = self + /modules/features;
 
@@ -48,48 +49,19 @@ in {
       then []
       else featureList;
 
-    # 1. Validate and get paths
     paths =
       map (
         f:
           if !(discoveredFeatures ? ${f})
-          then throw "Unknown feature '${f}'. Available features: ${availableFeatures}"
+          then throw "Unknown feature '${f}'. Available: ${availableFeatures}"
           else if !(discoveredFeatures.${f} ? ${attrPath})
-          then throw "Feature '${f}' has no '${attrPath}' module defined. Available: ${lib.concatStringsSep ", " (lib.attrNames discoveredFeatures.${f})}"
+          then throw "Feature '${f}' has no '${attrPath}' module. Available: ${lib.concatStringsSep ", " (lib.attrNames discoveredFeatures.${f})}"
           else discoveredFeatures.${f}.${attrPath}
       )
       safeList;
 
-    # 2. Evaluate in isolation JUST to extract the unfree lists
-    extracted = lib.evalModules {
-      modules =
-        paths
-        ++ [
-          {
-            options = {
-              unfree = lib.mkOption {
-                type = lib.types.listOf lib.types.str;
-                default = [];
-                internal = true;
-              };
-            };
-          }
-          {_module.check = false;}
-        ];
-      # Provide dummy args so modules don't crash on destructuring,
-      # but throw if they actually try to EVALUATE pkgs to build the list.
-      specialArgs = {
-        pkgs = throw "'unfree' lists must be static — they cannot reference pkgs.";
-        pkgsUnstable = throw "'unfree' lists must be static — they cannot reference pkgsUnstable.";
-        inherit lib hostConfig;
-        config = {};
-        options = {};
-        inputs = {};
-        self = {};
-      };
-    };
+    extracted = pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule paths;
   in {
-    # 3. Return the ORIGINAL paths. No wrapping needed!
     modules = paths;
     inherit (extracted.config) unfree;
   };

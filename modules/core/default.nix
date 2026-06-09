@@ -1,9 +1,11 @@
 {
-  lib,
   self,
+  lib,
+  inputs,
   ...
 }: let
-  featuresLib = import ./features.nix {inherit lib self;};
+  pkgsLib = import ./pkgs.nix {inherit lib inputs;};
+  featuresLib = import ./features.nix {inherit self lib pkgsLib;};
 in {
   imports = [
     ./builders/nixos.nix
