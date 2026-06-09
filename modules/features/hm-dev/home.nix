@@ -3,8 +3,10 @@
   pkgs,
   hostConfig,
   ...
-}: {
-  home.packages = with pkgs;
+}:
+{
+  home.packages =
+    with pkgs;
     [
       # Dev tools
       alejandra
@@ -15,9 +17,7 @@
       lazydocker
       lazygit
       mise
-      nil
       nixd
-      nixfmt
       prettier
       python3
       python3Packages.pytest
@@ -40,7 +40,9 @@
       enable = true;
       nix-direnv.enable = true;
       config = {
-        global = {log_format = "";};
+        global = {
+          log_format = "";
+        };
       };
     };
   };
