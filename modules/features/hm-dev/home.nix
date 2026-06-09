@@ -3,10 +3,8 @@
   pkgs,
   hostConfig,
   ...
-}:
-{
-  home.packages =
-    with pkgs;
+}: {
+  home.packages = with pkgs;
     [
       # Dev tools
       alejandra

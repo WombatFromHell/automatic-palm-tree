@@ -16,14 +16,7 @@
     nixgl.url = "github:nix-community/nixGL";
   };
 
-  outputs = inputs @ {
-    self,
-    determinate,
-    flake-parts,
-    nix-cachyos-kernel,
-    nixgl,
-    ...
-  }:
+  outputs = inputs @ {flake-parts, ...}:
     flake-parts.lib.mkFlake {inherit inputs;} {
       imports = [./modules];
 
