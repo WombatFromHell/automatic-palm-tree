@@ -17,6 +17,7 @@
     niri-watcher.enable = true;
     dmemcg-booster.enable = true;
     zed-editor.enable = true;
+    nasmount.enable = true;
     #
     oomd.notify = true;
   };

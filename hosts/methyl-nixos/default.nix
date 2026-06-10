@@ -10,6 +10,7 @@ _: let
     "hm-gpg"
     "hm-media"
     "hm-zed"
+    "hm-nasmount"
     #
     "nixos-base"
     "nixos-audio"

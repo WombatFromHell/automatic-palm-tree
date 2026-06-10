@@ -24,7 +24,6 @@
     helix
     neovim
     python3
-    sshfs
     wget
   ];
 
