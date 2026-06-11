@@ -9,43 +9,40 @@
   inherit
     (shared)
     pkgsLib
-    featuresLib
     resolveFeatures
     collectUnfree
     hostHmModules
+    mkUnstablePkgs
+    perUserModulePaths
+    mkUserHomeModule
     ;
 
   hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or false)) config.discoveredHosts;
 
-  mkHomeConfig = hostname: h: user: userModulePaths: let
+  mkHomeConfig = h: user: userModulePaths: let
     host = h.config;
 
     homeFeaturesData = resolveFeatures host "home";
-    perUserMod = host.modules.perUser.${user} or [];
 
     allUnfree = collectUnfree host [homeFeaturesData] userModulePaths;
 
     pkgs = pkgsLib.mkPkgs inputs.nixpkgs host.system allUnfree [inputs.nixgl.overlay];
-    pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree [];
+    pkgsUnstable = mkUnstablePkgs host allUnfree;
 
-    baseModule = {
-      imports = lib.flatten [
-        homeFeaturesData.modules
-        (hostHmModules host)
-        perUserMod
-      ];
-
-      home.username = user;
-      home.homeDirectory = "/home/${user}";
-      targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);
-    };
+    baseModule =
+      mkUserHomeModule {
+        inherit lib pkgsLib self user homeFeaturesData;
+        hostHmModules = hostHmModules host;
+        perUserMod = host.modules.perUser.${user} or [];
+      }
+      // {
+        targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);
+      };
   in
     inputs.home-manager.lib.homeManagerConfiguration {
       inherit pkgs;
       modules = lib.flatten [
-        pkgsLib.mkUnfreeOptionsModule
         ../nix-settings.nix
-        self.flakeModules.home-manager
         baseModule
       ];
 
@@ -60,12 +57,12 @@
   allHomeConfigs =
     lib.foldl' lib.recursiveUpdate {}
     (lib.mapAttrsToList
-      (hostname: h: let
-        userModulePaths = lib.concatLists (lib.attrValues (h.config.modules.perUser or {}));
+      (_: h: let
+        userModulePaths = perUserModulePaths h.config;
       in
         lib.listToAttrs
         (map
-          (user: lib.nameValuePair "${user}@${h.name}" (mkHomeConfig hostname h user userModulePaths))
+          (user: lib.nameValuePair "${user}@${h.name}" (mkHomeConfig h user userModulePaths))
           h.config.usernames))
       hmHosts);
 in {

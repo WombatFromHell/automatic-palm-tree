@@ -4,7 +4,7 @@
   inputs,
   ...
 }: let
-  pkgsLib = import ./pkgs.nix {inherit lib inputs;};
+  pkgsLib = import ./pkgs.nix {inherit lib;};
   featuresLib = import ./features.nix {inherit self lib pkgsLib;};
 in {
   imports = [

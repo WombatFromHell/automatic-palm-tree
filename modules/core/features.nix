@@ -34,11 +34,6 @@ in {
   inherit discoveredFeatures;
 
   resolve = featureList: attrPath: let
-    safeList =
-      if featureList == null
-      then []
-      else featureList;
-
     paths =
       map (
         f:
@@ -48,7 +43,7 @@ in {
           then throw "Feature '${f}' has no '${attrPath}' module. Available: ${lib.concatStringsSep ", " (lib.attrNames discoveredFeatures.${f})}"
           else discoveredFeatures.${f}.${attrPath}
       )
-      safeList;
+      featureList;
 
     extracted = pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule paths;
   in {

@@ -9,10 +9,12 @@
   inherit
     (shared)
     pkgsLib
-    featuresLib
     resolveFeatures
     collectUnfree
     hostHmModules
+    mkUnstablePkgs
+    perUserModulePaths
+    mkUserHomeModule
     ;
 
   nixosHosts = lib.filterAttrs (_: h: h.config.isNixOS or false) config.discoveredHosts;
@@ -23,16 +25,15 @@
       (host.modules.shared or [])
     ];
 
-  mkNixosConfig = name: h: let
+  mkNixosConfig = _: h: let
     host = h.config;
-    hostConfig = host;
 
     nixosFeaturesData = resolveFeatures host "nixos";
     homeFeaturesData = resolveFeatures host "home";
 
-    userModulePaths = lib.concatLists (lib.attrValues (host.modules.perUser or {}));
+    userModulePaths = perUserModulePaths host;
     allUnfree = collectUnfree host [nixosFeaturesData homeFeaturesData] userModulePaths;
-    pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree [];
+    pkgsUnstable = mkUnstablePkgs host allUnfree;
 
     baseModule = {
       imports = lib.flatten nixosFeaturesData.modules;
@@ -52,27 +53,16 @@
         useGlobalPkgs = true;
         useUserPackages = true;
         extraSpecialArgs = {
-          inherit
-            pkgsUnstable
-            inputs
-            self
-            hostConfig
-            ;
+          inherit pkgsUnstable inputs self;
+          hostConfig = host;
         };
 
-        users = lib.genAttrs host.usernames (user: {
-          imports = lib.flatten [
-            homeFeaturesData.modules
-            (hostHmModules host)
-            (host.modules.perUser.${user} or [])
-            pkgsLib.mkUnfreeOptionsModule
-            self.flakeModules.home-manager
-            {
-              home.username = user;
-              home.homeDirectory = "/home/${user}";
-            }
-          ];
-        });
+        users = lib.genAttrs host.usernames (user:
+          mkUserHomeModule {
+            inherit lib pkgsLib self user homeFeaturesData;
+            hostHmModules = hostHmModules host;
+            perUserMod = host.modules.perUser.${user} or [];
+          });
       };
     };
   in
@@ -91,15 +81,17 @@
       specialArgs = {
         inherit inputs self;
         inherit (host) usernames;
-        mkUser = username: {groups ? [], ...} @ args:
-          let
-            isAdmin = host.users.${username}.isAdmin or false;
-          in {
+        mkUser = username: {groups ? [], ...} @ args: let
+          isAdmin = host.users.${username}.isAdmin or false;
+        in
+          {
             isNormalUser = true;
-            extraGroups = ["networkmanager"]
+            extraGroups =
+              ["networkmanager"]
               ++ lib.optional isAdmin "wheel"
               ++ groups;
-          } // removeAttrs args ["groups"];
+          }
+          // removeAttrs args ["groups"];
       };
     };
 in {

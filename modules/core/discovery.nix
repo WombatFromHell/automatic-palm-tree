@@ -26,25 +26,36 @@
   # ── Auto-discover modules in a host directory ────────────────
   autoDiscoverModules = isDir: hostDir:
     if !isDir
-    then { nixos = []; shared = []; perUser = {}; }
+    then {
+      nixos = [];
+      shared = [];
+      perUser = {};
+    }
     else {
-      nixos = lib.optional (builtins.pathExists (hostDir + "/nixos.nix"))
+      nixos =
+        lib.optional (builtins.pathExists (hostDir + "/nixos.nix"))
         (hostDir + "/nixos.nix");
-      shared = lib.optional (builtins.pathExists (hostDir + "/shared.nix"))
+      shared =
+        lib.optional (builtins.pathExists (hostDir + "/shared.nix"))
         (hostDir + "/shared.nix");
       perUser = let
         dirEntries = builtins.readDir hostDir;
-        homeFiles = lib.filterAttrs (n: t:
-          t == "regular"
-          && lib.hasPrefix "home-" n
-          && lib.hasSuffix ".nix" n
-        ) dirEntries;
+        homeFiles =
+          lib.filterAttrs (
+            n: t:
+              t
+              == "regular"
+              && lib.hasPrefix "home-" n
+              && lib.hasSuffix ".nix" n
+          )
+          dirEntries;
       in
         builtins.listToAttrs (
-          map (filename: let
-            user = lib.removeSuffix ".nix" (lib.removePrefix "home-" filename);
-          in
-            lib.nameValuePair user [ (hostDir + "/${filename}") ]
+          map (
+            filename: let
+              user = lib.removeSuffix ".nix" (lib.removePrefix "home-" filename);
+            in
+              lib.nameValuePair user [(hostDir + "/${filename}")]
           ) (builtins.attrNames homeFiles)
         );
     };
@@ -56,7 +67,11 @@
       ++ (builtins.attrNames perUserFromHome)
     );
     impliedUsers = builtins.listToAttrs (
-      map (user: { name = user; value = { enabled = true; }; }) allUsernames
+      map (user: {
+        name = user;
+        value = {enabled = true;};
+      })
+      allUsernames
     );
     mergedUsers = lib.recursiveUpdate impliedUsers evaluatedUserConfigs;
   in {
@@ -101,12 +116,11 @@ in {
         };
 
         # 5. Validate features against known feature directories
-        validated =
-          lib.forEach (evaluatedHost.config.features or []) (feature:
+        validated = lib.forEach (evaluatedHost.config.features or []) (
+          feature:
             assert lib.asserts.assertMsg (builtins.elem feature validFeatures)
-              "Host '${name}': unknown feature '${feature}'. Valid features: ${lib.concatStringsSep ", " (lib.naturalSort validFeatures)}";
-            feature
-          );
+            "Host '${name}': unknown feature '${feature}'. Valid features: ${lib.concatStringsSep ", " (lib.naturalSort validFeatures)}"; feature
+        );
 
         # 6. Auto-discover modules in the host directory
         hostDir =
@@ -124,8 +138,8 @@ in {
 
         # 9. Merge auto-discovered with explicitly defined modules
         mergedModules = {
-          nixos   = autoModules.nixos  ++ (hostModules.nixos  or []);
-          shared  = autoModules.shared ++ (hostModules.shared or []);
+          nixos = autoModules.nixos ++ (hostModules.nixos  or []);
+          shared = autoModules.shared ++ (hostModules.shared or []);
           perUser = lib.recursiveUpdate autoModules.perUser perUserFromHome;
         };
       in {

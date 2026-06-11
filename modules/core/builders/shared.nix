@@ -3,7 +3,7 @@
   self,
   inputs,
 }: let
-  pkgsLib = import ../pkgs.nix {inherit lib inputs;};
+  pkgsLib = import ../pkgs.nix {inherit lib;};
   featuresLib = import ../features.nix {inherit lib self pkgsLib;};
 in {
   inherit pkgsLib featuresLib;
@@ -32,4 +32,33 @@ in {
         && featuresLib.discoveredFeatures.${f} ? ${platform})
       (host.features or []))
     platform;
+
+  # Accumulate all per-user home module paths for a host
+  perUserModulePaths = host:
+    lib.concatLists (lib.attrValues (host.modules.perUser or {}));
+
+  # Build the unstable package set for a host
+  mkUnstablePkgs = host: allUnfree:
+    pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree [];
+
+  # Build the home-manager module for a single user
+  mkUserHomeModule = {
+    lib,
+    pkgsLib,
+    self,
+    user,
+    homeFeaturesData,
+    hostHmModules,
+    perUserMod,
+  }: {
+    imports = lib.flatten [
+      homeFeaturesData.modules
+      hostHmModules
+      perUserMod
+      pkgsLib.mkUnfreeOptionsModule
+      self.flakeModules.home-manager
+    ];
+    home.username = user;
+    home.homeDirectory = "/home/${user}";
+  };
 }
