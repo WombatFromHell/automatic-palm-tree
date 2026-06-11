@@ -13,7 +13,6 @@
     resolveFeatures
     collectUnfree
     hostHmModules
-    resolvePerUserMod
     ;
 
   nixosHosts = lib.filterAttrs (_: h: h.config.isNixOS or false) config.discoveredHosts;
@@ -31,7 +30,7 @@
     nixosFeaturesData = resolveFeatures host "nixos";
     homeFeaturesData = resolveFeatures host "home";
 
-    userModulePaths = featuresLib.resolveUserModules (self + /hosts) name host.usernames;
+    userModulePaths = lib.concatLists (lib.attrValues (host.modules.perUser or {}));
     allUnfree = collectUnfree host [nixosFeaturesData homeFeaturesData] userModulePaths;
     pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree [];
 
@@ -65,7 +64,7 @@
           imports = lib.flatten [
             homeFeaturesData.modules
             (hostHmModules host)
-            (resolvePerUserMod (self + /hosts) name user)
+            (host.modules.perUser.${user} or [])
             pkgsLib.mkUnfreeOptionsModule
             self.flakeModules.home-manager
             {
@@ -92,17 +91,15 @@
       specialArgs = {
         inherit inputs self;
         inherit (host) usernames;
-        mkUser = {groups ? [], ...} @ args:
-          (removeAttrs args ["groups"])
-          // {
+        mkUser = username: {groups ? [], ...} @ args:
+          let
+            isAdmin = host.users.${username}.isAdmin or false;
+          in {
             isNormalUser = true;
-            extraGroups =
-              [
-                "wheel"
-                "networkmanager"
-              ]
+            extraGroups = ["networkmanager"]
+              ++ lib.optional isAdmin "wheel"
               ++ groups;
-          };
+          } // removeAttrs args ["groups"];
       };
     };
 in {

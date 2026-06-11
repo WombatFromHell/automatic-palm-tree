@@ -10,17 +10,18 @@
       type = lib.types.str;
     };
 
-    username = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-    };
-
     users = lib.mkOption {
       type = lib.types.attrsOf (
         lib.types.submodule {
-          options.enabled = lib.mkOption {
-            type = lib.types.bool;
-            default = true;
+          options = {
+            enabled = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+            };
+            isAdmin = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+            };
           };
         }
       );

@@ -19,7 +19,6 @@ _: let
   };
 in {
   system = "x86_64-linux";
-  username = "josh";
   isNixOS = false;
 
   features = [
@@ -34,7 +33,5 @@ in {
     "hm-zed"
   ];
 
-  modules = {
-    home = [myHome];
-  };
+  modules.home.josh = [myHome];
 }

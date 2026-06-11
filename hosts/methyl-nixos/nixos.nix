@@ -2,7 +2,9 @@
   pkgs,
   hostConfig,
   ...
-}: {
+}: let
+  primaryUser = builtins.head hostConfig.usernames;
+in {
   imports = [./hardware-configuration.nix];
 
   boot = {
@@ -11,7 +13,6 @@
       efi.canTouchEfiVariables = true;
       timeout = 1;
     };
-    # cachyos kernel only enabled if attr 'bootstrap = false;' set
     kernelPackages =
       if hostConfig.bootstrap
       then pkgs.linuxPackages_latest
@@ -23,14 +24,13 @@
   };
   networking.hostName = "methyl-nixos";
 
-  # for debugging purposes
   services = {
     openssh.enable = true;
   };
 
-  users.users.${hostConfig.username} = {
+  users.users.${primaryUser} = {
     isNormalUser = true;
-    home = "/home/${hostConfig.username}";
+    home = "/home/${primaryUser}";
     extraGroups = [
       "input"
       "lp"
@@ -42,10 +42,8 @@
   features = {
     niri.enable = true;
     oomd.enable = true;
-    #
     korthos.enable = true;
     lsfg.enable = true;
-    #
-    podman.enableUser = hostConfig.username; # opt into containers
+    podman.enableUser = primaryUser;
   };
 }

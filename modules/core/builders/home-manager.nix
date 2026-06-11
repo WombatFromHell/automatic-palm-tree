@@ -13,18 +13,16 @@
     resolveFeatures
     collectUnfree
     hostHmModules
-    resolvePerUserMod
     ;
 
   hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or false)) config.discoveredHosts;
 
-  mkHomeConfig = hostname: h: user: let
+  mkHomeConfig = hostname: h: user: userModulePaths: let
     host = h.config;
 
     homeFeaturesData = resolveFeatures host "home";
-    perUserMod = resolvePerUserMod (self + /hosts) hostname user;
+    perUserMod = host.modules.perUser.${user} or [];
 
-    userModulePaths = featuresLib.resolveUserModules (self + /hosts) hostname host.usernames;
     allUnfree = collectUnfree host [homeFeaturesData] userModulePaths;
 
     pkgs = pkgsLib.mkPkgs inputs.nixpkgs host.system allUnfree [inputs.nixgl.overlay];
@@ -62,10 +60,12 @@
   allHomeConfigs =
     lib.foldl' lib.recursiveUpdate {}
     (lib.mapAttrsToList
-      (hostname: h:
+      (hostname: h: let
+        userModulePaths = lib.concatLists (lib.attrValues (h.config.modules.perUser or {}));
+      in
         lib.listToAttrs
         (map
-          (user: lib.nameValuePair "${user}@${h.name}" (mkHomeConfig hostname h user))
+          (user: lib.nameValuePair "${user}@${h.name}" (mkHomeConfig hostname h user userModulePaths))
           h.config.usernames))
       hmHosts);
 in {

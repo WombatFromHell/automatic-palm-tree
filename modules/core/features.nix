@@ -30,20 +30,10 @@
     featureDirs;
 
   availableFeatures = lib.concatStringsSep ", " (lib.naturalSort (lib.attrNames discoveredFeatures));
-
-  # Discover per-user home module paths for a given host.
-  # Returns only existing files, so builders can safely pass all enabled usernames.
-  resolveUserModules = hostsDir: hostname: usernames: let
-    hostDir = hostsDir + "/${hostname}";
-  in
-    lib.filter builtins.pathExists (
-      map (user: hostDir + "/home-${user}.nix") usernames
-    );
 in {
-  inherit discoveredFeatures resolveUserModules;
+  inherit discoveredFeatures;
 
-  resolve = featureList: attrPath: host: let
-    inherit (host) hostConfig;
+  resolve = featureList: attrPath: let
     safeList =
       if featureList == null
       then []

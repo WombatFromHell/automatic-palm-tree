@@ -8,18 +8,11 @@
 in {
   inherit pkgsLib featuresLib;
 
-  # Inline from deleted helpers.nix
   hostHmModules = host:
     lib.flatten [
       (host.modules.home or [])
       (host.modules.shared or [])
     ];
-
-  # Resolve an optional per-user home module, empty list if absent
-  resolvePerUserMod = hostsDir: hostname: user:
-    lib.optional
-    (builtins.pathExists (hostsDir + "/${hostname}/home-${user}.nix"))
-    (hostsDir + "/${hostname}/home-${user}.nix");
 
   # Collect and deduplicate all unfree package names for a host.
   # featureDataList is a list of resolved feature data attrsets, each with a .unfree list.
@@ -38,6 +31,5 @@ in {
         featuresLib.discoveredFeatures ? ${f}
         && featuresLib.discoveredFeatures.${f} ? ${platform})
       (host.features or []))
-    platform
-    host;
+    platform;
 }
