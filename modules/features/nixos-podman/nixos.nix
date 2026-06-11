@@ -1,34 +1,26 @@
 {
   config,
   lib,
+  hostConfig,
   ...
 }: let
-  cfg = config.features.podman;
+  hasPodmanUser = builtins.any
+    (u: builtins.elem "podman" (config.users.users.${u}.extraGroups or []))
+    hostConfig.osUsernames;
 in {
-  options.features.podman = {
-    enableUser = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = "The username to add to the podman group (null for no user)";
+  config = {
+    warnings = lib.optional (!hasPodmanUser)
+      ("Podman is enabled but no user in osUsernames has the 'podman' extra group. "
+      + "Add 'podman' to users.users.<name>.extraGroups on the host.");
+
+    virtualisation = {
+      containers.enable = true;
+      podman = {
+        enable = true;
+        dockerCompat = true;
+        dockerSocket.enable = true;
+        defaultNetwork.settings.dns_enabled = true;
+      };
     };
   };
-
-  config = lib.mkMerge [
-    {
-      virtualisation = {
-        containers.enable = true;
-        podman = {
-          enable = true;
-          dockerCompat = true;
-          dockerSocket.enable = true;
-          defaultNetwork.settings.dns_enabled = true;
-        };
-      };
-    }
-
-    # Only add the user to the group if enableUser is defined
-    (lib.mkIf (cfg.enableUser != null) {
-      users.users.${cfg.enableUser}.extraGroups = ["podman"];
-    })
-  ];
 }

@@ -17,6 +17,18 @@
     mkUserHomeModule
     ;
 
+  mkNixosUserModule = host: {lib, ...}: {
+    users.users = lib.genAttrs host.osUsernames (username: let
+      userCfg = host.users.${username} or {};
+    in {
+      isNormalUser = true;
+      home = "/home/${username}";
+      extraGroups =
+        ["networkmanager"]
+        ++ lib.optional (userCfg.isAdmin or false) "wheel";
+    });
+  };
+
   nixosHosts = lib.filterAttrs (_: h: h.config.isNixOS or false) config.discoveredHosts;
 
   hostNixosModules = host:
@@ -57,7 +69,7 @@
           hostConfig = host;
         };
 
-        users = lib.genAttrs host.usernames (user:
+        users = lib.genAttrs host.hmUsernames (user:
           mkUserHomeModule {
             inherit lib pkgsLib self user homeFeaturesData;
             hostHmModules = hostHmModules host;
@@ -72,6 +84,7 @@
         ../nix-settings.nix
         baseModule
         self.flakeModules.nixos
+        (mkNixosUserModule host)
         (lib.optional (!host.bootstrap) inputs.determinate.nixosModules.default)
         (hostNixosModules host)
         inputs.home-manager.nixosModules.home-manager
@@ -80,7 +93,7 @@
 
       specialArgs = {
         inherit inputs self;
-        inherit (host) usernames;
+        inherit (host) osUsernames hmUsernames;
         mkUser = username: {groups ? [], ...} @ args: let
           isAdmin = host.users.${username}.isAdmin or false;
         in

@@ -1,110 +1,60 @@
 # flakeroot
 
-A flake-driven, host-discovering config system for NixOS and Home Manager.
+Flake-driven, host-discovering config system for NixOS and Home Manager.
 
-## Setup
-
-Clone the flake into `~/.config/flakeroot` and set `NH_FLAKE` so `nh` and other tools find it automatically:
-
-```bash
-git clone <repo-url> ~/.config/flakeroot
-```
-
-Add to your shellrc:
+## Deploy
 
 ```bash
 export NH_FLAKE="$HOME/.config/flakeroot"
+nh os switch          # NixOS system + Home Manager
+nh home switch        # Home Manager only
+nix flake show        # List all discovered configs
 ```
 
-This lets `nh os switch` and `nh home switch` resolve the flake without `--flake` flags.
-
-## Switching Configurations
-
-```bash
-# List all discovered configs
-nix flake show
-
-# NixOS system + Home Manager
-nh os switch
-
-# Home Manager only (auto-detects user@host)
-nh home switch
-```
-
-Or with home-manager: `home-manager switch --flake . --impure`
-Or with nixos-rebuild: `nixos-rebuild switch --flake .#<hostname>`
-
-## Adding a Host
-
-### Single-File Host
+## Single-File Host (HM-only)
 
 Create `hosts/<name>.nix`:
 
 ```nix
 _: {
   system = "x86_64-linux";
-  username = "josh";
   isNixOS = false;
 
   features = [ "hm-base" "hm-dev" ];
-  unfree = [];
-  unfreeUnstable = [];
 
-  modules = {
-    home = [ (hmModule ./my-config.nix) ];
-  };
+  modules.home = [ (hmModule ./my-config.nix) ];
 }
 ```
 
-### Multi-File Host
+## Multi-File Host (NixOS)
 
-Create a directory `hosts/<name>/` with a `default.nix` barrel loader and optional feature files:
-
-```
-hosts/family-desktop/
-├── default.nix          # System, users, features, module paths
-├── nixos.nix            # NixOS system config (imported via modules.nixos)
-├── shared.nix           # Shared between NixOS + HM (imported via modules.shared)
-├── home-mainuser.nix    # Per-user HM module for mainuser
-└── home-anotheruser.nix # Per-user HM module for anotheruser
-```
-
-**`default.nix`** — barrel loader:
+Create `hosts/<name>/default.nix`:
 
 ```nix
 { self, inputs, lib, ... }: {
   system   = "x86_64-linux";
   isNixOS  = true;
 
-  users = {
-    mainuser    = { enabled = true; };
-    anotheruser = { enabled = false; };
-  };
+  users.josh  = { isAdmin = true; };
+  users.guest = {};
 
-  features = [ "hm-base" "hm-gpg" ];
+  features = [ "hm-base" "hm-gpg" "nixos-podman" ];
 
-  modules = {
-    nixos  = [ ./nixos.nix ];
-    shared = [ ./shared.nix ];
-  };
+  modules.nixos = [ ./nixos.nix ];
 }
 ```
 
-**`nixos.nix`** — NixOS system config:
+`hosts/<name>/nixos.nix` — `users.users` are auto-generated for all `osUsernames`; add per-user groups here:
 
 ```nix
-{ lib, pkgs, usernames, ... }: {
-  networking.hostName = "family-desktop";
+{ pkgs, hostConfig, ... }: {
+  networking.hostName = "my-machine";
 
-  users.users = lib.genAttrs usernames (user: {
-    isNormalUser = true;
-    extraGroups  = [ "wheel" "networkmanager" ];
-    home         = "/home/${user}";
-  });
+  users.users.josh.extraGroups = [ "podman" ];
 }
 ```
 
-**`home-<user>.nix`** — plain Home Manager module (no wrapper):
+`hosts/<name>/home-josh.nix` — plain Home Manager module:
 
 ```nix
 { pkgs, pkgsUnstable, ... }: {
@@ -115,43 +65,10 @@ hosts/family-desktop/
 
 ## Module Helpers
 
-Three wrapper functions tag modules with their target platform:
+| Helper         | Target       | Usage                            |
+| -------------- | ------------ | -------------------------------- |
+| `nixosModule`  | NixOS only   | `modules.nixos = [ (nixosModule ./f.nix) ];` |
+| `hmModule`     | HM only      | `modules.home = [ (hmModule ./f.nix) ];`      |
+| `sharedModule` | Both         | `modules.shared = [ (sharedModule ./f.nix) ];`|
 
-| Helper         | Target       | Imported in                |
-| -------------- | ------------ | -------------------------- |
-| `nixosModule`  | NixOS        | `nixosConfigurations` only |
-| `hmModule`     | Home Manager | `homeConfigurations` only  |
-| `sharedModule` | Both         | Both NixOS and HM contexts |
-
-Usage: `(nixosModule ./my-file.nix)` — the wrapper adds a `platform` attribute that the builders use to route modules to the correct configuration.
-
-## Features
-
-Features live under `modules/features/<name>/` and contain platform-specific `.nix` files (e.g., `home.nix`, `nixos.nix`). Hosts declare which features they want:
-
-```nix
-features = [ "hm-base" "hm-dev" ];
-```
-
-The resolver auto-discovers features, validates names, and extracts unfree whitelists before merging modules. No registration needed — just create the directory.
-
-## Unfree Packages
-
-Unfree packages are **rejected by default** unless whitelisted per-host:
-
-```nix
-unfree = [ "vscodium" ];              # from stable nixpkgs
-unfreeUnstable = [ "yt-dlp" ];        # from nixpkgs-unstable
-```
-
-Reference them normally in modules — the predicate carries through automatically:
-
-```nix
-{ pkgs, pkgsUnstable, ... }: {
-  home.packages = [ pkgs.vscodium pkgsUnstable.yt-dlp ];
-}
-```
-
-Missing from the whitelist → build fails with the package name. Find it via `nix eval --raw nixpkgs#<pkg>.pname`.
-
-**Never set `nixpkgs.config.allowUnfree = true`** — it silently overrides the predicate and breaks per-host isolation.
+Features discover modules under `modules/features/<name>/` automatically — no registration needed.

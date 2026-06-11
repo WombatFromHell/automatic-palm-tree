@@ -74,9 +74,11 @@
       allUsernames
     );
     mergedUsers = lib.recursiveUpdate impliedUsers evaluatedUserConfigs;
+    enabledUsers = lib.filterAttrs (_: u: u.enabled) mergedUsers;
+    osUsernames = lib.attrNames enabledUsers;
+    hmUsernames = builtins.filter (u: builtins.elem u allUsernames) osUsernames;
   in {
-    usernames = lib.attrNames (lib.filterAttrs (_: u: u.enabled) mergedUsers);
-    inherit mergedUsers;
+    inherit osUsernames hmUsernames mergedUsers;
   };
 in {
   options.discoveredHosts = lib.mkOption {
@@ -148,7 +150,7 @@ in {
           evaluatedHost.config
           // {
             modules = mergedModules;
-            inherit (userResult) usernames;
+            inherit (userResult) osUsernames hmUsernames;
             users = userResult.mergedUsers;
             features = validated;
           };

@@ -2,9 +2,7 @@
   pkgs,
   hostConfig,
   ...
-}: let
-  primaryUser = builtins.head hostConfig.usernames;
-in {
+}: {
   imports = [./hardware-configuration.nix];
 
   boot = {
@@ -28,22 +26,13 @@ in {
     openssh.enable = true;
   };
 
-  users.users.${primaryUser} = {
-    isNormalUser = true;
-    home = "/home/${primaryUser}";
-    extraGroups = [
-      "input"
-      "lp"
-      "networkmanager"
-      "wheel"
-    ];
-  };
+  # for 'nixos-podman' feature enablement
+  users.users.josh.extraGroups = ["podman"];
 
   features = {
     niri.enable = true;
     oomd.enable = true;
     korthos.enable = true;
     lsfg.enable = true;
-    podman.enableUser = primaryUser;
   };
 }

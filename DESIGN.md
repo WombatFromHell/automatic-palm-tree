@@ -96,7 +96,7 @@ flowchart LR
         scan["readDir hosts/"]
         importHost["import each host/*.nix"]
         validate["evalModules against host-schema"]
-        enrich["derive usernames + extract modules"]
+        enrich["derive osUsernames + hmUsernames + extract modules"]
     end
 
     subgraph N ["NixOS Builder (nixos.nix)"]
@@ -191,27 +191,29 @@ flowchart LR
     subgraph M["Modules (merged via lib.flatten)"]
         nixSet["nix-settings.nix\n(substituters, trusted keys, nix.package)"]
         nixosMod["flakeModules.nixos\n(stateVersion, fish, user shells)"]
+        autoUser["mkNixosUserModule\n(genAttrs osUsernames → users.users)"]
         featMod["resolved nixos feature modules"]
         hostMod["host-specific nixos modules (host.modules.nixos)"]
         hmMod["home-manager.nixosModules.home-manager"]
-        hmCfg["home-manager config\n(useGlobalPkgs, useUserPackages,\n per-user modules + defaults)"]
+        hmCfg["home-manager config\n(genAttrs hmUsernames →\n per-user modules + defaults)"]
     end
     subgraph SA["specialArgs"]
         inputs["flake inputs"]
         self["self"]
-        usernames["host.usernames"]
-        mkUser["mkUser helper → isNormalUser + extraGroups"]
+        osUsernames["host.osUsernames"]
+        hmUsernames["host.hmUsernames"]
     end
     nixSet --> merged["Modules (merged)"]
     nixosMod --> merged
+    autoUser --> merged
     featMod --> merged
     hostMod --> merged
     hmMod --> merged
     hmCfg --> merged
     inputs --> merged
     self --> merged
-    usernames --> merged
-    mkUser --> merged
+    osUsernames --> merged
+    hmUsernames --> merged
     style M fill:#e3f2fd
 ```
 
@@ -231,7 +233,7 @@ flowchart LR
         pkgsUnstable["pkgsUnstable"]
         inputs["flake inputs"]
         self["self"]
-        usernames["host.usernames"]
+        hmUsernames["host.hmUsernames"]
         pkgsStable["pkgsStable (stable pkgs)"]
     end
     nixSet --> merged
@@ -243,7 +245,7 @@ flowchart LR
     pkgsUnstable --> merged
     inputs --> merged
     self --> merged
-    usernames --> merged
+    hmUsernames --> merged
     pkgsStable --> merged
     style M fill:#e3f2fd
 ```
@@ -281,7 +283,7 @@ graph LR
     end
 
     subgraph Eval ["Evaluation time"]
-        disc["discoverHosts\n→ &#123;<host>: &#123;system, isNixOS, usernames,\n features, modules&#125;&#125;"]
+        disc["discoverHosts\n→ &#123;<host>: &#123;system, isNixOS, osUsernames, hmUsernames,\n features, modules&#125;&#125;"]
         buildN["nixos.nix: filter + resolve + nixosSystem"]
         buildH["home-manager.nix: filter + resolve + homeManagerConfiguration"]
     end

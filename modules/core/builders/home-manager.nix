@@ -63,7 +63,7 @@
         lib.listToAttrs
         (map
           (user: lib.nameValuePair "${user}@${h.name}" (mkHomeConfig h user userModulePaths))
-          h.config.usernames))
+          h.config.hmUsernames))
       hmHosts);
 in {
   imports = [../discovery.nix];
