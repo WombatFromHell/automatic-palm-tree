@@ -33,21 +33,22 @@
 in {
   inherit discoveredFeatures;
 
-  resolve = featureList: attrPath: let
-    paths =
-      map (
-        f:
-          if !(discoveredFeatures ? ${f})
-          then throw "Unknown feature '${f}'. Available: ${availableFeatures}"
-          else if !(discoveredFeatures.${f} ? ${attrPath})
-          then throw "Feature '${f}' has no '${attrPath}' module. Available: ${lib.concatStringsSep ", " (lib.attrNames discoveredFeatures.${f})}"
-          else discoveredFeatures.${f}.${attrPath}
-      )
-      featureList;
+  resolve = featureList: attrPath:
+    assert builtins.elem attrPath ["nixos" "home"]; let
+      paths =
+        map (
+          f:
+            if !(discoveredFeatures ? ${f})
+            then throw "Unknown feature '${f}'. Available: ${availableFeatures}"
+            else if !(discoveredFeatures.${f} ? ${attrPath})
+            then throw "Feature '${f}' has no '${attrPath}' module. Available: ${lib.concatStringsSep ", " (lib.attrNames discoveredFeatures.${f})}"
+            else discoveredFeatures.${f}.${attrPath}
+        )
+        featureList;
 
-    extracted = pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule paths;
-  in {
-    modules = paths;
-    inherit (extracted.config) unfree;
-  };
+      extracted = pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule paths;
+    in {
+      modules = paths;
+      inherit (extracted.config) unfree;
+    };
 }

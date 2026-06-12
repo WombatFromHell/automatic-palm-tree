@@ -1,4 +1,4 @@
-_: let
+_: {
   bootstrap = true; # set to false once flake is initialized (for caching)
   system = "x86_64-linux";
   isNixOS = true;

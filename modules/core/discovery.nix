@@ -16,13 +16,6 @@
     )
     entries;
 
-  # ── Feature validation data ──────────────────────────────
-  featuresDir = self + /modules/features;
-  validFeatures =
-    if builtins.pathExists featuresDir
-    then builtins.attrNames (builtins.readDir featuresDir)
-    else [];
-
   # ── Auto-discover modules in a host directory ────────────────
   autoDiscoverModules = isDir: hostDir:
     if !isDir
@@ -59,27 +52,6 @@
           ) (builtins.attrNames homeFiles)
         );
     };
-
-  # ── Derive usernames and user configs from all sources ──────
-  resolveUsers = autoPerUser: perUserFromHome: evaluatedUserConfigs: let
-    allUsernames = lib.unique (
-      (builtins.attrNames autoPerUser)
-      ++ (builtins.attrNames perUserFromHome)
-    );
-    impliedUsers = builtins.listToAttrs (
-      map (user: {
-        name = user;
-        value = {enabled = true;};
-      })
-      allUsernames
-    );
-    mergedUsers = lib.recursiveUpdate impliedUsers evaluatedUserConfigs;
-    enabledUsers = lib.filterAttrs (_: u: u.enabled) mergedUsers;
-    osUsernames = lib.attrNames enabledUsers;
-    hmUsernames = builtins.filter (u: builtins.elem u allUsernames) osUsernames;
-  in {
-    inherit osUsernames hmUsernames mergedUsers;
-  };
 in {
   options.discoveredHosts = lib.mkOption {
     type = lib.types.attrsOf lib.types.attrs;
@@ -117,14 +89,7 @@ in {
           ];
         };
 
-        # 5. Validate features against known feature directories
-        validated = lib.forEach (evaluatedHost.config.features or []) (
-          feature:
-            assert lib.asserts.assertMsg (builtins.elem feature validFeatures)
-            "Host '${name}': unknown feature '${feature}'. Valid features: ${lib.concatStringsSep ", " (lib.naturalSort validFeatures)}"; feature
-        );
-
-        # 6. Auto-discover modules in the host directory
+        # 5. Auto-discover modules in the host directory
         hostDir =
           if isDir
           then hostsDir + "/${filename}"
@@ -132,13 +97,31 @@ in {
 
         autoModules = autoDiscoverModules isDir hostDir;
 
-        # 7. Per-user home modules from modules.home.<user>
+        # 6. Per-user home modules from modules.home.<user>
         perUserFromHome = hostModules.home or {};
 
-        # 8. Derive usernames from all sources
-        userResult = resolveUsers autoModules.perUser perUserFromHome (evaluatedHost.config.users or {});
+        # 7. Derive usernames from all sources
+        allUsernames = lib.unique (
+          (builtins.attrNames autoModules.perUser)
+          ++ (builtins.attrNames perUserFromHome)
+        );
+        impliedUsers = builtins.listToAttrs (
+          map (user: {
+            name = user;
+            value = {enabled = true;};
+          })
+          allUsernames
+        );
+        mergedUsers = lib.recursiveUpdate impliedUsers (evaluatedHost.config.users or {});
+        enabledUsers = lib.filterAttrs (_: u: u.enabled) mergedUsers;
+        osUsernames = lib.attrNames enabledUsers;
+        hmUsernames =
+          builtins.filter (
+            u: builtins.elem u allUsernames && (mergedUsers.${u}.hmEnabled or true)
+          )
+          osUsernames;
 
-        # 9. Merge auto-discovered with explicitly defined modules
+        # 8. Merge auto-discovered with explicitly defined modules
         mergedModules = {
           nixos = autoModules.nixos ++ (hostModules.nixos  or []);
           shared = autoModules.shared ++ (hostModules.shared or []);
@@ -150,9 +133,8 @@ in {
           evaluatedHost.config
           // {
             modules = mergedModules;
-            inherit (userResult) osUsernames hmUsernames;
-            users = userResult.mergedUsers;
-            features = validated;
+            inherit osUsernames hmUsernames mergedUsers;
+            features = evaluatedHost.config.features or [];
           };
       }
     )

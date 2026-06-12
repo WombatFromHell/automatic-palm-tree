@@ -10,6 +10,7 @@
     (shared)
     pkgsLib
     resolveFeatures
+    resolveHostModules
     collectUnfree
     hostHmModules
     mkUnstablePkgs
@@ -30,12 +31,6 @@
   };
 
   nixosHosts = lib.filterAttrs (_: h: h.config.isNixOS or false) config.discoveredHosts;
-
-  hostNixosModules = host:
-    lib.flatten [
-      (host.modules.nixos or [])
-      (host.modules.shared or [])
-    ];
 
   mkNixosConfig = _: h: let
     host = h.config;
@@ -86,7 +81,7 @@
         self.flakeModules.nixos
         (mkNixosUserModule host)
         (lib.optional (!host.bootstrap) inputs.determinate.nixosModules.default)
-        (hostNixosModules host)
+        (resolveHostModules host "nixos")
         inputs.home-manager.nixosModules.home-manager
         homeManagerModule
       ];
@@ -94,17 +89,6 @@
       specialArgs = {
         inherit inputs self;
         inherit (host) osUsernames hmUsernames;
-        mkUser = username: {groups ? [], ...} @ args: let
-          isAdmin = host.users.${username}.isAdmin or false;
-        in
-          {
-            isNormalUser = true;
-            extraGroups =
-              ["networkmanager"]
-              ++ lib.optional isAdmin "wheel"
-              ++ groups;
-          }
-          // removeAttrs args ["groups"];
       };
     };
 in {

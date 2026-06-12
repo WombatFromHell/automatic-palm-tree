@@ -16,13 +16,17 @@ nix flake show        # List all discovered configs
 Create `hosts/<name>.nix`:
 
 ```nix
-_: {
+_: let
+  myHome = { pkgs, pkgsUnstable, ... }: {
+    home.packages = with pkgsUnstable; [ helix tmux ];
+  };
+in {
   system = "x86_64-linux";
   isNixOS = false;
 
   features = [ "hm-base" "hm-dev" ];
 
-  modules.home = [ (hmModule ./my-config.nix) ];
+  modules.home.someuser = [myHome];
 }
 ```
 
@@ -31,12 +35,11 @@ _: {
 Create `hosts/<name>/default.nix`:
 
 ```nix
-{ self, inputs, lib, ... }: {
+_: {
   system   = "x86_64-linux";
   isNixOS  = true;
 
-  users.josh  = { isAdmin = true; };
-  users.guest = {};
+  users.someuser  = { isAdmin = true; hmEnabled = false; };
 
   features = [ "hm-base" "hm-gpg" "nixos-podman" ];
 
@@ -50,11 +53,11 @@ Create `hosts/<name>/default.nix`:
 { pkgs, hostConfig, ... }: {
   networking.hostName = "my-machine";
 
-  users.users.josh.extraGroups = [ "podman" ];
+  users.users.someuser.extraGroups = [ "podman" ];
 }
 ```
 
-`hosts/<name>/home-josh.nix` — plain Home Manager module:
+`hosts/<name>/home-someuser.nix` — plain Home Manager module, auto-discovered:
 
 ```nix
 { pkgs, pkgsUnstable, ... }: {
@@ -63,12 +66,12 @@ Create `hosts/<name>/default.nix`:
 }
 ```
 
-## Module Helpers
+## User Options
 
-| Helper         | Target       | Usage                            |
-| -------------- | ------------ | -------------------------------- |
-| `nixosModule`  | NixOS only   | `modules.nixos = [ (nixosModule ./f.nix) ];` |
-| `hmModule`     | HM only      | `modules.home = [ (hmModule ./f.nix) ];`      |
-| `sharedModule` | Both         | `modules.shared = [ (sharedModule ./f.nix) ];`|
+| Option      | Type   | Default | Description                                                           |
+| ----------- | ------ | ------- | --------------------------------------------------------------------- |
+| `enabled`   | `bool` | `true`  | Include the user in `osUsernames`                                     |
+| `isAdmin`   | `bool` | `false` | Add `wheel` to `extraGroups`                                          |
+| `hmEnabled` | `bool` | `true`  | Set `false` to create the NixOS user but skip its home-manager module |
 
-Features discover modules under `modules/features/<name>/` automatically — no registration needed.
+Feature modules under `modules/features/<name>/` are auto-discovered — no registration needed.

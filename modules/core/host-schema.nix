@@ -22,6 +22,11 @@
               type = lib.types.bool;
               default = false;
             };
+            hmEnabled = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Whether to enable the home-manager module for this user.";
+            };
           };
         }
       );

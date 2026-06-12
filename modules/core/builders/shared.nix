@@ -5,14 +5,16 @@
 }: let
   pkgsLib = import ../pkgs.nix {inherit lib;};
   featuresLib = import ../features.nix {inherit lib self pkgsLib;};
-in {
-  inherit pkgsLib featuresLib;
 
-  hostHmModules = host:
+  resolveHostModules = host: platform:
     lib.flatten [
-      (host.modules.home or [])
+      (host.modules.${platform} or [])
       (host.modules.shared or [])
     ];
+in {
+  inherit pkgsLib featuresLib resolveHostModules;
+
+  hostHmModules = host: resolveHostModules host "home";
 
   # Collect and deduplicate all unfree package names for a host.
   # featureDataList is a list of resolved feature data attrsets, each with a .unfree list.
@@ -23,17 +25,25 @@ in {
       ++ [(pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule userModulePaths).config.unfree]
     ));
 
-  # Resolve features for a platform, pre-filtering to those with a module for that platform
+  # Resolve features for a platform. Unknown features are passed through to
+  # featuresLib.resolve which throws a descriptive error. Known features that
+  # lack a module for the target platform are silently skipped (e.g. HM-only
+  # features in a NixOS host's feature list).
   resolveFeatures = host: platform:
     featuresLib.resolve
-    (lib.filter
+    (builtins.filter
       (f:
-        featuresLib.discoveredFeatures ? ${f}
-        && featuresLib.discoveredFeatures.${f} ? ${platform})
+        if featuresLib.discoveredFeatures ? ${f}
+        then featuresLib.discoveredFeatures.${f} ? ${platform}
+        else true) # let unknown through so resolve can throw
+      
       (host.features or []))
     platform;
 
-  # Accumulate all per-user home module paths for a host
+  # Accumulate all per-user home module paths for a host.
+  # Collects modules across *all* users, which means unfree extraction sees every
+  # user's declarations regardless of which user is being built. Conservative by
+  # design: allows more packages, not fewer.
   perUserModulePaths = host:
     lib.concatLists (lib.attrValues (host.modules.perUser or {}));
 

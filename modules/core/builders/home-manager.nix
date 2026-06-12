@@ -17,7 +17,11 @@
     mkUserHomeModule
     ;
 
-  hmHosts = lib.filterAttrs (_: h: !(h.config.isNixOS or false)) config.discoveredHosts;
+  hmHosts = lib.filterAttrs (_: h: let
+    host = h.config;
+  in
+    !(host.isNixOS or false))
+  config.discoveredHosts;
 
   mkHomeConfig = h: user: userModulePaths: let
     host = h.config;
@@ -29,15 +33,16 @@
     pkgs = pkgsLib.mkPkgs inputs.nixpkgs host.system allUnfree [inputs.nixgl.overlay];
     pkgsUnstable = mkUnstablePkgs host allUnfree;
 
-    baseModule =
-      mkUserHomeModule {
-        inherit lib pkgsLib self user homeFeaturesData;
-        hostHmModules = hostHmModules host;
-        perUserMod = host.modules.perUser.${user} or [];
-      }
-      // {
-        targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);
-      };
+    baseModule = {
+      imports = [
+        (mkUserHomeModule {
+          inherit lib pkgsLib self user homeFeaturesData;
+          hostHmModules = hostHmModules host;
+          perUserMod = host.modules.perUser.${user} or [];
+        })
+        {targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);}
+      ];
+    };
   in
     inputs.home-manager.lib.homeManagerConfiguration {
       inherit pkgs;
@@ -58,12 +63,13 @@
     lib.foldl' lib.recursiveUpdate {}
     (lib.mapAttrsToList
       (_: h: let
-        userModulePaths = perUserModulePaths h.config;
+        host = h.config;
+        userModulePaths = perUserModulePaths host;
       in
         lib.listToAttrs
         (map
           (user: lib.nameValuePair "${user}@${h.name}" (mkHomeConfig h user userModulePaths))
-          h.config.hmUsernames))
+          host.hmUsernames))
       hmHosts);
 in {
   imports = [../discovery.nix];

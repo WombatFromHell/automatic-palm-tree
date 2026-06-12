@@ -4,14 +4,16 @@
   hostConfig,
   ...
 }: let
-  hasPodmanUser = builtins.any
+  hasPodmanUser =
+    builtins.any
     (u: builtins.elem "podman" (config.users.users.${u}.extraGroups or []))
     hostConfig.osUsernames;
 in {
   config = {
-    warnings = lib.optional (!hasPodmanUser)
+    warnings =
+      lib.optional (!hasPodmanUser)
       ("Podman is enabled but no user in osUsernames has the 'podman' extra group. "
-      + "Add 'podman' to users.users.<name>.extraGroups on the host.");
+        + "Add 'podman' to users.users.<name>.extraGroups on the host.");
 
     virtualisation = {
       containers.enable = true;

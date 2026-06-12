@@ -19,10 +19,10 @@ graph TB
         disc["modules/core/discovery.nix\nreadDir hosts/ → discoveredHosts"]
         nixosB["modules/core/builders/nixos.nix\nfilter NixOS hosts → nixosConfigurations"]
         hmB["modules/core/builders/home-manager.nix\nfilter HM-only hosts → homeConfigurations"]
+        shared["modules/core/builders/shared.nix\nresolveHostModules + resolveFeatures +\nmkUserHomeModule + unfree collection"]
         feat["modules/core/features.nix\ndiscoverFeatures + resolve modules"]
         schema["modules/core/host-schema.nix\nvalidation schema for host files"]
-        pkgs["modules/core/pkgs.nix\nmkPkgs + mkPkgsUnstable"]
-        hostLib["modules/core/host-lib.nix\nhmModule / nixosModule / sharedModule"]
+        pkgs["modules/core/pkgs.nix\nmkPkgs + mkUnfreeOptionsModule"]
         nixSettings["modules/core/nix-settings.nix\nsubstituters + trusted keys + nix.package"]
     end
 
@@ -54,15 +54,19 @@ graph TB
     core --> feat
 
     nixosB --> disc
+    nixosB --> shared
     nixosB --> feat
     nixosB --> pkgs
 
     hmB --> disc
+    hmB --> shared
     hmB --> feat
     hmB --> pkgs
 
+    shared --> feat
+    shared --> pkgs
+
     disc --> schema
-    feat --> hostLib
 
     hmMod --> pkgs
     nixOSMod --> pkgs
@@ -150,7 +154,7 @@ flowchart TD
 
 ## Feature System
 
-Features are auto-discovered from `modules/features/<name>/` directories. Each feature directory contains platform-tagged `.nix` files (e.g., `home.nix`, `nixos.nix`).
+Features are auto-discovered from `modules/features/<name>/` directories. Each feature directory contains platform-tagged `.nix` files (e.g., `home.nix`, `nixos.nix`). Known features that lack a module for the requested platform are silently skipped (e.g. HM-only features in a NixOS host); unknown features throw a descriptive error from `featuresLib.resolve`.
 
 ```mermaid
 flowchart LR
@@ -160,9 +164,9 @@ flowchart LR
     end
 
     subgraph Resolve ["Resolution (resolve featureList → platform)"]
-        validate["filter: feature exists in discoveredFeatures\nplatform key exists on feature"]
+        validate["validate: assert known feature + attrPath\nthrow on unknown feature or missing platform"]
         dryEval["evalModules to extract unfree lists"]
-        return["return { modules: paths, unfree, unfreeUnstable }"]
+        return["return { modules: paths, unfree }"]
     end
 
     subgraph Usage ["Builder Usage"]
@@ -227,7 +231,7 @@ flowchart LR
         featMod["resolved home feature modules"]
         hostMod["host-specific HM modules (host.modules.home)"]
         userMod["home-<user>.nix (if exists)"]
-        defaults["defaults\n(home.username, home.homeDirectory,\n targets.genericLinux.enable)"]
+        defaults["defaults via imports\n(mkUserHomeModule + targets.genericLinux.enable)"]
     end
     subgraph EA["extraSpecialArgs"]
         pkgsUnstable["pkgsUnstable"]
@@ -303,15 +307,15 @@ graph LR
 
 ## Key Design Decisions
 
-| Decision                                     | Rationale                                                                                                                                                    |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `isNixOS` boolean in host schema             | Simple, explicit classification — `true` → NixOS host, `false` → HM-only                                                                                     |
-| `system` read from host file                 | `discovery.nix` validates `system` via host-schema; used for `pkgs` resolution                                                                               |
-| Flat host files (not directories)            | Single `hosts/<name>.nix` file per host; no need for `default.nix` in each host                                                                              |
-| Feature modules auto-discovered              | `features.nix` scans `modules/features/` at evaluation time — no manual registration needed                                                                  |
-| Unfree extraction via dry eval               | Features and user modules are evaluated in isolation to extract `unfree`/`unfreeUnstable` lists before `pkgs` is available, preventing circular dependencies |
-| `flakeModules` for reusable modules          | `modules/nixos/` and `modules/home-manager/` are exposed as flake modules, usable by other flakes or imported directly                                       |
-| `host-lib.nix` module taggers                | `nixosModule()`, `hmModule()`, `sharedModule()` wrap file paths with platform tags for clean host-file syntax                                                |
-| `nix-settings.nix` shared across all configs | Injected into every NixOS and Home Manager configuration to ensure consistent nix settings and cachix substituters                                           |
-| Separate `pkgsStable` / `pkgsUnstable`       | `pkgsLib.mkPkgs` uses `nixpkgs` input; `pkgsLib.mkPkgsUnstable` uses `nixpkgs-unstable`; each with its own unfree predicate                                  |
-| `home-manager` inside NixOS vs standalone    | NixOS hosts embed home-manager via `home-manager.users`; HM-only hosts get standalone `homeManagerConfiguration`                                             |
+| Decision                                     | Rationale                                                                                                                                   |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `isNixOS` boolean in host schema             | Simple, explicit classification — `true` → NixOS host, `false` → HM-only                                                                    |
+| `system` read from host file                 | `discovery.nix` validates `system` via host-schema; used for `pkgs` resolution                                                              |
+| Flat host files (not directories)            | Single `hosts/<name>.nix` file per host; no need for `default.nix` in each host                                                             |
+| Feature modules auto-discovered              | `features.nix` scans `modules/features/` at evaluation time — no manual registration needed                                                 |
+| Unfree extraction via dry eval               | Features and user modules are evaluated in isolation to extract `unfree` lists before `pkgs` is available, preventing circular dependencies |
+| `flakeModules` for reusable modules          | `modules/nixos/` and `modules/home-manager/` are exposed as flake modules, usable by other flakes or imported directly                      |
+| `nix-settings.nix` shared across all configs | Injected into every NixOS and Home Manager configuration to ensure consistent nix settings and cachix substituters                          |
+| Separate `pkgs` / `pkgsUnstable`             | `mkPkgs` called with `nixpkgs` for stable, `mkUnstablePkgs` via `nixpkgs-unstable` for unstable; each with its own `allowUnfreePredicate`   |
+| `hmEnabled` per-user toggle                  | `users.<name>.hmEnabled = false` creates the NixOS system user but skips loading their home-manager module                                  |
+| `home-manager` inside NixOS vs standalone    | NixOS hosts embed home-manager via `home-manager.users`; HM-only hosts get standalone `homeManagerConfiguration`                            |
