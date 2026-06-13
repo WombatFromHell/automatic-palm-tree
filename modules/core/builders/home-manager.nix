@@ -1,8 +1,8 @@
 {
   self,
   lib,
-  inputs,
   config,
+  inputs,
   ...
 }: let
   shared = import ./shared.nix {inherit lib self inputs;};

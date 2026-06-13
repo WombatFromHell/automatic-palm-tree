@@ -1,8 +1,8 @@
 {
   self,
   lib,
-  inputs,
   config,
+  inputs,
   ...
 }: let
   shared = import ./shared.nix {inherit lib self inputs;};
@@ -47,7 +47,10 @@
       nixpkgs = {
         hostPlatform = host.system;
         config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) allUnfree;
-        overlays = [inputs.nix-cachyos-kernel.overlays.default];
+        overlays = [
+          inputs.nix-cachyos-kernel.overlays.default
+          inputs.dms.nixosModules.dank-material-shell
+        ];
       };
       _module.args = {
         inherit pkgsUnstable;
