@@ -15,6 +15,7 @@
       lazydocker
       lazygit
       mise
+      nil
       nixd
       prettier
       python3

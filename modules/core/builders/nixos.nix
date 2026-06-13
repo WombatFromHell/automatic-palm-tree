@@ -49,7 +49,6 @@
         config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) allUnfree;
         overlays = [
           inputs.nix-cachyos-kernel.overlays.default
-          inputs.dms.nixosModules.dank-material-shell
         ];
       };
       _module.args = {
