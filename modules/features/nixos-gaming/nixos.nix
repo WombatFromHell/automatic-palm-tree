@@ -22,6 +22,7 @@
   environment.systemPackages = with pkgs; [
     gamescope
     pkgsUnstable.mesa
+    protonplus
     steam-run
     vulkan-tools
   ];
