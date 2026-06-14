@@ -4,9 +4,9 @@
   pkgs,
   ...
 }: let
-  cfg = config.features.kanshi;
+  cfg = config.features.niri.kanshi;
 in {
-  options.features.kanshi = {
+  options.features.niri.kanshi = {
     enable = lib.mkEnableOption "Kanshi (display manager) service for niri";
   };
 

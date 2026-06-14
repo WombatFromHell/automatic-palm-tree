@@ -17,7 +17,7 @@
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
-    determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/*";
+    determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/3";
     nixgl.url = "github:nix-community/nixGL";
   };
 

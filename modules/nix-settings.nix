@@ -1,4 +1,4 @@
-# modules/core/nix-settings.nix
+# modules/nix-settings.nix
 {
   lib,
   pkgs,

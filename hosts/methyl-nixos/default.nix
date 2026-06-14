@@ -25,11 +25,15 @@ _: {
     "nixos-flatpak"
     "nixos-podman"
     #
+    "nixos-cachyos"
+    "nixos-determinate"
+    #
     "nixos-automounts"
     "nixos-zram"
     "nixos-oom"
     #
     "nixos-niri"
+    "nixos-dms"
     #
     "nixos-lsfg"
     "nixos-korthos"

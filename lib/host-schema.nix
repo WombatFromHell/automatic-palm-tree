@@ -48,5 +48,33 @@
       default = [];
       description = "Unfree packages permitted from pkgs and pkgsUnstable.";
     };
+
+    modules = lib.mkOption {
+      type = lib.types.submodule {
+        options = {
+          nixos = lib.mkOption {
+            type = lib.types.listOf lib.types.deferredModule;
+            default = [];
+            description = "Host-local NixOS modules.";
+          };
+          shared = lib.mkOption {
+            type = lib.types.listOf lib.types.deferredModule;
+            default = [];
+            description = "Host-local shared modules.";
+          };
+          perUser = lib.mkOption {
+            type = lib.types.attrsOf (lib.types.listOf lib.types.deferredModule);
+            default = {};
+            description = ''
+              Per-user Home Manager modules for this host.
+              Keyed by username. Replaces the modules.home.<user> pattern
+              used in single-file host declarations.
+            '';
+          };
+        };
+      };
+      default = {};
+      description = "Host-local NixOS and Home Manager modules.";
+    };
   };
 }

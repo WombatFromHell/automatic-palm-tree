@@ -12,9 +12,14 @@
 
   features = {
     theming.enable = true;
-    dms.enable = true;
-    kanshi.enable = true;
-    niri-watcher.enable = true;
+    dms = {
+      enable = true;
+      niriCompat = true;
+    };
+    niri = {
+      niri-watcher.enable = true;
+      kanshi.enable = true;
+    };
     dmemcg-booster.enable = true;
     zed-editor.enable = true;
     nasmount.enable = true;

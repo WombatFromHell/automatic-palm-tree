@@ -4,7 +4,7 @@
   pkgs,
   ...
 }: let
-  cfg = config.features.niri-watcher;
+  cfg = config.features.niri.niri-watcher;
 
   niriBinPkg = pkgs.callPackage ./bin/niri-bin.nix {};
 
@@ -12,8 +12,8 @@
     [
       "WATCHER_HOOK_ON=\"${niriBinPkg}/bin/gamemode on\""
       "WATCHER_HOOK_OFF=\"${niriBinPkg}/bin/gamemode off\""
-      "WATCHER_POLL_INTERVAL=${builtins.toString cfg.pollInterval}"
-      "WATCHER_STARTUP_DELAY=${builtins.toString cfg.startupDelay}"
+      "WATCHER_POLL_INTERVAL=${toString cfg.pollInterval}"
+      "WATCHER_STARTUP_DELAY=${toString cfg.startupDelay}"
       "WATCHER_RELAXED_MODE=${lib.boolToString cfg.relaxedMode}"
       "WATCHER_HOLD_MODE=${lib.boolToString cfg.holdMode}"
     ]
@@ -24,7 +24,7 @@
       "WATCHER_INCLUDED_APPS=${lib.concatStringsSep ";" cfg.includedApps}"
     ];
 in {
-  options.features.niri-watcher = {
+  options.features.niri.niri-watcher = {
     enable = lib.mkEnableOption "Niri VRR/Fullscreen Watcher service";
 
     pollInterval = lib.mkOption {

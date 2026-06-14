@@ -15,10 +15,12 @@ in {
   };
 
   config = lib.mkIf cfg.notify {
-    # Declaratively enable the system-level user unit provided by nixos.nix
+    # Enable the system-level user unit provided by nixos.nix
     # by adding it to the graphical-session.target's wants list.
-    systemd.user.targets.graphical-session.target.wants = [
-      "oomd-notify.service"
-    ];
+    # HM's systemd types for targets don't expose a flat `wants` list,
+    # so we use an activation script to enable the externally-provided unit.
+    home.activation.enableOomdNotify = lib.hm.dag.entryAfter ["writeBoundary"] ''
+      systemctl --user enable --now oomd-notify.service || true
+    '';
   };
 }

@@ -1,12 +1,8 @@
 {
   pkgs,
   pkgsUnstable,
-  inputs,
   ...
-}: let
-  dmsPkg = pkgsUnstable.dms-shell;
-  # dmsPkg = inputs.dms.packages.${pkgs.stdenv.hostPlatform.system}.default;
-in {
+}: {
   imports = [
     ./niri.nix
     ./niri-portals.nix
@@ -24,12 +20,5 @@ in {
 
   security.polkit.enable = true;
 
-  programs = {
-    uwsm.enable = true;
-    dms-shell = {
-      enable = true;
-      package = dmsPkg;
-      quickshell.package = pkgsUnstable.quickshell;
-    };
-  };
+  programs.uwsm.enable = true;
 }
