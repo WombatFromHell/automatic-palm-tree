@@ -22,15 +22,15 @@ flakeroot/
 │   ├── features.nix                 # discoveredFeatures: scan features/ → map
 │   ├── host-context.nix             # central seam: unfree + pkgs + features
 │   ├── host-schema.nix              # host declaration validation schema
-│   └── builders/
-│       ├── nixos.nix                # flake-parts module → nixosConfigurations
-│       └── home-manager.nix         # flake-parts module → homeConfigurations
 └── modules/                         # flake-parts + NixOS/HM modules
     ├── default.nix                  # flake-parts: imports builders, exposes flakeModules + flake.features
     ├── discovery.nix                # discoveredHosts option: readDir hosts/
     ├── nix-settings.nix             # nix daemon config (substituters, keys)
     ├── nixos.nix                    # NixOS flake module (stateVersion, fish, user shells)
-    └── home-manager.nix             # HM flake module (stateVersion, manual, nh)
+    ├── home-manager.nix             # HM flake module (stateVersion, manual, nh)
+    └── builders/
+        ├── nixos.nix                # flake-parts module → nixosConfigurations
+        └── home-manager.nix         # flake-parts module → homeConfigurations
 ```
 
 ---
@@ -58,9 +58,9 @@ graph TB
         ctx["lib/host-context.nix\nmkHostContext: unfree + pkgs\n+ features resolved in one pass"]
     end
 
-    subgraph Builders ["lib/builders/"]
-        nixosB["lib/builders/nixos.nix\nfilter NixOS hosts → nixosSystem"]
-        hmB["lib/builders/home-manager.nix\nfilter HM-only hosts →\nhomeManagerConfiguration"]
+    subgraph Builders ["modules/builders/"]
+        nixosB["modules/builders/nixos.nix\nfilter NixOS hosts → nixosSystem"]
+        hmB["modules/builders/home-manager.nix\nfilter HM-only hosts →\nhomeManagerConfiguration"]
     end
 
     subgraph HMMod ["HM flake module"]
@@ -142,13 +142,13 @@ flowchart LR
         mkPkgsSet["mkPkgs → pkgsStable + pkgsUnstable\n(allowUnfreePredicate)"]
     end
 
-    subgraph N ["NixOS Builder (lib/builders/nixos.nix)"]
+    subgraph N ["NixOS Builder (modules/builders/nixos.nix)"]
         filterN["filter: isNixOS == true"]
         mkCtxN["ctx = mkHostContext host"]
         nixosSys["nixpkgs.lib.nixosSystem\nmodules: nix-settings + flakeModules.nixos\n+ nixos features + host modules\n+ home-manager (per-user)"]
     end
 
-    subgraph H ["HM Builder (lib/builders/home-manager.nix)"]
+    subgraph H ["HM Builder (modules/builders/home-manager.nix)"]
         filterH["filter: isNixOS == false"]
         mkCtxH["ctx = mkHostContextWithOverlays\nhost [nixgl.overlay]"]
         hmConfig["homeManagerConfiguration\npkgs = ctx.pkgsStable\nmodules: nix-settings + per-user\n+ home features + host modules"]
@@ -340,7 +340,7 @@ graph LR
         disc["discoverHosts\n→ {host: {system, isNixOS, osUsernames,\n hmUsernames, features, modules}}"]
     end
 
-    subgraph Builders ["lib/builders/"]
+    subgraph Builders ["modules/builders/"]
         buildN["nixos.nix: filter NixOS + nixosSystem"]
         buildH["home-manager.nix: filter HM-only +\nhomeManagerConfiguration"]
     end

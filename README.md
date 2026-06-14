@@ -21,12 +21,13 @@ _: let
     home.packages = with pkgsUnstable; [ helix tmux ];
   };
 in {
+  bootstrap = true; # set to false after first build for caching
   system = "x86_64-linux";
   isNixOS = false;
 
   features = [ "hm-base" "hm-dev" ];
 
-  modules.home.someuser = [myHome];
+  modules.perUser.someuser = [myHome];
 }
 ```
 
@@ -36,6 +37,7 @@ Create `hosts/<name>/default.nix`:
 
 ```nix
 _: {
+  bootstrap = true; # set to false after first build for caching
   system   = "x86_64-linux";
   isNixOS  = true;
 
@@ -74,4 +76,4 @@ _: {
 | `isAdmin`   | `bool` | `false` | Add `wheel` to `extraGroups`                                          |
 | `hmEnabled` | `bool` | `true`  | Set `false` to create the NixOS user but skip its home-manager module |
 
-Feature modules under `modules/features/<name>/` are auto-discovered — no registration needed.
+Feature modules under `features/<name>/` are auto-discovered — no registration needed.
