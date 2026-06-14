@@ -1,7 +1,12 @@
 {
   inputs,
   lib,
+  hostConfig,
   ...
 }: {
-  imports = lib.optional (inputs ? determinate) inputs.determinate.nixosModules.default;
+  # integrate determinate-nixd only when caching is enabled
+  imports =
+    lib.optional
+    (!hostConfig.bootstrap && inputs ? determinate)
+    inputs.determinate.nixosModules.default;
 }

@@ -11,9 +11,13 @@
     };
 
     dms = {
-      url = "github:AvengeMedia/DankMaterialShell"; # use 'master' branch
-      inputs.nixpkgs.follows = "nixpkgs";
+      url = "git+https://github.com/AvengeMedia/DankMaterialShell.git";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
+    # quickshell = {
+    #   url = "git+https://git.outfoxxed.me/quickshell/quickshell?rev=d99d87d5e5ec4e696815348692fdaaf0b6be1b2c";
+    #   inputs.nixpkgs.follows = "nixpkgs-unstable";
+    # };
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";

@@ -97,17 +97,18 @@
         ]
       },
       "locked": {
-        "lastModified": 1781308853,
-        "narHash": "sha256-BbQrn32/xDmK6HMX7QAxWChInAsbgc+ZqybMnGpit8U=",
-        "owner": "AvengeMedia",
-        "repo": "DankMaterialShell",
-        "rev": "3701b3d7a3c20c5c208ce45fd530feb8eb71af78",
-        "type": "github"
+        "lastModified": 1781387463,
+        "narHash": "sha256-0pZ5HaDbC+OmELctg3IdC4GDdO+Ea8a2geqUEa2YwEs=",
+        "ref": "refs/heads/master",
+        "rev": "9d1a81c93c1a56298c337f24ddd2e3d87e61d09f",
+        "revCount": 3848,
+        "type": "git",
+        "url": "https://github.com/AvengeMedia/DankMaterialShell.git"
       },
       "original": {
-        "owner": "AvengeMedia",
-        "repo": "DankMaterialShell",
-        "type": "github"
+        "rev": "9d1a81c93c1a56298c337f24ddd2e3d87e61d09f",
+        "type": "git",
+        "url": "https://github.com/AvengeMedia/DankMaterialShell.git"
       }
     },
     "flake-compat": {
@@ -496,6 +497,27 @@
         "type": "github"
       }
     },
+    "quickshell": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs-unstable"
+        ]
+      },
+      "locked": {
+        "lastModified": 1781053488,
+        "narHash": "sha256-P4WEBaKgl8flRckHxXGHzT0potPvB3x8ZFIp9gLEAMY=",
+        "ref": "refs/heads/master",
+        "rev": "d99d87d5e5ec4e696815348692fdaaf0b6be1b2c",
+        "revCount": 822,
+        "type": "git",
+        "url": "https://git.outfoxxed.me/quickshell/quickshell"
+      },
+      "original": {
+        "rev": "d99d87d5e5ec4e696815348692fdaaf0b6be1b2c",
+        "type": "git",
+        "url": "https://git.outfoxxed.me/quickshell/quickshell"
+      }
+    },
     "root": {
       "inputs": {
         "determinate": "determinate",
@@ -505,7 +527,8 @@
         "nix-cachyos-kernel": "nix-cachyos-kernel",
         "nixgl": "nixgl",
         "nixpkgs": "nixpkgs_5",
-        "nixpkgs-unstable": "nixpkgs-unstable"
+        "nixpkgs-unstable": "nixpkgs-unstable",
+        "quickshell": "quickshell"
       }
     },
     "systems": {
