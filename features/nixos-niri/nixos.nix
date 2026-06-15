@@ -4,8 +4,8 @@
   ...
 }: {
   imports = [
-    ./niri.nix
-    ./niri-portals.nix
+    ./_niri.nix
+    ./_niri-portals.nix
   ];
 
   environment.systemPackages = with pkgs; [

@@ -11,10 +11,7 @@
 
   # Resolve host-local modules for a given platform.
   resolveHostModules = host: platform:
-    lib.flatten [
-      (host.modules.${platform} or [])
-      (host.modules.shared or [])
-    ];
+    (host.modules.${platform} or []) ++ (host.modules.shared or []);
 
   # Build the NixOS users module for a host's osUsernames.
   mkNixosUserModule = host: {lib, ...}: {
@@ -31,12 +28,11 @@
 
   # Build the home-manager module for a single user.
   mkUserHomeModule = {
-    ctx,
     user,
     host,
   }: {
     imports = lib.flatten [
-      ctx.homeModules
+      host.homeModules
       (resolveHostModules host "home")
       (host.modules.perUser.${user} or [])
       pkgsLib.mkUnfreeOptionsModule

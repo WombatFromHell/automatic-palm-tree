@@ -12,7 +12,7 @@
 }: let
   builderHelpers = import ../../lib/builder-helpers.nix {inherit lib self;};
 
-  hmHosts = lib.filterAttrs (_: h: !(h.isNixOS or false)) config.discoveredHosts;
+  hmHosts = lib.filterAttrs (_: hostEntry: !(hostEntry.isNixOS or false)) config.discoveredHosts;
 
   mkHomeConfig = host: user: let
     inherit (host) pkgsStable; # pre-built with homeOverlays (including nixgl)
@@ -20,7 +20,6 @@
     baseModule = {
       imports = [
         (builderHelpers.mkUserHomeModule {
-          ctx = host; # host carries homeModules from pre-built context
           inherit user host;
         })
         {targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);}
@@ -30,7 +29,7 @@
   in
     inputs.home-manager.lib.homeManagerConfiguration {
       pkgs = pkgsStable;
-      modules = lib.flatten [
+      modules = [
         self.flakeModules.nix-settings
         baseModule
       ];
@@ -43,15 +42,12 @@
       };
     };
 
-  allHomeConfigs =
-    lib.foldl' lib.recursiveUpdate {}
-    (lib.mapAttrsToList
-      (_: h:
-        lib.listToAttrs
-        (map
-          (user: lib.nameValuePair "${user}@${h.name}" (mkHomeConfig h user))
-          h.hmUsernames))
-      hmHosts);
+  allHomeConfigs = builtins.listToAttrs (
+    lib.concatLists (lib.mapAttrsToList (_: hostEntry:
+      map (user: lib.nameValuePair "${user}@${hostEntry.name}" (mkHomeConfig hostEntry user))
+        hostEntry.hmUsernames
+    ) hmHosts)
+  );
 in {
   imports = [../discovery.nix];
   flake.homeConfigurations = allHomeConfigs;

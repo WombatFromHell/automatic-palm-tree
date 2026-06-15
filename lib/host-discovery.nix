@@ -57,6 +57,7 @@
       (builtins.attrNames autoModules.perUser)
       ++ (builtins.attrNames evaluatedConfig.modules.perUser)
     );
+    allUsernamesSet = lib.genAttrs allUsernames (_: true);
 
     # Every discovered user is enabled by default; the host file can opt out.
     impliedUsers = builtins.listToAttrs (
@@ -67,7 +68,7 @@
       allUsernames
     );
 
-    mergedUsers = lib.recursiveUpdate impliedUsers evaluatedConfig.users;
+    mergedUsers = impliedUsers // evaluatedConfig.users;
     enabledUsers = lib.filterAttrs (_: u: u.enabled) mergedUsers;
     osUsernames = lib.attrNames enabledUsers;
 
@@ -75,7 +76,7 @@
     # and whose hmEnabled flag hasn't been explicitly set to false.
     hmUsernames =
       builtins.filter (
-        u: builtins.elem u allUsernames && (mergedUsers.${u}.hmEnabled or true)
+        u: allUsernamesSet ? ${u} && (mergedUsers.${u}.hmEnabled or true)
       )
       osUsernames;
 
@@ -83,7 +84,7 @@
     mergedModules = {
       nixos = autoModules.nixos ++ evaluatedConfig.modules.nixos;
       shared = autoModules.shared ++ evaluatedConfig.modules.shared;
-      perUser = lib.recursiveUpdate autoModules.perUser evaluatedConfig.modules.perUser;
+      perUser = autoModules.perUser // evaluatedConfig.modules.perUser;
     };
   in {
     modules = mergedModules;

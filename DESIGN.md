@@ -53,14 +53,14 @@ graph TB
 
     subgraph Lib ["lib/ (pure functions)"]
         feat["lib/features.nix\nscan features/ → discoveredFeatures"]
-        pkgs["lib/pkgs.nix\nmkPkgs + mkUnfreeOptionsModule + extractUnfree"]
+        pkgs["lib/pkgs.nix\nmkPkgs + mkUnfreeOptionsModule\n+ extractUnfree"]
         schema["lib/host-schema.nix\nvalidation schema for host files"]
-        ctx["lib/host-context.nix\nmkHostContext: unfree + pkgs\n+ features resolved in one pass"]
+        ctx["lib/host-context.nix\nmkHostContext: batch unfree\n+ resolveFeaturePaths"]
     end
 
     subgraph Builders ["modules/builders/"]
         nixosB["modules/builders/nixos.nix\nfilter NixOS hosts → nixosSystem"]
-        hmB["modules/builders/home-manager.nix\nfilter HM-only hosts →\nhomeManagerConfiguration"]
+        hmB["modules/builders/home-manager.nix\nfilter HM-only hosts →\nhomeConfigurations (listToAttrs)"]
     end
 
     subgraph HMMod ["HM flake module"]
@@ -137,21 +137,19 @@ flowchart LR
     end
 
     subgraph HC ["Host Context (lib/host-context.nix)"]
-        resolveFeat["resolvePlatformModules\n(features → nixos/home)"]
-        collectU["collectUnfreeFromModules\n(single evalModules pass)"]
-        mkPkgsSet["mkPkgs → pkgsStable + pkgsUnstable\n(allowUnfreePredicate)"]
+        resolveFeat["resolveFeaturePaths\nsingle pass: feature modules\n+ overlay paths per platform"]
+        collectU["collectUnfreeFromModules\nbatch: all feature modules\n(nixos + home combined)"]
+        mkPkgsSet["mkPkgs → pkgsStable + pkgsUnstable\n(allowUnfreePredicate)\nonly homeOverlays applied"]
     end
 
     subgraph N ["NixOS Builder (modules/builders/nixos.nix)"]
         filterN["filter: isNixOS == true"]
-        mkCtxN["ctx = mkHostContext host"]
         nixosSys["nixpkgs.lib.nixosSystem\nmodules: nix-settings + flakeModules.nixos\n+ nixos features + host modules\n+ home-manager (per-user)"]
     end
 
     subgraph H ["HM Builder (modules/builders/home-manager.nix)"]
         filterH["filter: isNixOS == false"]
-        mkCtxH["ctx = mkHostContextWithOverlays\nhost [nixgl.overlay]"]
-        hmConfig["homeManagerConfiguration\npkgs = ctx.pkgsStable\nmodules: nix-settings + per-user\n+ home features + host modules"]
+        hmConfig["homeManagerConfiguration\npkgs = host.pkgsStable (with homeOverlays)\nmodules: nix-settings + per-user\n+ home features + host modules"]
     end
 
     fp --> M
@@ -166,16 +164,11 @@ flowchart LR
     enrich --> collectU
     enrich --> mkPkgsSet
 
-    resolveFeat --> mkCtxN
-    collectU --> mkCtxN
-    mkPkgsSet --> mkCtxN
+    mkPkgsSet --> N
+    mkPkgsSet --> H
 
-    resolveFeat --> mkCtxH
-    collectU --> mkCtxH
-    mkPkgsSet --> mkCtxH
-
-    filterN --> mkCtxN --> nixosSys
-    filterH --> mkCtxH --> hmConfig
+    filterN --> nixosSys
+    filterH --> hmConfig
 
     style M fill:#e1f5fe
     style D fill:#e1f5fe
@@ -220,14 +213,14 @@ flowchart LR
     end
 
     subgraph HostCtx ["Resolution (lib/host-context.nix)"]
-        validate["resolvePlatformModules\nunknown → throw\nmissing platform → skip"]
-        unfree["collectUnfreeFromModules\nsingle evalModules pass"]
-        ctxOut["host context carries\nnixosModules + homeModules\n+ pkgsStable + pkgsUnstable"]
+        validate["resolveFeaturePaths\nsingle pass: modules + overlay paths\nunknown → throw, missing → skip"]
+        unfree["collectUnfreeFromModules\nbatch across all feature modules\n(nixos + home combined)"]
+        ctxOut["host context carries\nnixosModules + homeModules\n+ pkgsStable + pkgsUnstable\n+ homeOverlays"]
     end
 
     subgraph Builders ["Builder Usage"]
-        nixosFeat["nixos.nix:\nctx.nixosModules in nixosSystem"]
-        hmFeat["home-manager.nix:\nctx.homeModules in\nmkUserHomeModule chain"]
+        nixosFeat["nixos.nix:\nhost.nixosModules in nixosSystem"]
+        hmFeat["home-manager.nix:\nhost.homeModules in\nmkUserHomeModule chain"]
     end
 
     scan --> map
@@ -254,10 +247,10 @@ flowchart LR
         nixSet["modules/nix-settings.nix\n(substituters, trusted keys, nix.package)"]
         nixosMod["modules/nixos.nix\n(stateVersion, fish, user shells)"]
         autoUser["mkNixosUserModule\n(genAttrs osUsernames → users.users)"]
-        featMod["ctx.nixosModules\n(resolved NixOS features)"]
+        featMod["host.nixosModules\n(resolved NixOS features)"]
         hostMod["resolveHostModules host 'nixos'\n(host-local + shared modules)"]
         hmMod["home-manager.nixosModules.home-manager"]
-        hmCfg["hmUsernames →\n hostCtx.mkUserHomeModule\n(per-user feature + host + unfree chain)"]
+        hmCfg["hmUsernames →\n mkUserHomeModule\n(per-user feature + host + unfree chain)"]
         extra["unfreeOptionsModule\ndeterminate (if !bootstrap)\ndms.nixosModules"]
     end
     subgraph SA["specialArgs"]
@@ -280,14 +273,14 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    subgraph M["Modules (merged via lib.flatten)"]
+    subgraph M["Modules"]
         nixSet["modules/nix-settings.nix"]
-        baseModule["hostCtx.mkUserHomeModule\n(home features + host modules\n+ per-user mods + unfree)"]
+        baseModule["mkUserHomeModule\n(home features + host modules\n+ per-user mods + unfree)"]
         generic["targets.genericLinux.enable"]
     end
     subgraph EA["extraSpecialArgs"]
-        pkgsStable["ctx.pkgsStable"]
-        pkgsUnstable["ctx.pkgsUnstable"]
+        pkgsStable["host.pkgsStable"]
+        pkgsUnstable["host.pkgsUnstable"]
         inputs["inputs + self + nixgl"]
         hostConfig["hostConfig"]
     end
@@ -299,19 +292,19 @@ flowchart LR
 
 ### NixOS Host — Home Manager Integration
 
-When `isNixOS = true`, home-manager runs inside NixOS via `home-manager.users`. Each user gets a module chain built by `hostCtx.mkUserHomeModule`:
+When `isNixOS = true`, home-manager runs inside NixOS via `home-manager.users`. Each user gets a module chain built by `mkUserHomeModule`:
 
 ```mermaid
 flowchart LR
     subgraph HM["Per-user HM chain (mkUserHomeModule)"]
-        ctxMod["ctx.homeModules\n(resolved home features)"]
+        homeFeat["host.homeModules\n(resolved home features)"]
         hostMod["resolveHostModules host 'home'\n(host-local home modules)"]
         perUser["host.modules.perUser.<user>\n(e.g. home-<user>.nix)"]
         unfree["unfreeOptionsModule"]
         hmFlakeMod["self.flakeModules.home-manager"]
         defaults["home.username + home.homeDirectory"]
     end
-    ctxMod --> chain["lib.flatten → imports"]
+    homeFeat --> chain["lib.flatten → imports"]
     hostMod --> chain
     perUser --> chain
     unfree --> chain
@@ -333,7 +326,7 @@ graph LR
 
     subgraph Lib ["lib/ (evaluation time)"]
         featLib["lib/features.nix\n→ discoveredFeatures map"]
-        ctxLib["lib/host-context.nix\nmkHostContext → allUnfree +\npkgsStable + pkgsUnstable +\nnixosModules + homeModules"]
+        ctxLib["lib/host-context.nix\nmkHostContext → pkgsStable +\npkgsUnstable + nixosModules +\nhomeModules + allUnfree\n+ homeOverlays"]
     end
 
     subgraph Disc ["modules/discovery.nix"]
@@ -376,7 +369,7 @@ graph LR
 | `system` read from host file                 | `discovery.nix` validates `system` via host-schema; used for `pkgs` resolution                                                                                                                                                                                                                |
 | Flat host files + directory hosts            | Single `hosts/<name>.nix` for simple hosts; directory hosts auto-discover `nixos.nix`, `shared.nix`, `home-<user>.nix` from the directory                                                                                                                                                     |
 | Feature modules auto-discovered              | `lib/features.nix` scans `features/` at evaluation time — no manual registration needed                                                                                                                                                                                                       |
-| Host context (single unfree pass)            | `lib/host-context.nix` consolidates all unfree extraction (host + features + per-user) into one `evalModules` call, replacing what were three separate passes                                                                                                                                 |
+| Host context (batched unfree, home-only overlays) | `lib/host-context.nix` extracts unfree in two passes: one batch across all feature modules (nixos + home combined), and one for per-user modules. Overlays are only extracted for home-manager (`homeOverlays`); nixos overlays were unused dead code. `resolveFeaturePaths` combines module + overlay path resolution into a single iteration. |
 | `lib/` is pure functions                     | Nothing in `lib/` has `options`, `config`, or `imports` at the top level. Everything is importable without side effects                                                                                                                                                                       |
 | `modules/` wires the system                  | Flake-parts modules, NixOS/HM modules, and discovery logic live here — they contribute to the module system                                                                                                                                                                                   |
 | Two builders, not one                        | `nixos.nix` and `home-manager.nix` have different output targets (`nixosConfigurations` vs `homeConfigurations`), different pkgs wiring (`useGlobalPkgs` vs explicit `pkgs` arg), and different module frameworks — keeping them separate is clearer than a unified builder with conditionals |

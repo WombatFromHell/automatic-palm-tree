@@ -16,7 +16,7 @@
       featureName: _: let
         dirPath = featuresDir + "/${featureName}";
         files = builtins.readDir dirPath;
-        nixFiles = lib.filterAttrs (n: t: t == "regular" && lib.hasSuffix ".nix" n) files;
+        nixFiles = lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".nix" name) files;
       in
         lib.mapAttrs' (
           filename: _: let

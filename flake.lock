@@ -93,20 +93,19 @@
       "inputs": {
         "flake-compat": "flake-compat_2",
         "nixpkgs": [
-          "nixpkgs"
+          "nixpkgs-unstable"
         ]
       },
       "locked": {
-        "lastModified": 1781387463,
-        "narHash": "sha256-0pZ5HaDbC+OmELctg3IdC4GDdO+Ea8a2geqUEa2YwEs=",
+        "lastModified": 1781500292,
+        "narHash": "sha256-Zlgcp1Z4GbJtprvid2vD2vISTmxkgL/2nhs8ako3vrY=",
         "ref": "refs/heads/master",
-        "rev": "9d1a81c93c1a56298c337f24ddd2e3d87e61d09f",
-        "revCount": 3848,
+        "rev": "1df7e478dff5a3a2f7d7f47b5c9f1a3f818c60aa",
+        "revCount": 3853,
         "type": "git",
         "url": "https://github.com/AvengeMedia/DankMaterialShell.git"
       },
       "original": {
-        "rev": "9d1a81c93c1a56298c337f24ddd2e3d87e61d09f",
         "type": "git",
         "url": "https://github.com/AvengeMedia/DankMaterialShell.git"
       }
@@ -497,27 +496,6 @@
         "type": "github"
       }
     },
-    "quickshell": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs-unstable"
-        ]
-      },
-      "locked": {
-        "lastModified": 1781053488,
-        "narHash": "sha256-P4WEBaKgl8flRckHxXGHzT0potPvB3x8ZFIp9gLEAMY=",
-        "ref": "refs/heads/master",
-        "rev": "d99d87d5e5ec4e696815348692fdaaf0b6be1b2c",
-        "revCount": 822,
-        "type": "git",
-        "url": "https://git.outfoxxed.me/quickshell/quickshell"
-      },
-      "original": {
-        "rev": "d99d87d5e5ec4e696815348692fdaaf0b6be1b2c",
-        "type": "git",
-        "url": "https://git.outfoxxed.me/quickshell/quickshell"
-      }
-    },
     "root": {
       "inputs": {
         "determinate": "determinate",
@@ -527,8 +505,7 @@
         "nix-cachyos-kernel": "nix-cachyos-kernel",
         "nixgl": "nixgl",
         "nixpkgs": "nixpkgs_5",
-        "nixpkgs-unstable": "nixpkgs-unstable",
-        "quickshell": "quickshell"
+        "nixpkgs-unstable": "nixpkgs-unstable"
       }
     },
     "systems": {

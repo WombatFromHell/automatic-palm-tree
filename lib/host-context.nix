@@ -23,73 +23,42 @@
   # set construction into a single data structure consumed by the thin
   # builder wrappers.
   #
-  # The allUnfree list is the union of unfree declarations from:
-  #   host-level (host.unfree), NixOS features, Home features, and
-  #   per-user modules — extracted in a single pass.
+  # allUnfree is the union of unfree declarations from host-level,
+  # all feature modules (batched across platforms), and per-user modules.
   #
   # mkHostContext returns { pkgsStable, pkgsUnstable, allUnfree,
-  # nixosModules, homeModules, nixosOverlays, homeOverlays }.
+  # nixosModules, homeModules, homeOverlays }.
 
-  # Resolve feature module paths for a given platform.
-  # Unknown features throw a descriptive error; features without the
-  # requested platform module are silently skipped.
-  # When resolving for "nixos" or "home", any "shared" module present
-  # in the same feature is automatically included.
-  resolvePlatformModules = featureList: attrPath:
-    assert builtins.elem attrPath ["nixos" "home" "shared"];
-      lib.filter (p: p != null) (
-        lib.flatten (map (
-            f:
-              if !(featuresLib.discoveredFeatures ? ${f})
-              then throw "Unknown feature '${f}'. Available: ${availableFeatures}"
-              else let
-                platformMod = featuresLib.discoveredFeatures.${f}.${attrPath} or null;
-              in
-                if attrPath == "shared"
-                then [platformMod]
-                else [
-                  platformMod
-                  (featuresLib.discoveredFeatures.${f}.shared or null)
-                ]
-          )
-          featureList)
-      );
-
-  # Collect overlay.nix paths for features that contribute to the given platform.
-  # A feature's overlays apply to a platform if:
-  #   1. The feature has a module for that platform (nixos, home, or shared), OR
-  #   2. The feature ONLY has overlays.nix (no nixos, home, or shared modules) —
-  #      in that case its overlays apply to every platform.
-  collectOverlayPathsForPlatform = featureList: platform:
-    lib.filter (p: p != null) (
-      map (
+  # Resolve feature module and overlay paths for a given platform in a single pass.
+  # Unknown features throw a descriptive error; features without the requested
+  # platform are silently skipped. Any "shared" module in a feature is included
+  # alongside the platform-specific module. Overlay paths follow the same
+  # eligibility rules as the original collectOverlayPathsForPlatform.
+  resolveFeaturePaths = featureList: platform:
+    let
+      results = map (
         f:
           if !(featuresLib.discoveredFeatures ? ${f})
           then throw "Unknown feature '${f}'. Available: ${availableFeatures}"
-          else if
-            featuresLib.discoveredFeatures.${f} ? ${platform}
-            || featuresLib.discoveredFeatures.${f} ? shared
-          then
-            # Has a platform/shared module — include its overlays.
-            featuresLib.discoveredFeatures.${f}.overlays or null
-          else if
-            featuresLib.discoveredFeatures.${f} ? overlays
-            && !(featuresLib.discoveredFeatures.${f} ? nixos
-              || featuresLib.discoveredFeatures.${f} ? home
-              || featuresLib.discoveredFeatures.${f} ? shared)
-          then
-            # Overlay-only feature — its overlays apply to all platforms.
-            featuresLib.discoveredFeatures.${f}.overlays
-          else null
-      )
-      featureList
-    );
-
-  # Collect overlay declarations from a list of module paths.
-  collectOverlaysFromModules = modulePaths: host:
-    if modulePaths == []
-    then []
-    else pkgsLib.extractOverlays pkgsLib.mkOverlaysOptionsModule modulePaths inputs {hostConfig = host;};
+          else let
+            feature = featuresLib.discoveredFeatures.${f};
+            platformMod = feature.${platform} or null;
+            sharedMod = feature.shared or null;
+            hasPlatformOrShared = platformMod != null || sharedMod != null;
+          in {
+            modules = lib.filter (p: p != null) [platformMod sharedMod];
+            overlayPath =
+              if hasPlatformOrShared then feature.overlays or null
+              else if feature ? overlays
+                && !(feature ? nixos || feature ? home || feature ? shared)
+              then feature.overlays
+              else null;
+          }
+      ) featureList;
+    in {
+      modules = lib.flatten (map (r: r.modules) results);
+      overlayPaths = lib.filter (p: p != null) (map (r: r.overlayPath) results);
+    };
 
   # Collect unfree declarations from a list of module paths.
   # Returns [] when given no modules.
@@ -98,66 +67,49 @@
     then []
     else (pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule modulePaths {hostConfig = host;}).config.unfree;
 
-  # Build a host context: a single data structure that encapsulates
-  # unfree collection, package set construction, and module resolution.
-  #
-  # This consolidates what used to be three separate evalModules calls
-  # (two from resolveFeatures + one from collectUnfree) into one.
-  # The union of all unfree declarations from host-level, feature-level,
-  # and per-user modules is extracted in a single pass.
+  # Build a host context: unfree collection (batched across all feature modules
+  # in a single evalModules call, plus a separate call for per-user modules),
+  # overlay extraction (home-only — nixos overlays were dead code), and
+  # package set construction.
   mkHostContext = host: let
-    resolveFeatures = platform: let
-      modules = resolvePlatformModules (host.features or []) platform;
-      overlayPaths = collectOverlayPathsForPlatform (host.features or []) platform;
-    in
-      if modules == [] && overlayPaths == []
-      then {
-        modules = [];
-        unfree = [];
-        overlays = [];
-      }
-      else {
-        inherit modules;
-        unfree = collectUnfreeFromModules modules host;
-        # Overlays are extracted from dedicated overlays.nix files rather
-        # than from the feature modules themselves. This keeps featureOverlays
-        # out of the builder eval entirely.
-        overlays = collectOverlaysFromModules overlayPaths host;
-      };
+    hostFeatures = host.features or [];
 
-    nixosFeaturesData = resolveFeatures "nixos";
-    homeFeaturesData = resolveFeatures "home";
+    nixosPaths = resolveFeaturePaths hostFeatures "nixos";
+    homePaths = resolveFeaturePaths hostFeatures "home";
 
     userModulePaths = lib.concatLists (lib.attrValues (host.modules.perUser or {}));
 
-    # Overlays are extracted from overlays.nix files (not the feature modules
-    # themselves), so feature modules don't need mkOverlaysOptionsModule at
-    # eval time. The overlay extraction runs as a dry-run eval during discovery.
-    nixosOverlays = lib.unique nixosFeaturesData.overlays;
-    homeOverlays = lib.unique homeFeaturesData.overlays;
+    # Unfree is extracted from all feature modules in a single batch.
+    # The platform doesn't matter — unfree declarations are just package names.
+    allFeatureModules = nixosPaths.modules ++ homePaths.modules;
+    featureUnfree = if allFeatureModules == [] then []
+      else (pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule allFeatureModules {hostConfig = host;}).config.unfree;
 
-    # allUnfree is the union of host-level declarations and unfree
-    # packages extracted from all feature and per-user modules.
-    allUnfree = lib.unique (
-      lib.flatten [
-        (host.unfree or [])
-        (collectUnfreeFromModules
-          (nixosFeaturesData.modules ++ homeFeaturesData.modules ++ userModulePaths)
-          host)
-      ]
-    );
+    userUnfree = if userModulePaths == [] then []
+      else (pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule userModulePaths {hostConfig = host;}).config.unfree;
+
+    # Home overlays are extracted from home overlay paths and applied to
+    # pkgsStable. NixOS overlays are intentionally skipped — the NixOS
+    # builder creates its own nixpkgs instance via nixosSystem and the
+    # collected overlays were never consumed.
+    homeOverlays = if homePaths.overlayPaths == [] then []
+      else lib.unique (pkgsLib.extractOverlays pkgsLib.mkOverlaysOptionsModule homePaths.overlayPaths inputs {hostConfig = host;});
+
+    allUnfree = lib.unique (lib.flatten [
+      (host.unfree or [])
+      featureUnfree
+      userUnfree
+    ]);
 
     # pkgsUnstable is intentionally built with [] overlays.
     # Overlays like nixgl.overlay are only needed for the stable
-    # package set that Home Manager consumes. If unstable-only
-    # overlays are ever needed, introduce an unstableOverlays
-    # collection path.
+    # package set that Home Manager consumes.
     pkgsStable = pkgsLib.mkPkgs inputs.nixpkgs host.system allUnfree homeOverlays;
     pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree [];
   in {
-    inherit pkgsStable pkgsUnstable allUnfree nixosOverlays homeOverlays;
-    nixosModules = nixosFeaturesData.modules;
-    homeModules = homeFeaturesData.modules;
+    inherit pkgsStable pkgsUnstable allUnfree homeOverlays;
+    nixosModules = nixosPaths.modules;
+    homeModules = homePaths.modules;
   };
 in {
   inherit mkHostContext;

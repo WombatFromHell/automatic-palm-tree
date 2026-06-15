@@ -95,6 +95,8 @@
   mkPkgs = pkgsInput: system: unfree: overlays:
     import pkgsInput {
       inherit system overlays;
-      config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) unfree;
+      config.allowUnfreePredicate = let
+        u = builtins.listToAttrs (map (n: {name = n; value = true;}) unfree);
+      in pkg: u ? ${lib.getName pkg};
     };
 }

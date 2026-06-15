@@ -1,7 +1,7 @@
 _: {
   imports = [
-    ./kanshi.nix
-    ./niri-watcher.nix
-    ./hm-niri.nix
+    ./_kanshi.nix
+    ./_niri-watcher.nix
+    ./_hm-niri.nix
   ];
 }

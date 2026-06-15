@@ -9,7 +9,7 @@
   builderHelpers = import ../../lib/builder-helpers.nix {inherit lib self;};
   pkgsLib = import ../../lib/pkgs.nix {inherit lib;};
 
-  nixosHosts = lib.filterAttrs (_: h: h.isNixOS or false) config.discoveredHosts;
+  nixosHosts = lib.filterAttrs (_: hostEntry: hostEntry.isNixOS or false) config.discoveredHosts;
 
   mkNixosConfig = _: host: let
     baseModule = {pkgs, ...}: {
@@ -17,7 +17,9 @@
       boot.kernelPackages = lib.mkDefault pkgs.linuxPackages_latest;
       nixpkgs = {
         hostPlatform = host.system;
-        config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) host.allUnfree;
+        config.allowUnfreePredicate = let
+          u = builtins.listToAttrs (map (n: {name = n; value = true;}) host.allUnfree);
+        in pkg: u ? ${lib.getName pkg};
       };
       _module.args = {
         inherit (host) pkgsUnstable isNixOS;
@@ -37,7 +39,6 @@
 
         users = lib.genAttrs host.hmUsernames (user:
           builderHelpers.mkUserHomeModule {
-            ctx = host;
             inherit user host;
           });
       };

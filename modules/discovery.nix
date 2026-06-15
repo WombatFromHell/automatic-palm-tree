@@ -78,7 +78,7 @@ in {
         hostWithEnriched
         // {
           inherit name;
-          inherit (ctx) pkgsStable pkgsUnstable allUnfree nixosModules homeModules nixosOverlays homeOverlays;
+          inherit (ctx) pkgsStable pkgsUnstable allUnfree nixosModules homeModules homeOverlays;
         }
     )
     hostEntries;
