@@ -10,6 +10,16 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    lix = {
+      url = "https://git.lix.systems/lix-project/lix/archive/main.tar.gz";
+      flake = false;
+    };
+    lix-module = {
+      url = "https://git.lix.systems/lix-project/nixos-module/archive/main.tar.gz";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.lix.follows = "lix";
+    };
+
     dms = {
       url = "git+https://github.com/AvengeMedia/DankMaterialShell.git";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
@@ -21,7 +31,6 @@
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
-    determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/3";
     nixgl.url = "github:nix-community/nixGL";
   };
 
