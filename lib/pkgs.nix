@@ -13,7 +13,7 @@
   # ── Dry-run extractor ──────────────────────────────────────────────────────
   # Evaluates module paths in isolation purely to extract their unfree lists.
   # Throws if any module attempts to actually evaluate pkgs.
-  extractUnfree = mkUnfreeOptionsModule: modulePaths: extraSpecialArgs:
+  extractUnfree = mkUnfreeOptionsModule: modulePaths: inputs: extraSpecialArgs:
     if modulePaths == []
     then {config = {unfree = [];};}
     else
@@ -35,10 +35,9 @@
           ];
         specialArgs =
           {
-            inherit lib;
+            inherit lib inputs;
             config = {};
             options = {};
-            inputs = {};
             self = {};
             hostConfig = {};
           }
@@ -96,7 +95,12 @@
     import pkgsInput {
       inherit system overlays;
       config.allowUnfreePredicate = let
-        u = builtins.listToAttrs (map (n: {name = n; value = true;}) unfree);
-      in pkg: u ? ${lib.getName pkg};
+        u = builtins.listToAttrs (map (n: {
+            name = n;
+            value = true;
+          })
+          unfree);
+      in
+        pkg: u ? ${lib.getName pkg};
     };
 }

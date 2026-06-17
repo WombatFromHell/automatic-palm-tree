@@ -34,9 +34,9 @@
   # platform are silently skipped. Any "shared" module in a feature is included
   # alongside the platform-specific module. Overlay paths follow the same
   # eligibility rules as the original collectOverlayPathsForPlatform.
-  resolveFeaturePaths = featureList: platform:
-    let
-      results = map (
+  resolveFeaturePaths = featureList: platform: let
+    results =
+      map (
         f:
           if !(featuresLib.discoveredFeatures ? ${f})
           then throw "Unknown feature '${f}'. Available: ${availableFeatures}"
@@ -48,24 +48,20 @@
           in {
             modules = lib.filter (p: p != null) [platformMod sharedMod];
             overlayPath =
-              if hasPlatformOrShared then feature.overlays or null
-              else if feature ? overlays
+              if hasPlatformOrShared
+              then feature.overlays or null
+              else if
+                feature ? overlays
                 && !(feature ? nixos || feature ? home || feature ? shared)
               then feature.overlays
               else null;
           }
-      ) featureList;
-    in {
-      modules = lib.flatten (map (r: r.modules) results);
-      overlayPaths = lib.filter (p: p != null) (map (r: r.overlayPath) results);
-    };
-
-  # Collect unfree declarations from a list of module paths.
-  # Returns [] when given no modules.
-  collectUnfreeFromModules = modulePaths: host:
-    if modulePaths == []
-    then []
-    else (pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule modulePaths {hostConfig = host;}).config.unfree;
+      )
+      featureList;
+  in {
+    modules = lib.flatten (map (r: r.modules) results);
+    overlayPaths = lib.filter (p: p != null) (map (r: r.overlayPath) results);
+  };
 
   # Build a host context: unfree collection (batched across all feature modules
   # in a single evalModules call, plus a separate call for per-user modules),
@@ -82,17 +78,23 @@
     # Unfree is extracted from all feature modules in a single batch.
     # The platform doesn't matter — unfree declarations are just package names.
     allFeatureModules = nixosPaths.modules ++ homePaths.modules;
-    featureUnfree = if allFeatureModules == [] then []
-      else (pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule allFeatureModules {hostConfig = host;}).config.unfree;
+    featureUnfree =
+      if allFeatureModules == []
+      then []
+      else (pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule allFeatureModules inputs {hostConfig = host;}).config.unfree;
 
-    userUnfree = if userModulePaths == [] then []
-      else (pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule userModulePaths {hostConfig = host;}).config.unfree;
+    userUnfree =
+      if userModulePaths == []
+      then []
+      else (pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule userModulePaths inputs {hostConfig = host;}).config.unfree;
 
     # Home overlays are extracted from home overlay paths and applied to
     # pkgsStable. NixOS overlays are intentionally skipped — the NixOS
     # builder creates its own nixpkgs instance via nixosSystem and the
     # collected overlays were never consumed.
-    homeOverlays = if homePaths.overlayPaths == [] then []
+    homeOverlays =
+      if homePaths.overlayPaths == []
+      then []
       else lib.unique (pkgsLib.extractOverlays pkgsLib.mkOverlaysOptionsModule homePaths.overlayPaths inputs {hostConfig = host;});
 
     allUnfree = lib.unique (lib.flatten [

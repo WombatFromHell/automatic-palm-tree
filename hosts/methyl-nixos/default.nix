@@ -20,6 +20,7 @@ _: {
     "nixos-plymouth"
     "nixos-print"
     "nixos-gaming"
+    "nixos-scx"
     "nixos-justnh"
     "nixos-udev"
     "nixos-flatpak"
