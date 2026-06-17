@@ -4,6 +4,7 @@
   inputs,
 }: let
   builderHelpers = import ./builder-helpers.nix {inherit lib self;};
+  featuresLib = import ./features.nix {inherit lib self;};
 in {
   buildNixosConfigurations = discoveredHosts: let
     nixosHosts = lib.filterAttrs (_: h: h.isNixOS or false) discoveredHosts;
@@ -47,7 +48,7 @@ in {
     in
       inputs.nixpkgs.lib.nixosSystem {
         modules = lib.flatten [
-          builderHelpers.mkUnfreeOptionsModule
+          featuresLib.featureOptionsModule
           self.flakeModules.nix-settings
           baseModule
           self.flakeModules.nixos
@@ -84,7 +85,6 @@ in {
           inherit (host) pkgsUnstable;
           inherit inputs self;
           hostConfig = host;
-          nixpkgsUnstable = inputs.nixpkgs-unstable.outPath;
         };
       };
   in

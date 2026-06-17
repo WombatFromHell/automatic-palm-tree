@@ -4,6 +4,7 @@
   lib,
   config,
   inputs,
+  hostConfig,
   ...
 }: let
   cfg = config.features.dms;
@@ -18,6 +19,12 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    # expose 'pkgs.quickshell' via overlay (only post-bootstrap)
+    overlays =
+      lib.optionals
+      (!hostConfig.bootstrap && inputs ? quickshell)
+      [inputs.quickshell.overlays.default];
+
     programs.dms-shell = {
       enable = true;
       package = dmsPkg;

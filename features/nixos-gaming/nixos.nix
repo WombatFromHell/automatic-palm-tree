@@ -3,7 +3,7 @@
   pkgsUnstable,
   ...
 }: {
-  unfree = [
+  unfreePackages = [
     "steam"
     "steam-run"
     "steam-unwrapped"

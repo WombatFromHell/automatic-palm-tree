@@ -43,13 +43,6 @@
       default = [];
     };
 
-    unfree = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [];
-      internal = true;
-      description = "Unfree packages permitted from pkgs and pkgsUnstable.";
-    };
-
     modules = lib.mkOption {
       type = lib.types.submodule {
         options = {
