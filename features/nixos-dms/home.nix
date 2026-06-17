@@ -21,17 +21,18 @@ in {
 
   config = lib.mkIf cfg.enable {
     systemd.user.services."dms" = {
-      Unit = {
-        Description = "DMS Service";
-        BindsTo = ["graphical-session.target"];
-        After =
-          ["graphical-session.target"]
-          ++ lib.optionals cfg.niriCompat ["niri.service"];
-        PartOf = ["graphical-session.target"];
-      }
-      // lib.optionalAttrs cfg.niriCompat {
-        ConditionEnvironment = "XDG_CURRENT_DESKTOP=niri";
-      };
+      Unit =
+        {
+          Description = "DMS Service";
+          BindsTo = ["graphical-session.target"];
+          After =
+            ["graphical-session.target"]
+            ++ lib.optionals cfg.niriCompat ["niri.service"];
+          PartOf = ["graphical-session.target"];
+        }
+        // lib.optionalAttrs cfg.niriCompat {
+          ConditionEnvironment = "XDG_CURRENT_DESKTOP=niri";
+        };
       Install = {
         WantedBy = ["graphical-session.target"];
       };
