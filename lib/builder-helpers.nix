@@ -4,21 +4,12 @@
 }: let
   featuresLib = import ./features.nix {inherit lib self;};
 
-  mkPkgs = pkgsInput: system: unfree: overlays:
-    import pkgsInput {
-      inherit system overlays;
-      config.allowUnfreePredicate = let
-        u = builtins.listToAttrs (map (n: {
-            name = n;
-            value = true;
-          })
-          unfree);
-      in
-        pkg: u ? ${lib.getName pkg};
-    };
-
   resolveHostModules = host: platform:
-    (host.modules.${platform} or []) ++ (host.modules.shared or []);
+    if platform == "nixos"
+    then (host.nixosModules or []) ++ (host.sharedModules or [])
+    else if platform == "home"
+    then host.sharedModules or []
+    else [];
 
   mkNixosUserModule = host: {lib, ...}: {
     users.users = lib.genAttrs host.osUsernames (username: let
@@ -35,11 +26,28 @@
   mkUserHomeModule = {
     user,
     host,
-  }: {
+  }: let
+    hostFeatures = host.features or [];
+    homeFeaturePaths = lib.flatten (
+      map (
+        f:
+          if !(featuresLib.discoveredFeatures ? ${f})
+          then throw "Unknown feature '${f}'"
+          else let
+            feature = featuresLib.discoveredFeatures.${f};
+            homeMod = feature.home or null;
+            sharedMod = feature.shared or null;
+          in
+            lib.filter (p: p != null) [homeMod sharedMod]
+      )
+      hostFeatures
+    );
+  in {
     imports = lib.flatten [
-      host.homeModules
+      homeFeaturePaths
       (resolveHostModules host "home")
-      (host.modules.perUser.${user} or [])
+      (host.homeModules.${user} or [])
+      # Added back so HM users can declare unfreePackages natively!
       featuresLib.featureOptionsModule
       self.flakeModules.home-manager
     ];
@@ -47,5 +55,5 @@
     home.homeDirectory = "/home/${user}";
   };
 in {
-  inherit mkPkgs resolveHostModules mkNixosUserModule mkUserHomeModule;
+  inherit resolveHostModules mkNixosUserModule mkUserHomeModule;
 }

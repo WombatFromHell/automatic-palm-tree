@@ -27,7 +27,7 @@ in {
 
   features = [ "hm-base" "hm-dev" ];
 
-  modules.perUser.someuser = [myHome];
+  homeModules.someuser = [myHome];
 }
 ```
 
@@ -45,7 +45,7 @@ _: {
 
   features = [ "hm-base" "hm-gpg" "nixos-podman" ];
 
-  modules.nixos = [ ./nixos.nix ];
+  nixosModules = [ ./nixos.nix ];
 }
 ```
 

@@ -1,22 +1,11 @@
 # Flake-parts module that discovers hosts under ./hosts/, validates them
-# against lib/host-schema.nix, and exposes the enriched result as the
+# against lib/host-schema.nix, and exposes the pure metadata as the
 # discoveredHosts option consumed by the builders.
-#
-# Pure discovery logic lives in lib/host-discovery.nix; this file is the
-# thin module-system wrapper around it.
 {
   lib,
   self,
-  inputs,
   ...
 }: let
-  hostDiscovery = import ../lib/host-discovery.nix {inherit lib;};
-
-  # Imported here (once) so mkHostContext runs during discovery instead of
-  # being repeated in every builder. Host entries carry the pre-computed
-  # context fields directly.
-  hostCtx = import ../lib/host-context.nix {inherit lib self inputs;};
-
   hostsDir = self + /hosts;
   entries = builtins.readDir hostsDir;
 
@@ -27,59 +16,114 @@
         || (t == "directory" && builtins.pathExists (hostsDir + "/${n}/default.nix"))
     )
     entries;
+
+  # ── Pipeline steps ────────────────────────────────────────────────────
+  parseHostEntry = filename: type: {
+    isDir = type == "directory";
+    name =
+      if type == "directory"
+      then filename
+      else lib.removeSuffix ".nix" filename;
+    path =
+      if type == "directory"
+      then hostsDir + "/${filename}/default.nix"
+      else hostsDir + "/${filename}";
+    hostDir =
+      if type == "directory"
+      then hostsDir + "/${filename}"
+      else null;
+  };
+
+  validateHost = path:
+    lib.evalModules {
+      modules = [
+        ../lib/host-schema.nix
+        (import path {inherit self lib;})
+      ];
+    };
+
+  # ── Inlined from lib/host-discovery.nix ───────────────────────────────
+  autoDiscoverModules = isDir: hostDir:
+    if !isDir
+    then {
+      nixosModules = [];
+      sharedModules = [];
+      homeModules = {};
+    }
+    else {
+      nixosModules =
+        lib.optional (builtins.pathExists (hostDir + "/nixos.nix"))
+        (hostDir + "/nixos.nix");
+      sharedModules =
+        lib.optional (builtins.pathExists (hostDir + "/shared.nix"))
+        (hostDir + "/shared.nix");
+      homeModules = let
+        dirEntries = builtins.readDir hostDir;
+        homeFiles =
+          lib.filterAttrs (
+            n: t:
+              t
+              == "regular"
+              && lib.hasPrefix "home-" n
+              && lib.hasSuffix ".nix" n
+          )
+          dirEntries;
+      in
+        builtins.listToAttrs (
+          map (
+            filename: let
+              user = lib.removeSuffix ".nix" (lib.removePrefix "home-" filename);
+            in
+              lib.nameValuePair user [(hostDir + "/${filename}")]
+          ) (builtins.attrNames homeFiles)
+        );
+    };
+
+  enrichHost = evaluatedConfig: autoModules: let
+    allUsernames = lib.unique (
+      (builtins.attrNames autoModules.homeModules)
+      ++ (builtins.attrNames evaluatedConfig.homeModules)
+    );
+    impliedUsers = builtins.listToAttrs (
+      map (user: {
+        name = user;
+        value = {enabled = true;};
+      })
+      allUsernames
+    );
+    mergedUsers = impliedUsers // evaluatedConfig.users;
+    enabledUsers = lib.filterAttrs (_: u: u.enabled) mergedUsers;
+    osUsernames = lib.attrNames enabledUsers;
+    hmUsernames =
+      builtins.filter (
+        u:
+          (autoModules.homeModules ? ${u} || evaluatedConfig.homeModules ? ${u})
+          && (mergedUsers.${u}.hmEnabled or true)
+      )
+      osUsernames;
+  in {
+    nixosModules = autoModules.nixosModules ++ evaluatedConfig.nixosModules;
+    sharedModules = autoModules.sharedModules ++ evaluatedConfig.sharedModules;
+    homeModules = autoModules.homeModules // evaluatedConfig.homeModules;
+    inherit osUsernames hmUsernames;
+  };
+  # ──────────────────────────────────────────────────────────────────────
+
+  buildHost = filename: type: let
+    entry = parseHostEntry filename type;
+    inherit (entry) isDir name path hostDir;
+    evaluatedHost = validateHost path;
+    autoModules = autoDiscoverModules isDir hostDir;
+    enriched = enrichHost evaluatedHost.config autoModules;
+  in
+    evaluatedHost.config // enriched // {inherit name;};
 in {
   options.discoveredHosts = lib.mkOption {
     type = lib.types.attrsOf lib.types.attrs;
     internal = true;
     default = {};
-    description = "Auto-discovered and enriched host configurations.";
+    description = "Auto-discovered and enriched host metadata.";
   };
 
-  config.discoveredHosts =
-    lib.mapAttrs (
-      filename: type: let
-        isDir = type == "directory";
-        name =
-          if isDir
-          then filename
-          else lib.removeSuffix ".nix" filename;
-        path =
-          if isDir
-          then hostsDir + "/${filename}/default.nix"
-          else hostsDir + "/${filename}";
-
-        # 1. Import the raw host file
-        rawHostConfig = import path {inherit self inputs lib;};
-
-        # 2. Evaluate the full config against the strict schema
-        evaluatedHost = lib.evalModules {
-          modules = [
-            ../lib/host-schema.nix
-            rawHostConfig
-          ];
-        };
-
-        # 3. Auto-discover modules in the host directory
-        hostDir =
-          if isDir
-          then hostsDir + "/${filename}"
-          else null;
-
-        autoModules = hostDiscovery.autoDiscoverModules isDir hostDir;
-
-        # 4. Enrich: derive usernames, merge auto-discovered + host-local modules
-        enriched = hostDiscovery.enrichHost evaluatedHost.config autoModules;
-
-        # 5. Pre-build host context: feature resolution, unfree collection,
-        #    and package sets — computed once here, consumed by all builders.
-        hostWithEnriched = evaluatedHost.config // enriched;
-        ctx = hostCtx.mkHostContext hostWithEnriched;
-      in
-        hostWithEnriched
-        // {
-          inherit name;
-          inherit (ctx) pkgsStable pkgsUnstable allUnfree nixosModules homeModules homeOverlays;
-        }
-    )
-    hostEntries;
+  config.discoveredHosts = lib.mapAttrs buildHost hostEntries;
 }

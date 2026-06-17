@@ -28,10 +28,6 @@
     )
     featureDirs;
 
-  # ── Shared feature option schema ───────────────────────────────────────────
-  # Imported by builders and host-context to allow features to declare
-  # unfree packages and overlays inline via simple top-level attributes.
-  # `internal = true` hides these from user-facing docs/completion.
   featureOptionsModule = {
     options.unfreePackages = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -39,7 +35,6 @@
       internal = true;
       description = "Unfree packages required by this feature.";
     };
-
     options.overlays = lib.mkOption {
       type = lib.types.listOf lib.types.unspecified;
       default = [];

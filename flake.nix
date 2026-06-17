@@ -10,16 +10,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    lix = {
-      url = "https://git.lix.systems/lix-project/lix/archive/main.tar.gz";
-      flake = false;
-    };
-    lix-module = {
-      url = "https://git.lix.systems/lix-project/nixos-module/archive/main.tar.gz";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.lix.follows = "lix";
-    };
-
     dms = {
       url = "git+https://github.com/AvengeMedia/DankMaterialShell.git";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
@@ -38,6 +28,7 @@
     flake-parts.lib.mkFlake {inherit inputs;} {
       imports = [./modules];
 
+      debug = false;
       systems = ["x86_64-linux"];
     };
 }

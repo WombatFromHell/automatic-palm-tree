@@ -33,5 +33,5 @@ in {
     "hm-zed"
   ];
 
-  modules.perUser.josh = [myHome];
+  homeModules.josh = [myHome];
 }
