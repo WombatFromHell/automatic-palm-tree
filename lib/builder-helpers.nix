@@ -1,19 +1,38 @@
-# Builder-facing helpers extracted from host-context.nix.
-#
-# These functions are the minimal surface that builders (nixos.nix,
-# home-manager.nix) need. They consume the pre-built host context
-# rather than constructing it themselves.
+# Consolidated builder utilities: package set construction, unfree schema,
+# host module resolution, and user module generation.
 {
   lib,
   self,
 }: let
-  pkgsLib = import ./pkgs.nix {inherit lib;};
+  # ── Unfree declaration schema ──────────────────────────────────────────────
+  mkUnfreeOptionsModule = {
+    options.unfree = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      internal = true;
+      description = "Unfree packages permitted from pkgs and pkgsUnstable.";
+    };
+  };
 
-  # Resolve host-local modules for a given platform.
+  # ── Package set factory ────────────────────────────────────────────────────
+  mkPkgs = pkgsInput: system: unfree: overlays:
+    import pkgsInput {
+      inherit system overlays;
+      config.allowUnfreePredicate = let
+        u = builtins.listToAttrs (map (n: {
+            name = n;
+            value = true;
+          })
+          unfree);
+      in
+        pkg: u ? ${lib.getName pkg};
+    };
+
+  # ── Host module resolution ─────────────────────────────────────────────────
   resolveHostModules = host: platform:
     (host.modules.${platform} or []) ++ (host.modules.shared or []);
 
-  # Build the NixOS users module for a host's osUsernames.
+  # ── NixOS user module builder ──────────────────────────────────────────────
   mkNixosUserModule = host: {lib, ...}: {
     users.users = lib.genAttrs host.osUsernames (username: let
       userCfg = host.users.${username} or {};
@@ -26,7 +45,7 @@
     });
   };
 
-  # Build the home-manager module for a single user.
+  # ── Home Manager user module builder ───────────────────────────────────────
   mkUserHomeModule = {
     user,
     host,
@@ -35,12 +54,18 @@
       host.homeModules
       (resolveHostModules host "home")
       (host.modules.perUser.${user} or [])
-      pkgsLib.mkUnfreeOptionsModule
+      mkUnfreeOptionsModule
       self.flakeModules.home-manager
     ];
     home.username = user;
     home.homeDirectory = "/home/${user}";
   };
 in {
-  inherit resolveHostModules mkNixosUserModule mkUserHomeModule;
+  inherit
+    mkUnfreeOptionsModule
+    mkPkgs
+    resolveHostModules
+    mkNixosUserModule
+    mkUserHomeModule
+    ;
 }

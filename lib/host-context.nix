@@ -1,39 +1,15 @@
-# Pure functions for building the per-host context: feature resolution,
-# unfree collection, package set construction, and user home module
-# generation.
-#
-# pkgs.nix is imported internally — callers only need lib, self, and inputs.
 {
   lib,
   self,
   inputs,
   ...
 }: let
-  pkgsLib = import ./pkgs.nix {inherit lib;};
+  builderHelpers = import ./builder-helpers.nix {inherit lib self;};
   featuresLib = import ./features.nix {inherit lib self;};
 
   availableFeatures =
     lib.concatStringsSep ", " (lib.naturalSort (lib.attrNames featuresLib.discoveredFeatures));
 
-  # ── Host context mini-library ──────────────────────────────────────────
-  #
-  # The host context is the central seam between host declarations and
-  # build outputs. It consolidates unfree collection (what used to be
-  # three separate evalModules calls), feature resolution, and package
-  # set construction into a single data structure consumed by the thin
-  # builder wrappers.
-  #
-  # allUnfree is the union of unfree declarations from host-level,
-  # all feature modules (batched across platforms), and per-user modules.
-  #
-  # mkHostContext returns { pkgsStable, pkgsUnstable, allUnfree,
-  # nixosModules, homeModules, homeOverlays }.
-
-  # Resolve feature module and overlay paths for a given platform in a single pass.
-  # Unknown features throw a descriptive error; features without the requested
-  # platform are silently skipped. Any "shared" module in a feature is included
-  # alongside the platform-specific module. Overlay paths follow the same
-  # eligibility rules as the original collectOverlayPathsForPlatform.
   resolveFeaturePaths = featureList: platform: let
     results =
       map (
@@ -63,39 +39,89 @@
     overlayPaths = lib.filter (p: p != null) (map (r: r.overlayPath) results);
   };
 
-  # Build a host context: unfree collection (batched across all feature modules
-  # in a single evalModules call, plus a separate call for per-user modules),
-  # overlay extraction (home-only — nixos overlays were dead code), and
-  # package set construction.
+  # Temporary inline extractors — will be fully removed in Step 3
+  # when features migrate to inline declarations via feature-options.nix
+  extractUnfree = modulePaths: extraSpecialArgs:
+    if modulePaths == []
+    then []
+    else
+      (lib.evalModules {
+        modules =
+          modulePaths
+          ++ [
+            builderHelpers.mkUnfreeOptionsModule
+            {_module.check = false;}
+            {
+              imports = [
+                {
+                  _module.args.pkgs = throw "pkgs accessed during unfree extraction";
+                  _module.args.pkgsUnstable = throw "pkgsUnstable accessed during unfree extraction";
+                }
+              ];
+            }
+          ];
+        specialArgs =
+          {
+            inherit lib inputs;
+            config = {};
+            options = {};
+            self = {};
+            hostConfig = {};
+          }
+          // extraSpecialArgs;
+      }).config.unfree;
+
+  extractOverlays = modulePaths: extraSpecialArgs:
+    if modulePaths == []
+    then []
+    else
+      (lib.evalModules {
+        modules =
+          modulePaths
+          ++ [
+            {
+              options.featureOverlays = lib.mkOption {
+                type = lib.types.listOf lib.types.unspecified;
+                default = [];
+                internal = true;
+              };
+            }
+            {_module.check = false;}
+            {config = lib.mkForce {};}
+            {
+              imports = [
+                {
+                  _module.args.pkgs = throw "pkgs accessed during overlay extraction";
+                  _module.args.pkgsUnstable = throw "pkgsUnstable accessed during overlay extraction";
+                }
+              ];
+            }
+          ];
+        specialArgs =
+          {
+            inherit lib inputs;
+            config = {};
+            options = {};
+            self = {};
+            hostConfig = {};
+          }
+          // extraSpecialArgs;
+      }).config.featureOverlays;
+
   mkHostContext = host: let
     hostFeatures = host.features or [];
-
     nixosPaths = resolveFeaturePaths hostFeatures "nixos";
     homePaths = resolveFeaturePaths hostFeatures "home";
-
     userModulePaths = lib.concatLists (lib.attrValues (host.modules.perUser or {}));
 
-    # Unfree is extracted from all feature modules in a single batch.
-    # The platform doesn't matter — unfree declarations are just package names.
     allFeatureModules = nixosPaths.modules ++ homePaths.modules;
-    featureUnfree =
-      if allFeatureModules == []
-      then []
-      else (pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule allFeatureModules inputs {hostConfig = host;}).config.unfree;
+    featureUnfree = extractUnfree allFeatureModules {hostConfig = host;};
+    userUnfree = extractUnfree userModulePaths {hostConfig = host;};
 
-    userUnfree =
-      if userModulePaths == []
-      then []
-      else (pkgsLib.extractUnfree pkgsLib.mkUnfreeOptionsModule userModulePaths inputs {hostConfig = host;}).config.unfree;
-
-    # Home overlays are extracted from home overlay paths and applied to
-    # pkgsStable. NixOS overlays are intentionally skipped — the NixOS
-    # builder creates its own nixpkgs instance via nixosSystem and the
-    # collected overlays were never consumed.
     homeOverlays =
       if homePaths.overlayPaths == []
       then []
-      else lib.unique (pkgsLib.extractOverlays pkgsLib.mkOverlaysOptionsModule homePaths.overlayPaths inputs {hostConfig = host;});
+      else lib.unique (extractOverlays homePaths.overlayPaths {hostConfig = host;});
 
     allUnfree = lib.unique (lib.flatten [
       (host.unfree or [])
@@ -103,11 +129,8 @@
       userUnfree
     ]);
 
-    # pkgsUnstable is intentionally built with [] overlays.
-    # Overlays like nixgl.overlay are only needed for the stable
-    # package set that Home Manager consumes.
-    pkgsStable = pkgsLib.mkPkgs inputs.nixpkgs host.system allUnfree homeOverlays;
-    pkgsUnstable = pkgsLib.mkPkgs inputs.nixpkgs-unstable host.system allUnfree [];
+    pkgsStable = builderHelpers.mkPkgs inputs.nixpkgs host.system allUnfree homeOverlays;
+    pkgsUnstable = builderHelpers.mkPkgs inputs.nixpkgs-unstable host.system allUnfree [];
   in {
     inherit pkgsStable pkgsUnstable allUnfree homeOverlays;
     nixosModules = nixosPaths.modules;
