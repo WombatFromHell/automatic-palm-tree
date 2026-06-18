@@ -7,10 +7,16 @@ flakeroot/
 ├── flake.nix                        # flake-parts entry, imports ./modules
 ├── hosts/                           # per-host declarations
 │   ├── methyl-bazzite.nix           # HM-only host
-│   └── methyl-nixos/                # NixOS host (dir = auto-discovered modules)
-│       ├── default.nix              #   schema: system, features, users
-│       ├── nixos.nix                #   host-local NixOS module
-│       ├── home-<user>.nix            #   per-user Home Manager module
+│   ├── methyl/                      # NixOS host (bare-metal base)
+│   │   ├── default.nix              #   schema: system, features, users
+│   │   ├── base.nix                 #   shared NixOS config (no hw import)
+│   │   ├── nixos.nix                #   host wrapper: hw-config + base
+│   │   ├── home-<user>.nix            #   per-user Home Manager module
+│   │   └── hardware-configuration.nix
+│   └── methyl-nixos/                # NixOS host (QEMU VM variant)
+│       ├── default.nix              #   inherits from methyl/
+│       ├── nixos.nix                #   imports [../methyl/base.nix ./hw...]
+│       ├── home-<user>.nix            #   imports [../methyl/home-<user>.nix]
 │       └── hardware-configuration.nix
 ├── features/                        # composable config units (30 dirs)
 │   ├── hm-base/

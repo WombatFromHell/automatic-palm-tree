@@ -33,10 +33,9 @@
 
       perSystem = {pkgs, ...}: {
         devShells.default = pkgs.mkShell {
+          # our './bootstrap.sh init' flow requires some dependencies
           packages = with pkgs; [
             git
-            sshfs
-            fuse3
             pkgconf
             cmake
           ];

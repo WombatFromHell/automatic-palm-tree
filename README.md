@@ -65,6 +65,48 @@ _: {
 }
 ```
 
+## Host Inheritance
+
+A host can inherit from another host's config, overriding only what differs. This avoids
+repeating the same feature list, user declarations, and module config across variants
+(e.g., a bare-metal host and its QEMU VM sibling).
+
+### Host metadata (`default.nix`)
+
+Use Nix's `import + //` to copy the base attrset and override specific fields:
+
+```nix
+# hosts/myhost-vm/default.nix
+_: let
+  base = import ../myhost/default.nix {};
+in base // {
+  isQemuVM = true;
+}
+```
+
+### NixOS module (`nixos.nix`)
+
+Split shared config into a `base.nix` (no hardware import) and have each variant's
+`nixos.nix` import its own hardware config plus the base:
+
+```
+hosts/myhost/                    # bare metal
+├── default.nix                  # isQemuVM = false
+├── base.nix                     # shared boot, services, feature toggles
+├── nixos.nix                    # imports [./hardware-configuration.nix ./base.nix]
+├── hardware-configuration.nix
+└── home-josh.nix
+
+hosts/myhost-vm/                 # QEMU variant
+├── default.nix                  # isQemuVM = true, inherits features/users from myhost
+├── nixos.nix                    # imports [../myhost/base.nix ./hardware-configuration.nix]
+├── hardware-configuration.nix   # qemu-guest profile
+└── home-josh.nix                # imports [../myhost/home-josh.nix]
+```
+
+This keeps `hardware-configuration.nix` strictly per-host and avoids conflicting
+definitions when both variants inherit the same `nixos.nix`.
+
 ## User Options
 
 | Option      | Default | Description                                                           |
@@ -72,5 +114,6 @@ _: {
 | `enabled`   | `true`  | Include the user in `osUsernames`                                     |
 | `isAdmin`   | `false` | Add `wheel` to `extraGroups`                                          |
 | `hmEnabled` | `true`  | Set `false` to create the NixOS user but skip its home-manager module |
+| `isQemuVM`  | `false` | Whether this host is a QEMU/KVM virtual machine                       |
 
 Feature modules under `features/<name>/` are auto-discovered — no registration needed.

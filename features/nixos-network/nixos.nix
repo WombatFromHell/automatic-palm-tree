@@ -5,7 +5,6 @@ _: {
       wifi.backend = "iwd";
     };
     wireless.iwd = {
-      enable = true;
       settings = {
         General.Country = "US";
         Network.EnableIPv6 = false;

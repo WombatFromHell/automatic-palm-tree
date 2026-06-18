@@ -39,6 +39,12 @@
       description = "Users defined for this host.";
     };
 
+    isQemuVM = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Whether this host is a QEMU/KVM virtual machine.";
+    };
+
     features = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
