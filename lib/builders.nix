@@ -24,9 +24,7 @@
   in
     lib.flatten results;
 
-  # Single evalModules to extract unfree/overlays from features.
-  # Only needed for HM-only hosts (overlays must be known before import nixpkgs).
-  resolveHostContext = host: let
+  resolveHostOverlays = host: let
     hostFeatures = host.features or [];
     mergedCfg =
       (lib.evalModules {
@@ -35,21 +33,16 @@
           hostConfig = host;
         };
         modules =
-          (resolveFeaturePaths hostFeatures "nixos"
-            ++ resolveFeaturePaths hostFeatures "home")
+          # Evaluate BOTH "nixos" and "home" paths. This ensures that NixOS hosts
+          # pick up overlays declared in shared or nixos feature modules, preventing
+          # a mismatch between the standalone HM package set and the NixOS HM package set.
+          resolveFeaturePaths hostFeatures "nixos"
+          ++ resolveFeaturePaths hostFeatures "home"
           ++ [featuresLib.featureOptionsModule {_module.check = false;}];
       }).config;
-
-    allUnfree = lib.unique (lib.flatten [
-      (host.unfree or [])
-      (mergedCfg.unfreePackages or [])
-    ]);
-
-    homeOverlays = lib.unique (lib.flatten [
-      (mergedCfg.overlays or [])
-    ]);
   in {
-    inherit allUnfree homeOverlays;
+    stable = lib.unique (lib.flatten [(mergedCfg.overlays or [])]);
+    unstable = lib.unique (lib.flatten [(mergedCfg.unstableOverlays or [])]);
   };
 
   mkFeatureAggregator = host: platform: let
@@ -64,12 +57,7 @@
     nixosHosts = lib.filterAttrs (_: h: h.isNixOS or false) discoveredHosts;
   in
     lib.mapAttrs (
-      _name: host: let
-        pkgsUnstable = import inputs.nixpkgs-unstable {
-          inherit (host) system;
-          config.allowUnfree = true;
-        };
-      in
+      _name: host:
         inputs.nixpkgs.lib.nixosSystem {
           modules = lib.flatten [
             (mkFeatureAggregator host "nixos")
@@ -83,16 +71,24 @@
               lib,
               ...
             }: {
-              # Collect unfree/overlays via nixos-level features (no pre-evaluation).
-              # HM user overlays aren't read here to avoid a cycle (pkgs ↔ HM eval).
               nixpkgs.config.allowUnfree = true;
               nixpkgs.overlays = config.overlays;
+
+              _module.args.pkgsUnstable = import inputs.nixpkgs-unstable {
+                inherit (host) system;
+                overlays = (resolveHostOverlays host).unstable;
+                config.allowUnfree = true;
+              };
 
               home-manager = {
                 useGlobalPkgs = true;
                 useUserPackages = true;
                 extraSpecialArgs = {
-                  inherit pkgsUnstable;
+                  pkgsUnstable = import inputs.nixpkgs-unstable {
+                    inherit (host) system;
+                    overlays = (resolveHostOverlays host).unstable;
+                    config.allowUnfree = true;
+                  };
                   hostConfig = host;
                   inherit inputs self;
                 };
@@ -103,53 +99,49 @@
             })
           ];
           specialArgs = {
-            inherit pkgsUnstable;
-            inherit inputs self;
+            # Remove pkgsUnstable from here to avoid conflicts!
             inherit (host) osUsernames hmUsernames bootstrap;
+            inherit inputs self;
             hostConfig = host;
           };
         }
     )
     nixosHosts;
 
-  # ── Home Manager–only host builder ───────────────────────────────────
   buildHomeConfigurations = discoveredHosts: let
     hmHosts = lib.filterAttrs (_: h: !(h.isNixOS or false)) discoveredHosts;
-    mkHomeConfig = host: user: let
-      ctx = resolveHostContext host;
-      pkgsUnstable = import inputs.nixpkgs-unstable {
-        inherit (host) system;
-        config.allowUnfree = true;
-      };
+
+    mkHomeConfigsForHost = host: let
+      hostOverlays = resolveHostOverlays host;
       pkgs = import inputs.nixpkgs {
         inherit (host) system;
-        overlays = ctx.homeOverlays;
-        config.allowUnfreePredicate = pkg:
-          builtins.elem (lib.getName pkg) ctx.allUnfree;
+        overlays = hostOverlays.stable;
+        config.allowUnfree = true;
       };
-    in
-      inputs.home-manager.lib.homeManagerConfiguration {
-        inherit pkgs;
-        modules = [
-          (mkFeatureAggregator host "home")
-          self.flakeModules.nix-settings
-          (builderHelpers.mkUserHomeModule {inherit user host;})
-          {targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);}
-        ];
-        extraSpecialArgs = {
-          inherit pkgsUnstable;
-          hostConfig = host;
-          inherit inputs self;
+      # Create the unified pkgsUnstable with feature overlays applied
+      pkgsUnstable = import inputs.nixpkgs-unstable {
+        inherit (host) system;
+        overlays = hostOverlays.unstable;
+        config.allowUnfree = true;
+      };
+      mkHomeConfig = user:
+        inputs.home-manager.lib.homeManagerConfiguration {
+          inherit pkgs;
+          modules = [
+            self.flakeModules.nix-settings
+            (builderHelpers.mkUserHomeModule {inherit user host;})
+            {targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);}
+          ];
+          extraSpecialArgs = {
+            inherit pkgsUnstable;
+            hostConfig = host;
+            inherit inputs self;
+          };
         };
-      };
+    in
+      map (user: lib.nameValuePair "${user}@${host.name}" (mkHomeConfig user)) host.hmUsernames;
   in
-    builtins.listToAttrs (lib.concatLists (lib.mapAttrsToList
-      (_: hostEntry:
-        map (user:
-          lib.nameValuePair "${user}@${hostEntry.name}"
-          (mkHomeConfig hostEntry user))
-        hostEntry.hmUsernames)
-      hmHosts));
+    builtins.listToAttrs (lib.concatLists (lib.mapAttrsToList (_: mkHomeConfigsForHost) hmHosts));
 in {
   inherit buildNixosConfigurations buildHomeConfigurations;
 }

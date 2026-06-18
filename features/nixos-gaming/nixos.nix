@@ -3,12 +3,6 @@
   pkgsUnstable,
   ...
 }: {
-  unfreePackages = [
-    "steam"
-    "steam-run"
-    "steam-unwrapped"
-  ];
-
   boot.kernelParams = [
     "split_lock_detect=off"
     "amdgpu.ppfeaturemask=0xfffd7fff"

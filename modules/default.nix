@@ -7,6 +7,21 @@
 }: let
   featuresLib = import ../lib/features.nix {inherit self lib;};
   builders = import ../lib/builders.nix {inherit lib self inputs featuresLib;};
+
+  # Single instantiation of pkgsUnstable per host — consumed by builders
+  # and hostPackageSets alike. pkgs (stable) is intentionally not unified
+  # here: NixOS hosts build it internally via nixosSystem (overlays come
+  # from config.overlays inside the module eval); HM-only hosts build it
+  # after overlay resolution in builders.nix.
+  hostsWithPkgs = lib.mapAttrs (_: h:
+    h
+    // {
+      pkgsUnstable = import inputs.nixpkgs-unstable {
+        inherit (h) system;
+        config.allowUnfree = true;
+      };
+    })
+  config.discoveredHosts;
 in {
   imports = [./discovery.nix];
 
@@ -20,13 +35,17 @@ in {
 
     features = featuresLib.discoveredFeatures;
 
-    # Builders are now pure functions wired directly to flake outputs
-    nixosConfigurations = builders.buildNixosConfigurations config.discoveredHosts;
-    homeConfigurations = builders.buildHomeConfigurations config.discoveredHosts;
+    nixosConfigurations = builders.buildNixosConfigurations hostsWithPkgs;
+    homeConfigurations = builders.buildHomeConfigurations hostsWithPkgs;
   };
+
   flake.hostPackageSets =
     lib.mapAttrs (_: h: {
-      inherit (h) pkgsStable pkgsUnstable;
+      pkgs = import inputs.nixpkgs {
+        inherit (h) system;
+        config.allowUnfree = true;
+      };
+      inherit (h) pkgsUnstable;
     })
-    config.discoveredHosts;
+    hostsWithPkgs;
 }

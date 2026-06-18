@@ -1,5 +1,4 @@
 {
-  pkgs,
   pkgsUnstable,
   lib,
   config,
@@ -20,10 +19,10 @@ in {
 
   config = lib.mkIf cfg.enable {
     # expose 'pkgs.quickshell' via overlay (only post-bootstrap)
-    overlays =
-      lib.optionals
-      (!hostConfig.bootstrap && inputs ? quickshell)
-      [inputs.quickshell.overlays.default];
+    # unstableOverlays =
+    #   lib.optionals
+    #   (!hostConfig.bootstrap && inputs ? quickshell)
+    #   [inputs.quickshell.overlays.default];
 
     programs.dms-shell = {
       enable = true;
