@@ -98,9 +98,63 @@ second_stage() {
     return 0
 }
 
+cmd_prepare_swap() {
+    # Skip if swapfile already exists (from a previous preparation or manual setup)
+    if [ -f /var/lib/swapfile ]; then
+        echo "Swapfile at /var/lib/swapfile already exists - skipping swap preparation."
+        return 0
+    fi
+
+    local swap_module="/etc/nixos/swap-prepare.nix"
+    local config_file="/etc/nixos/configuration.nix"
+    local source_module="$SCRIPT_DIR/modules/bootstrap.nix"
+
+    local maybe_sudo=""
+    if [ "$(id -u)" -ne 0 ]; then
+        maybe_sudo="sudo"
+    fi
+
+    if [ ! -d /etc/nixos ]; then
+        echo "WARN: /etc/nixos does not exist - cannot prepare swapfile." >&2
+        return 0
+    fi
+
+    if [ ! -f "$source_module" ]; then
+        echo "WARN: source module '$source_module' not found - cannot prepare swapfile." >&2
+        return 0
+    fi
+
+    # Copy the bootstrap swap + zswap module from the flake (uses boot.kernelParams
+    # instead of boot.zswap.* so it works on any NixOS release)
+    "$maybe_sudo" cp -f "$source_module" "$swap_module"
+
+    # Inject into imports list if not already present.
+    # Handles both inline (imports = [) and split-line (imports =\n  [) formats.
+    if ! grep -q "swap-prepare" "$config_file" 2>/dev/null; then
+        sed -i '/imports\s*=/{:a;/\[/!{N;ba};s/\[/[\n    .\/swap-prepare.nix/}' "$config_file"
+    fi
+
+    echo "Building swapfile + zswap config to avoid OOM during subsequent rebuild..."
+    if ! $maybe_sudo NIX_CONFIG="$NIX_CONFIG" \
+        nix run "github:NixOS/nixpkgs/nixos-26.05#nixos-rebuild" -- switch; then
+        echo "WARN: swap preparation failed - continuing anyway." >&2
+    else
+        echo "============================================"
+        echo "  Swapfile and zswap are now configured."
+        echo "  REBOOT your machine, then run:"
+        echo "    ./bootstrap.sh init"
+        echo "  to perform the real rebuild."
+        echo "============================================"
+        exit 0
+    fi
+}
+
 cmd_init() {
     local target="${1:-}"
+    local use_nh="${2:-false}"
     local flake="${NH_FLAKE_ROOT:-$SCRIPT_DIR}"
+
+    export NIX_CONFIG="extra-experimental-features = nix-command flakes"
 
     local mode
     local flake_ref="$flake"
@@ -127,36 +181,55 @@ cmd_init() {
 
         if [ "$os_name" = "NixOS" ]; then
             mode="os"
-            echo "Detected NixOS — running system switch..."
+            echo "Detected NixOS - running system switch..."
         else
             mode="home"
-            echo "Detected ${os_name} — running home switch..."
+            echo "Detected ${os_name} - running home switch..."
         fi
     fi
 
-    # Ensure home-manager is initialized before we can use it
+    # Ensure home-manager is initialized for home-mode (needed by both nh and non-nh paths)
     if [ "$mode" = "home" ] && {
         ! command -v home-manager &>/dev/null ||
             [ ! -f "$HOME/.config/home-manager/flake.nix" ]
     }; then
-        echo "Home Manager not yet initialized — running init..."
-        env NIX_CONFIG="extra-experimental-features = nix-command flakes" \
-            nix run "github:nix-community/home-manager/master" -- init --switch
+        echo "Home Manager not yet initialized - running init..."
+        nix run "github:nix-community/home-manager/master" -- init --switch
     fi
 
-    local cmd=(
-        env NIX_CONFIG="extra-experimental-features = nix-command flakes" "NH_FLAKE_ROOT=$NH_FLAKE_ROOT"
-        nix develop "$flake" -c
-    )
-
+    # Ensure a swapfile exists before running a full system rebuild
     if [ "$mode" = "os" ]; then
-        cmd+=(sudo nixos-rebuild switch --flake "$flake_ref" -L -v)
-    else
-        cmd+=(home-manager switch --flake "$flake_ref")
+        cmd_prepare_swap
     fi
 
-    echo "Running inside flake dev shell..."
-    "${cmd[@]}"
+    if [ "$use_nh" = "true" ]; then
+        local nh_cmd=(
+            NH_FLAKE_ROOT="$NH_FLAKE_ROOT"
+            nix run "github:NixOS/nixpkgs/nixos-26.05#nh" --
+        )
+
+        if [ "$mode" = "os" ]; then
+            echo "Running 'nh os switch'..."
+            "${nh_cmd[@]}" os switch --flake "$flake_ref"
+        else
+            echo "Running 'nh home switch'..."
+            "${nh_cmd[@]}" home switch --flake "$flake_ref"
+        fi
+    else
+        local cmd=(
+            env "NH_FLAKE_ROOT=$NH_FLAKE_ROOT"
+            nix develop "$flake" -c
+        )
+
+        if [ "$mode" = "os" ]; then
+            cmd+=(sudo nixos-rebuild switch --flake "$flake_ref" -L -v)
+        else
+            cmd+=(home-manager switch --flake "$flake_ref")
+        fi
+
+        echo "Running inside flake dev shell..."
+        "${cmd[@]}"
+    fi
 }
 
 cmd_bootstrap() {
@@ -224,8 +297,8 @@ Commands:
                     switch') or user@hostname (runs 'home-manager
                     switch'). When omitted, auto-detects NixOS vs
                     non-NixOS.
-    --cores N       Limit build parallelism to N cores (passed
-                    through to nix/build).
+    --use-nh        Use 'nh os switch' / 'nh home switch' from
+                    nixpkgs-26.05 instead of nixos-rebuild / home-manager.
   bootstrap         Run the two-stage SSHFS + rsync pipeline
                     (first stage / second stage bootstrap).
   clean             Run 'nh clean all' to garbage-collect old
@@ -243,19 +316,15 @@ main() {
     case "${1:-}" in
     init)
         shift
-        local cores=""
         local target=""
+        local use_nh="false"
 
         # Parse flags before the positional target
         while [ $# -gt 0 ] && [[ "$1" == -* ]]; do
             case "$1" in
-            --cores)
-                if [ $# -lt 2 ]; then
-                    echo "Error: --cores requires a value." >&2
-                    exit 1
-                fi
-                cores="$2"
-                shift 2
+            --use-nh)
+                use_nh="true"
+                shift
                 ;;
             *)
                 echo "Unknown option: $1" >&2
@@ -271,7 +340,7 @@ main() {
             shift
         fi
 
-        cmd_init "$target" "$cores"
+        cmd_init "$target" "$use_nh"
         ;;
     bootstrap)
         cmd_bootstrap
