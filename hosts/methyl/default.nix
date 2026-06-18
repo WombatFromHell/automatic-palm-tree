@@ -31,7 +31,8 @@ _: {
     "nixos-lix"
     #
     "nixos-automounts"
-    "nixos-zram"
+    # "nixos-zram"
+    "nixos-zswap"
     "nixos-oom"
     #
     "nixos-niri"
