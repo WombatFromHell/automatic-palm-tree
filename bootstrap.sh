@@ -47,10 +47,18 @@ first_stage() {
         fi
     done
 
-    echo "Mounting sshfs remote..."
-    if ! sshfs "${SSHFS_OPTS[@]}" "$SSHFS_REMOTE" "$SSHFS_MNTDIR"; then
-        echo "Error: something went wrong when mounting the sshfs remote!"
-        return 1
+    # Bail if the mountpoint is already active (e.g. nasmount-sshfs service
+    # deployed by a previous 'init' has it mounted).  In that case the remote
+    # files are already accessible, so we just skip the sshfs call and proceed
+    # straight to copying keys / importing GPG keys.
+    if mountpoint -q "$SSHFS_MNTDIR"; then
+        echo "$SSHFS_MNTDIR is already mounted — skipping sshfs mount step."
+    else
+        echo "Mounting sshfs remote..."
+        if ! sshfs "${SSHFS_OPTS[@]}" "$SSHFS_REMOTE" "$SSHFS_MNTDIR"; then
+            echo "Error: something went wrong when mounting the sshfs remote!"
+            return 1
+        fi
     fi
 
     for key in id_rsa id_rsa.pub; do
@@ -68,7 +76,7 @@ first_stage() {
         src="$SSHFS_GPGDIR/$key"
         if [ -f "$src" ]; then
             echo "Importing gnupg key: $key..."
-            gpg --import-key "$src"
+            gpg --import "$src"
         else
             echo "WARN: key '$src' not found, skipping." >&2
         fi
