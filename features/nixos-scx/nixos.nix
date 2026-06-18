@@ -10,5 +10,23 @@
   services.scx-loader = {
     enable = true;
     package = pkgsUnstable.scx-loader;
+
+    config = {
+      default_mode = "Auto";
+
+      scheds.scx_bpfland = {
+        auto_mode = [];
+        gaming_mode = ["-m" "performance"];
+        lowlatency_mode = ["-k" "-s" "5000" "-l" "5000"];
+        powersave_mode = ["-m" "powersave"];
+      };
+
+      scheds.scx_lavd = {
+        auto_mode = [];
+        gaming_mode = ["--performance" "--preempt-shift" "6" "--slice-min-us" "500"];
+        lowlatency_mode = [];
+        powersave_mode = [];
+      };
+    };
   };
 }
