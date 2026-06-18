@@ -1,9 +1,8 @@
 {
   lib,
   self,
+  featuresLib,
 }: let
-  featuresLib = import ./features.nix {inherit lib self;};
-
   resolveHostModules = host: platform:
     if platform == "nixos"
     then (host.nixosModules or []) ++ (host.sharedModules or [])

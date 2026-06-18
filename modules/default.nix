@@ -6,7 +6,7 @@
   ...
 }: let
   featuresLib = import ../lib/features.nix {inherit self lib;};
-  builders = import ../lib/builders.nix {inherit lib self inputs;};
+  builders = import ../lib/builders.nix {inherit lib self inputs featuresLib;};
 in {
   imports = [./discovery.nix];
 
