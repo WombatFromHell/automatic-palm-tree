@@ -23,7 +23,7 @@ SSH_DIR="$HOME/.ssh"
 # stage 2 bootstrap
 RSYNC_BASECMD=(rsync -rvh --update --delete)
 #
-STAGE2_ANSIBLE_ROOT="$SSHFS_MNTDIR/Projects/silver-octo-bassoon"
+STAGE2_ANSIBLE_ROOT="$SSHFS_MNTDIR/Projects/silver-octo-bassoon/"
 ANSIBLE_ROOT="$HOME/.ansible-root"
 #
 NH_FLAKE_ROOT="$HOME/.config/flakeroot"
@@ -87,12 +87,12 @@ first_stage() {
 }
 
 second_stage() {
-    if ! "${RSYNC_BASECMD[@]}" "$STAGE2_ANSIBLE_ROOT" "$ANSIBLE_ROOT"; then
+    if ! "${RSYNC_BASECMD[@]}" "$STAGE2_ANSIBLE_ROOT" "$ANSIBLE_ROOT"/; then
         echo "Error: something went wrong when rsync'ing '$ANSIBLE_ROOT'!"
         return 1
     fi
 
-    ln -sf "$ANSIBLE_ROOT/files" "$HOME/.config/dotfiles"
+    ln -sf "$ANSIBLE_ROOT/files/dotfiles" "$HOME/.config/dotfiles"
 
     echo "Second stage bootstrap complete!"
     return 0
