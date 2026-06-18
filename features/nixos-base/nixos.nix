@@ -34,6 +34,7 @@
       binfmt = true;
     };
     nix-ld.enable = true;
+    fuse.enable = true;
   };
 
   services = {

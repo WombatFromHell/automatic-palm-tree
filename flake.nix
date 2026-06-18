@@ -30,5 +30,21 @@
 
       debug = false;
       systems = ["x86_64-linux"];
+
+      perSystem = {pkgs, ...}: {
+        devShells.default = pkgs.mkShell {
+          packages = with pkgs; [
+            git
+            sshfs
+            fuse3
+            pkgconf
+            cmake
+          ];
+
+          shellHook = ''
+            export FUSE_USE_VERSION=31
+          '';
+        };
+      };
     };
 }

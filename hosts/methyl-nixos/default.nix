@@ -1,5 +1,5 @@
 _: {
-  bootstrap = false; # set to false once flake is initialized (for caching)
+  bootstrap = true; # set to false once flake is initialized (for caching)
   system = "x86_64-linux";
   isNixOS = true;
 
