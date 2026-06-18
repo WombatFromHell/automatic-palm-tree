@@ -8,9 +8,9 @@ cd "$SCRIPT_DIR"
 # remote host used by pull, first_stage, and second_stage
 PULL_REMOTE="nxxel@192.168.1.153"
 PULL_REMOTE_PORT="2222"
+PULL_REMOTE_IDENTITY="~/.ssh/id_rsa"
 PULL_REMOTE_SOURCE="~/Projects/nix/"
 #
-SSHFS_OPTS=(-p 2222)
 SSHFS_REMOTE="nxxel@192.168.1.153:/share/homes/nxxel"
 SSHFS_MNTDIR="$HOME/.nas-home"
 #
@@ -55,7 +55,11 @@ first_stage() {
         echo "$SSHFS_MNTDIR is already mounted — skipping sshfs mount step."
     else
         echo "Mounting sshfs remote..."
-        if ! sshfs "${SSHFS_OPTS[@]}" "$SSHFS_REMOTE" "$SSHFS_MNTDIR"; then
+        local sshfs_opts=(-p "${PULL_REMOTE_PORT}")
+        if [ -n "$PULL_REMOTE_IDENTITY" ]; then
+            sshfs_opts+=(-o "IdentityFile=$PULL_REMOTE_IDENTITY")
+        fi
+        if ! sshfs "${sshfs_opts[@]}" "$SSHFS_REMOTE" "$SSHFS_MNTDIR"; then
             echo "Error: something went wrong when mounting the sshfs remote!"
             return 1
         fi
@@ -92,7 +96,7 @@ second_stage() {
         return 1
     fi
 
-    ln -sfT "$ANSIBLE_ROOT/files/dotfiles" "$HOME/.config/dotfiles"
+    ln -sfT "$ANSIBLE_ROOT/files/dotfiles" "$DOTFILES_DIR"
 
     echo "Second stage bootstrap complete!"
     return 0
@@ -126,7 +130,7 @@ cmd_prepare_swap() {
 
     # Copy the bootstrap swap + zswap module from the flake (uses boot.kernelParams
     # instead of boot.zswap.* so it works on any NixOS release)
-    "$maybe_sudo" cp -f "$source_module" "$swap_module"
+    $maybe_sudo cp -f "$source_module" "$swap_module"
 
     # Inject into imports list if not already present.
     # Handles both inline (imports = [) and split-line (imports =\n  [) formats.
@@ -135,8 +139,7 @@ cmd_prepare_swap() {
     fi
 
     echo "Building swapfile + zswap config to avoid OOM during subsequent rebuild..."
-    if ! $maybe_sudo NIX_CONFIG="$NIX_CONFIG" \
-        nix run "github:NixOS/nixpkgs/nixos-26.05#nixos-rebuild" -- switch; then
+    if ! $maybe_sudo env NIX_CONFIG="$NIX_CONFIG" nixos-rebuild switch; then
         echo "WARN: swap preparation failed - continuing anyway." >&2
     else
         echo "============================================"
@@ -204,27 +207,24 @@ cmd_init() {
 
     if [ "$use_nh" = "true" ]; then
         local nh_cmd=(
-            NH_FLAKE_ROOT="$NH_FLAKE_ROOT"
+            env NH_FLAKE_ROOT="$NH_FLAKE_ROOT"
             nix run "github:NixOS/nixpkgs/nixos-26.05#nh" --
         )
 
         if [ "$mode" = "os" ]; then
             echo "Running 'nh os switch'..."
-            "${nh_cmd[@]}" os switch --flake "$flake_ref"
+            "${nh_cmd[@]}" os switch "$flake_ref" -- -L
         else
             echo "Running 'nh home switch'..."
-            "${nh_cmd[@]}" home switch --flake "$flake_ref"
+            "${nh_cmd[@]}" home switch "$flake_ref" -- -L
         fi
     else
-        local cmd=(
-            env "NH_FLAKE_ROOT=$NH_FLAKE_ROOT"
-            nix develop "$flake" -c
-        )
+        local cmd=(nix develop "$flake" -c)
 
         if [ "$mode" = "os" ]; then
-            cmd+=(sudo nixos-rebuild switch --flake "$flake_ref" -L -v)
+            cmd+=(sudo nixos-rebuild switch --flake "$flake_ref" -L)
         else
-            cmd+=(home-manager switch --flake "$flake_ref")
+            cmd+=(home-manager switch -L --flake "$flake_ref")
         fi
 
         echo "Running inside flake dev shell..."
@@ -247,16 +247,40 @@ cmd_clean() {
     "${cmd[@]}" "$@"
 }
 
+# Build the SSH options string for rsync/ssh commands.
+# Usage:  _ssh_opts
+# Prints "-p PORT" and, if PULL_REMOTE_IDENTITY is set, appends "-i PATH".
+_ssh_opts() {
+    local opts="-p ${PULL_REMOTE_PORT}"
+    if [ -n "$PULL_REMOTE_IDENTITY" ]; then
+        opts="${opts} -i ${PULL_REMOTE_IDENTITY}"
+    fi
+    printf '%s' "$opts"
+}
+
 cmd_pull() {
     local target="${1:-$NH_FLAKE_ROOT}"
     local cmd=(
-        rsync -e "ssh -p ${PULL_REMOTE_PORT}"
+        rsync -e "ssh $(_ssh_opts)"
         -rvh --update --delete
         "${PULL_REMOTE}:${PULL_REMOTE_SOURCE}"
-        "$target"
+        "$target"/
     )
 
     echo "Pulling flake from ${PULL_REMOTE}:${PULL_REMOTE_SOURCE} to ${target}..."
+    "${cmd[@]}"
+}
+
+cmd_push() {
+    local source="${1:-$NH_FLAKE_ROOT}"
+    local cmd=(
+        rsync -e "ssh $(_ssh_opts)"
+        -rvh --update --delete
+        "$source"/
+        "${PULL_REMOTE}:${PULL_REMOTE_SOURCE}"
+    )
+
+    echo "Pushing flake from ${source} to ${PULL_REMOTE}:${PULL_REMOTE_SOURCE}..."
     "${cmd[@]}"
 }
 
@@ -270,7 +294,7 @@ cmd_shell() {
 }
 
 cmd_tuckr() {
-    local configs_dir="$HOME/.config/dotfiles/Configs"
+    local configs_dir="$DOTFILES_DIR/Configs"
     local exclude_dirs=("systemd")
 
     if ! command -v tuckr &>/dev/null; then
@@ -305,6 +329,8 @@ Commands:
                     Nix generations.
   pull [DEST]       Rsync the flake from the remote host.
                     DEST defaults to the script directory.
+  push [SOURCE]     Rsync the flake to the remote host.
+                    SOURCE defaults to the script directory.
   shell             Open a nix dev shell for the flake.
   tuckr             Run 'tuckr set' with all config directories
                     from dotfiles/Configs (excluding systemd).
@@ -352,6 +378,10 @@ main() {
     pull)
         shift
         cmd_pull "${1:-}"
+        ;;
+    push)
+        shift
+        cmd_push "${1:-}"
         ;;
     shell)
         cmd_shell
