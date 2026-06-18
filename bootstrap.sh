@@ -92,7 +92,7 @@ second_stage() {
         return 1
     fi
 
-    ln -sf "$ANSIBLE_ROOT/files/dotfiles" "$HOME/.config/dotfiles"
+    ln -sfT "$ANSIBLE_ROOT/files/dotfiles" "$HOME/.config/dotfiles"
 
     echo "Second stage bootstrap complete!"
     return 0
@@ -196,6 +196,24 @@ cmd_shell() {
     "${cmd[@]}"
 }
 
+cmd_tuckr() {
+    local configs_dir="$HOME/.config/dotfiles/Configs"
+    local exclude_dirs=("systemd")
+
+    if ! command -v tuckr &>/dev/null; then
+        echo "ERROR: 'tuckr' is not installed or not on PATH." >&2
+        return 1
+    fi
+
+    if [ ! -d "$configs_dir" ]; then
+        echo "ERROR: Configs directory '$configs_dir' not found." >&2
+        return 1
+    fi
+
+    echo "Running: tuckr set -f -y -e ${exclude_dirs[*]} \*"
+    tuckr set -f -y -e "${exclude_dirs[@]}" \*
+}
+
 help() {
     cat <<EOF
 Usage: $(basename "$0") <command> [<args>] [--flags]
@@ -215,6 +233,8 @@ Commands:
   pull [DEST]       Rsync the flake from the remote host.
                     DEST defaults to the script directory.
   shell             Open a nix dev shell for the flake.
+  tuckr             Run 'tuckr set' with all config directories
+                    from dotfiles/Configs (excluding systemd).
   help              Show this usage message.
 EOF
 }
@@ -266,6 +286,9 @@ main() {
         ;;
     shell)
         cmd_shell
+        ;;
+    tuckr)
+        cmd_tuckr
         ;;
     help)
         help
