@@ -1,4 +1,4 @@
-{...}: {
+_: {
   ##
   # Bootstrap swapfile + zswap setup for initial NixOS rebuilds.
   #

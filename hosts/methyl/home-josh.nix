@@ -23,6 +23,7 @@
     dmemcg-booster.enable = true;
     zed-editor.enable = true;
     nasmount.enable = true;
+    syncthing.enable = true;
     #
     oomd.notify = true;
   };

@@ -13,6 +13,7 @@ _: {
     "hm-media"
     "hm-zed"
     "hm-nasmount"
+    "hm-syncthing"
     #
     "nixos-base"
     "nixos-audio"
