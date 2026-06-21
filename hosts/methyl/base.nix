@@ -16,9 +16,6 @@
     openssh.enable = true;
   };
 
-  # for 'nixos-podman' feature enablement
-  users.users.josh.extraGroups = ["podman"];
-
   features = {
     niri.enable = true;
     dms.enable = true;

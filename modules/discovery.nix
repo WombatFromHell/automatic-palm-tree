@@ -113,10 +113,22 @@
     entry = parseHostEntry filename type;
     inherit (entry) isDir name path hostDir;
     evaluatedHost = validateHost path;
+    cfg = evaluatedHost.config;
     autoModules = autoDiscoverModules isDir hostDir;
-    enriched = enrichHost evaluatedHost.config autoModules;
+    enriched = enrichHost cfg autoModules;
+    adminNames = lib.filter (name: cfg.users.${name}.isAdmin) (builtins.attrNames cfg.users);
+    check =
+      if !cfg.isNixOS && adminNames != []
+      then
+        builtins.warn
+        (
+          "${name}: 'isNixOS = false', but users.${lib.concatStringsSep ", " adminNames}.isAdmin = true! "
+          + "This is a no-op on standalone home-manager hosts."
+        )
+        {}
+      else {};
   in
-    evaluatedHost.config // enriched // {inherit name;};
+    cfg // enriched // check // {inherit name;};
 in {
   options.discoveredHosts = lib.mkOption {
     type = lib.types.attrsOf lib.types.attrs;

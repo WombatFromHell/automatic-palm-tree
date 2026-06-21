@@ -24,5 +24,7 @@ in {
         defaultNetwork.settings.dns_enabled = true;
       };
     };
+    # add isAdmin-enabled users to our feature group
+    extraGroups = ["podman"];
   };
 }

@@ -10,15 +10,21 @@
     then host.sharedModules or []
     else [];
 
-  mkNixosUserModule = host: {lib, ...}: {
+  mkNixosUserModule = host: {
+    lib,
+    config,
+    ...
+  }: {
     users.users = lib.genAttrs host.osUsernames (username: let
       userCfg = host.users.${username} or {};
+      featureExtraGroups = config.extraGroups or [];
     in {
       isNormalUser = true;
       home = "/home/${username}";
       extraGroups =
         ["networkmanager"]
-        ++ lib.optional (userCfg.isAdmin or false) "wheel";
+        ++ lib.optional (userCfg.isAdmin or false) "wheel"
+        ++ lib.optionals (userCfg.isAdmin or false) featureExtraGroups;
     });
   };
 

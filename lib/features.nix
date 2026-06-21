@@ -1,6 +1,7 @@
 {
   self,
   lib,
+  ...
 }: let
   featuresDir = self + /features;
 
@@ -29,17 +30,35 @@
     featureDirs;
 
   featureOptionsModule = {
-    options.overlays = lib.mkOption {
-      type = lib.types.listOf lib.types.unspecified;
-      default = [];
-      internal = true;
-      description = "Overlays to apply to pkgs when this feature is enabled.";
-    };
-    options.unstableOverlays = lib.mkOption {
-      type = lib.types.listOf lib.types.unspecified;
-      default = [];
-      internal = true;
-      description = "Overlays to apply to pkgsUnstable when this feature is enabled.";
+    lib,
+    config,
+    options,
+    ...
+  }: {
+    options = {
+      overlays = lib.mkOption {
+        type = lib.types.listOf lib.types.unspecified;
+        default = [];
+        internal = true;
+        description = "Overlays to apply to pkgs when this feature is enabled.";
+      };
+      unstableOverlays = lib.mkOption {
+        type = lib.types.listOf lib.types.unspecified;
+        default = [];
+        internal = true;
+        description = "Overlays to apply to pkgsUnstable when this feature is enabled.";
+      };
+
+      extraGroups = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        internal = true;
+        description = "Groups to add isAdmin-enabled users to when this feature is enabled.";
+      };
+      config.warnings =
+        lib.optionals
+        (config.extraGroups != [] && !(options ? users.users))
+        ["Feature module declares extraGroups ${builtins.toJSON config.extraGroups} but 'users.users' is unavailable in standalone home-manager modules."];
     };
   };
 in {
