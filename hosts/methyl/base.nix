@@ -17,6 +17,7 @@
   };
 
   features = {
+    # kde.useUnstable = true;
     niri.enable = true;
     dms.enable = true;
     oomd.enable = true;

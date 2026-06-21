@@ -26,6 +26,10 @@
 
   resolveHostOverlays = host: let
     hostFeatures = host.features or [];
+
+    # Safely evaluate the merged config of all features.
+    # We use { _module.check = false; } so that missing options
+    # or type mismatches don't crash the overlay resolution step.
     mergedCfg =
       (lib.evalModules {
         specialArgs = {
@@ -33,16 +37,19 @@
           hostConfig = host;
         };
         modules =
-          # Evaluate BOTH "nixos" and "home" paths. This ensures that NixOS hosts
-          # pick up overlays declared in shared or nixos feature modules, preventing
-          # a mismatch between the standalone HM package set and the NixOS HM package set.
           resolveFeaturePaths hostFeatures "nixos"
           ++ resolveFeaturePaths hostFeatures "home"
           ++ [featuresLib.featureOptionsModule {_module.check = false;}];
       }).config;
+
+    # Safely extract the lists. If a feature module failed to put
+    # `overlays = [...]` inside a `config` block, `mergedCfg` won't
+    # have the attribute, and this gracefully evaluates to `[]`.
+    stableOverlays = lib.flatten (mergedCfg.overlays or []);
+    unstableOverlays = lib.flatten (mergedCfg.unstableOverlays or []);
   in {
-    stable = lib.unique (lib.flatten [(mergedCfg.overlays or [])]);
-    unstable = lib.unique (lib.flatten [(mergedCfg.unstableOverlays or [])]);
+    stable = lib.unique stableOverlays;
+    unstable = lib.unique unstableOverlays;
   };
 
   mkFeatureAggregator = host: platform: let
