@@ -3,11 +3,15 @@
   user,
   ...
 }: {
-  home.stateVersion = "24.11";
-  manual.html.enable = false;
-  manual.json.enable = false;
-  manual.manpages.enable = false;
+  manual = {
+    html.enable = false;
+    json.enable = false;
+    manpages.enable = false;
+  };
   programs.home-manager.enable = true;
-  home.username = lib.mkDefault user;
-  home.homeDirectory = lib.mkDefault "/home/${user}";
+  home = {
+    username = lib.mkDefault user;
+    homeDirectory = lib.mkDefault "/home/${user}";
+    stateVersion = "24.11";
+  };
 }

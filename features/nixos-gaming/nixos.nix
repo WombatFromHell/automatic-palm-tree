@@ -2,7 +2,10 @@
   pkgs,
   pkgsUnstable,
   ...
-}: {
+}: let
+  nscb = pkgs.callPackage ./_nscb_pkg.nix {};
+  protonfetcher = pkgs.callPackage ./_protonfetcher_pkg.nix {};
+in {
   boot.kernelParams = [
     "split_lock_detect=off"
     "amdgpu.ppfeaturemask=0xfffd7fff"
@@ -14,6 +17,9 @@
   ];
 
   environment.systemPackages = with pkgs; [
+    nscb
+    protonfetcher
+    #
     gamescope
     pkgsUnstable.mesa
     protonplus
