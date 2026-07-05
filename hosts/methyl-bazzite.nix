@@ -27,6 +27,7 @@ in {
     "hm-gpg"
     "hm-media"
     "hm-nh"
+    "hm-dcal"
     #
     "hm-nixgl"
     #

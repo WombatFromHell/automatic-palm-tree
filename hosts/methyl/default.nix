@@ -14,6 +14,7 @@ _: {
     "hm-zed"
     "hm-nasmount"
     "hm-syncthing"
+    "hm-dcal"
     #
     "nixos-base"
     "nixos-audio"

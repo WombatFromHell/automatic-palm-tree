@@ -14,6 +14,10 @@
       url = "git+https://github.com/AvengeMedia/DankMaterialShell.git";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
+    dcal = {
+      url = "git+https://github.com/AvengeMedia/dankcalendar.git";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
+    };
     # quickshell = {
     #   url = "git+https://git.outfoxxed.me/quickshell/quickshell?rev=d99d87d5e5ec4e696815348692fdaaf0b6be1b2c";
     #   inputs.nixpkgs.follows = "nixpkgs-unstable";
