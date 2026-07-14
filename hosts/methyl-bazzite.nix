@@ -28,6 +28,7 @@ in {
     "hm-media"
     "hm-nh"
     "hm-dcal"
+    "hm-xilo"
     #
     "hm-nixgl"
     #

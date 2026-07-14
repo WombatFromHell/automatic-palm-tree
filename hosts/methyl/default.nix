@@ -15,6 +15,7 @@ _: {
     "hm-nasmount"
     "hm-syncthing"
     "hm-dcal"
+    "hm-xilo"
     #
     "nixos-base"
     "nixos-audio"

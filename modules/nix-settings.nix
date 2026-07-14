@@ -13,12 +13,14 @@
       "https://wombatfromhell.cachix.org/"
       "https://nix-community.cachix.org/"
       "https://attic.xuyh0120.win/lantian"
+      "https://xilo.nanogoblin.duckdns.org/c/default/xilopkgs"
     ];
     trusted-public-keys = [
       "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
       "wombatfromhell.cachix.org-1:pyIVJJkoLxkjH/MKK1ylrrdJKPpm+aXLeD2zAqVk9lA="
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
       "lantian:EeAUQ+W+6r7EtwnmYjeVwx5kOGEBpjlBfPlzGlTNvHc="
+      "xilopkgs:t7bPM4c3zgmTCtV7XYCDTGiShoplykV8ZhQnEbukaFU="
     ];
     trusted-users = ["@wheel"];
   };
