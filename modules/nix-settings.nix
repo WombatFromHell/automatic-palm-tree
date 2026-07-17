@@ -9,7 +9,8 @@
     bash-prompt-prefix = "(nix:$name) ";
 
     substituters = [
-      "https://cache.nixos.org"
+      # "https://cache.nixos.org"
+      "https://aseipp-nix-cache.global.ssl.fastly.net"
       "https://wombatfromhell.cachix.org/"
       "https://nix-community.cachix.org/"
       "https://attic.xuyh0120.win/lantian"
