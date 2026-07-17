@@ -13,6 +13,7 @@ _: let
 
     features = {
       zed-editor.enable = true;
+      dcal.enableService = false;
     };
 
     services.gpg-agent.pinentry.package = pkgs.pinentry-qt;

@@ -20,6 +20,7 @@
       niri-watcher.enable = true;
       kanshi.enable = true;
     };
+    dcal.enableService = false;
     dmemcg-booster.enable = true;
     zed-editor.enable = true;
     nasmount.enable = true;
