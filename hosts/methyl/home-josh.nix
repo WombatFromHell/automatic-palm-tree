@@ -18,7 +18,7 @@
     };
     niri = {
       niri-watcher.enable = true;
-      kanshi.enable = true;
+      kanshi.enable = false;
     };
     dcal.enableService = false;
     dmemcg-booster.enable = true;
