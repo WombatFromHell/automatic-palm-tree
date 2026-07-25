@@ -8,15 +8,12 @@ _: let
       pkgsUnstable.yt-dlp
       #
       trash-cli
-      zellij
     ];
 
     features = {
       zed-editor.enable = true;
       dcal.enableService = false;
     };
-
-    services.gpg-agent.pinentry.package = pkgs.pinentry-qt;
   };
 in {
   system = "x86_64-linux";
