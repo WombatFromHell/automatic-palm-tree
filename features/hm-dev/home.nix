@@ -11,15 +11,11 @@
       ansible
       ansible-lint
       bats
-      gcc
-      lazydocker
+      # gcc
       lazygit
-      mise
       nil
       nixd
-      prettier
-      python3
-      python3Packages.pytest
+      python314
       ruff
       shellcheck
       shfmt

@@ -4,11 +4,11 @@ _: let
     pkgsUnstable,
     ...
   }: {
-    home.packages = with pkgsUnstable; [
-      khal
-      libqalculate
+    home.packages = with pkgs; [
+      pkgsUnstable.yt-dlp
+      #
       trash-cli
-      yt-dlp
+      zellij
     ];
 
     features = {
