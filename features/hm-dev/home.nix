@@ -27,7 +27,7 @@
       lixPackageSets.latest.nix-eval-jobs
     ]
     # only add nerd-fonts if we're on NixOS
-    ++ (lib.optionals (hostConfig.isNixOS or false) [
+    ++ (lib.optionals (builtins.hasAttr "isNixOS" hostConfig && hostConfig.isNixOS) [
       nerd-fonts.jetbrains-mono
       nerd-fonts.fira-code
       nerd-fonts.iosevka

@@ -80,7 +80,7 @@
   in
     builtins.listToAttrs (lib.concatMap (
         p:
-          lib.optional (files ? "${p}.nix" && files."${p}.nix" == "regular") {
+          lib.optional (builtins.hasAttr "${p}.nix" files && files."${p}.nix" == "regular") {
             name = p;
             value = dirPath + "/${p}.nix";
           }
@@ -114,7 +114,7 @@
         description = "Groups to add isAdmin-enabled users to when this feature is enabled.";
       };
     };
-    config.warnings = lib.optionals (config.extraGroups != [] && !(options ? users.users)) [
+    config.warnings = lib.optionals (config.extraGroups != [] && !(builtins.hasAttr "users.users" options)) [
       "Feature module declares extraGroups ${builtins.toJSON config.extraGroups} but 'users.users' is unavailable in standalone home-manager modules."
     ];
   };
@@ -125,23 +125,25 @@
   resolveFeaturePaths = featureList: platform:
     lib.flatten (
       map (f:
-        if !(discoveredFeatures ? ${f})
+        if !(builtins.hasAttr f discoveredFeatures)
         then throw "Unknown feature '${f}'. Available: ${availableFeatures}"
         else let
-          feature = discoveredFeatures.${f};
-          platformMod = feature.${platform} or null;
+          feature = builtins.getAttr f discoveredFeatures;
+          platformMod =
+            if builtins.hasAttr platform feature
+            then builtins.getAttr platform feature
+            else null;
         in
           lib.filter (p: p != null) [platformMod])
       featureList
     );
 
   # ── overlay resolution ──
-  # Note: separate evalModules pass to extract overlays before pkgs exists.
-  # Needed because overlays must be baked into the pkgs import, but feature
-  # modules are loaded during the main eval. The ceiling is eval time for
-  # host configs with many features; if it ever matters, cache results.
   resolveHostOverlays = host: let
-    hostFeatures = host.features or [];
+    hostFeatures =
+      if builtins.hasAttr "features" host
+      then host.features
+      else [];
     mergedCfg =
       (lib.evalModules {
         specialArgs = {
@@ -153,9 +155,17 @@
           ++ resolveFeaturePaths hostFeatures "home"
           ++ [featureOptionsModule {_module.check = false;}];
       }).config;
+    stableOverlays =
+      if builtins.hasAttr "overlays" mergedCfg
+      then mergedCfg.overlays
+      else [];
+    unstableOverlays =
+      if builtins.hasAttr "unstableOverlays" mergedCfg
+      then mergedCfg.unstableOverlays
+      else [];
   in {
-    stable = lib.unique (lib.flatten (mergedCfg.overlays or []));
-    unstable = lib.unique (lib.flatten (mergedCfg.unstableOverlays or []));
+    stable = lib.unique (lib.flatten stableOverlays);
+    unstable = lib.unique (lib.flatten unstableOverlays);
   };
 
   # ── Home Manager user module (was lib/builder-helpers.nix) ──
@@ -163,11 +173,19 @@
     user,
     host,
   }: let
-    homeFeaturePaths = resolveFeaturePaths (host.features or []) "home";
+    hostFeatures =
+      if builtins.hasAttr "features" host
+      then host.features
+      else [];
+    homeFeaturePaths = resolveFeaturePaths hostFeatures "home";
+    userHomeModules =
+      if builtins.hasAttr user host.homeModules
+      then host.homeModules.${user}
+      else [];
   in {
     imports = lib.flatten [
       homeFeaturePaths
-      (host.homeModules.${user} or [])
+      userHomeModules
       featureOptionsModule
       (self + /modules/defaults/home-manager.nix)
     ];
@@ -186,9 +204,8 @@
     );
 
   # ── NixOS configuration builder ──
-  # hostsWithPkgs must have pre-computed .pkgsUnstable (with feature overlays).
   buildNixosConfigurations = hostsWithPkgs: let
-    nixosHosts = lib.filterAttrs (_: h: h.isNixOS or false) hostsWithPkgs;
+    nixosHosts = lib.filterAttrs (_: h: builtins.hasAttr "isNixOS" h && h.isNixOS) hostsWithPkgs;
   in
     lib.mapAttrs (
       _name: host:
@@ -197,7 +214,11 @@
             # Feature modules for the NixOS platform
             {
               imports =
-                resolveFeaturePaths (host.features or []) "nixos"
+                resolveFeaturePaths (
+                  if builtins.hasAttr "features" host
+                  then host.features
+                  else []
+                ) "nixos"
                 ++ [featureOptionsModule];
             }
             # Nix daemon settings
@@ -207,7 +228,11 @@
             # NixOS user defaults
             (self + /modules/defaults/nixos-users.nix)
             # Host-local modules
-            (host.nixosModules or [])
+            (
+              if builtins.hasAttr "nixosModules" host
+              then host.nixosModules
+              else []
+            )
             # Home Manager integration
             inputs.home-manager.nixosModules.home-manager
             # Inline: unfree pkgs, overlay wiring, pkgsUnstable, HM wiring
@@ -245,10 +270,8 @@
     nixosHosts;
 
   # ── Home Manager configuration builder ──
-  # hostsWithPkgs must have pre-computed .pkgs (with stable overlays) and
-  # .pkgsUnstable (with unstable overlays).
   buildHomeConfigurations = hostsWithPkgs: let
-    hmHosts = lib.filterAttrs (_: h: !(h.isNixOS or false)) hostsWithPkgs;
+    hmHosts = lib.filterAttrs (_: h: !(builtins.hasAttr "isNixOS" h && h.isNixOS)) hostsWithPkgs;
 
     mkHomeConfigsForHost = host: let
       mkHomeConfig = user:

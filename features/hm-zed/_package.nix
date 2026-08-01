@@ -131,7 +131,7 @@ in
       updateScript = nix-update-script {
         extraArgs = [
           "--version-regex"
-          "^v(?!.*(?:0\.999999\.0|0\.9999-temporary)$)(.+)$"
+          "^v(?!.*(?:0.999999.0|0.9999-temporary)$)(.+)$"
         ];
       };
       fhs = fhs {zed-editor = finalAttrs.finalPackage;};

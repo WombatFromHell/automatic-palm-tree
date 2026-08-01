@@ -1,5 +1,4 @@
-{ pkgs, ... }:
-let
+{pkgs, ...}: let
   # fork of eth-p/pinentry-tmux: single self-contained bash script
   # Bridges gpg-agent's Assuan pipe to a tmux popup pane via a fifo pair,
   # so pinentry-curses doesn't share a screen buffer with whatever TUI
@@ -84,9 +83,8 @@ let
 
     exec "${pkgs.pinentry-tty}/bin/pinentry-tty" "$@"
   '';
-in
-{
-  home.packages = [ pinentryWrapper pinentryTmux pinentryZellij ];
+in {
+  home.packages = [pinentryWrapper pinentryTmux pinentryZellij];
   programs.gpg.enable = true;
   services.gpg-agent = {
     enable = true;

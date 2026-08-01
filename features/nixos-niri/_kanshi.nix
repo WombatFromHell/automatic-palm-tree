@@ -11,8 +11,7 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [pkgs.kanshi];
-
+    home.packages = [pkgs.kanshi];
     systemd.user.services.kanshi = {
       Unit = {
         Description = "Kanshi Service";

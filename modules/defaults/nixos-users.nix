@@ -6,15 +6,22 @@
   ...
 }: {
   users.users = lib.genAttrs hostConfig.osUsernames (username: let
-    userCfg = hostConfig.users.${username} or {};
-    featureExtraGroups = config.extraGroups or [];
+    userCfg =
+      if builtins.hasAttr username hostConfig.users
+      then hostConfig.users.${username}
+      else {};
+    isAdmin = builtins.hasAttr "isAdmin" userCfg && userCfg.isAdmin;
+    featureExtraGroups =
+      if builtins.hasAttr "extraGroups" config
+      then config.extraGroups
+      else [];
   in {
     isNormalUser = true;
     home = "/home/${username}";
     shell = lib.mkOverride 50 pkgs.fish;
     extraGroups =
       ["networkmanager"]
-      ++ lib.optional (userCfg.isAdmin or false) "wheel"
-      ++ lib.optionals (userCfg.isAdmin or false) featureExtraGroups;
+      ++ lib.optional isAdmin "wheel"
+      ++ lib.optionals isAdmin featureExtraGroups;
   });
 }

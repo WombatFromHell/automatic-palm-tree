@@ -6,7 +6,14 @@
 }: let
   hasPodmanUser =
     builtins.any
-    (username: builtins.elem "podman" (config.users.users.${username}.extraGroups or []))
+    (username: let
+      userInfo = config.users.users.${username};
+      extraGroups =
+        if builtins.hasAttr "extraGroups" userInfo
+        then userInfo.extraGroups
+        else [];
+    in
+      builtins.elem "podman" extraGroups)
     hostConfig.osUsernames;
 in {
   config = {

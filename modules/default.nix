@@ -93,7 +93,7 @@
       builtins.filter (
         u:
           (autoModules.homeModules ? ${u} || evaluatedConfig.homeModules ? ${u})
-          && (mergedUsers.${u}.hmEnabled or true)
+          && (let uInfo = mergedUsers.${u}; in !(uInfo ? hmEnabled) || uInfo.hmEnabled)
       )
       osUsernames;
   in {
