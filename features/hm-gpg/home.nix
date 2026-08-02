@@ -86,11 +86,15 @@
 in {
   home.packages = [pinentryWrapper pinentryTmux pinentryZellij];
   programs.gpg.enable = true;
-  services.gpg-agent = {
+  services.gpg-agent = let
+    defaultTtl = 60480000;
+  in {
     enable = true;
     pinentry.package = pinentryWrapper;
     enableSshSupport = true;
-    maxCacheTtl = 60480000;
-    defaultCacheTtl = 60480000;
+    maxCacheTtl = defaultTtl;
+    defaultCacheTtl = defaultTtl;
+    maxCacheTtlSsh = defaultTtl;
+    defaultCacheTtlSsh = defaultTtl;
   };
 }
