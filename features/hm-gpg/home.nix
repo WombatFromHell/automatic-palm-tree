@@ -15,12 +15,6 @@
     builtins.readFile ./pinentry-zellij.sh
   );
 
-  candidates = [
-    "${pkgs.pinentry-qt}/bin/pinentry-qt"
-    "${pkgs.pinentry-gnome3}/bin/pinentry-gnome3"
-    "${pkgs.pinentry-curses}/bin/pinentry-curses"
-  ];
-
   # Outer timeout as a second safety net around the popup dispatchers,
   # independent of pinentry-zellij's own internal watchdog — belt and
   # braces, since a hung sign blocks git/lazygit indefinitely otherwise.
@@ -31,56 +25,33 @@
       export TERM=xterm-256color
     fi
 
-    ttyname=""
-    for arg in "$@"; do
-      case "$arg" in
-        --ttyname=*) ttyname="''${arg#--ttyname=}" ;;
-      esac
-    done
-    : "''${ttyname:=$GPG_TTY}"
-
     export PINENTRY_TMUX_PROGRAM="${pkgs.pinentry-curses}/bin/pinentry-curses"
 
-    # Walk process ancestry from whatever pid is attached to $ttyname,
-    # looking for a tmux/zellij ancestor -- neither exposes a direct
-    # "which multiplexer owns this tty" query, so ancestry is the reliable
-    # signal (pane shells are direct children of the tmux server / zellij
-    # binary in both cases).
-    __owning_multiplexer() {
-      tty_short="''${1#/dev/}"
-      pid=$(ps -eo pid=,tty=,comm= 2>/dev/null | awk -v t="$tty_short" '$2==t{print $1; exit}')
-      [ -n "$pid" ] || return 1
-      while [ -n "$pid" ] && [ "$pid" != "1" ]; do
-        comm=$(ps -o comm= -p "$pid" 2>/dev/null)
-        case "$comm" in
-          tmux*) echo tmux; return 0 ;;
-          zellij*) echo zellij; return 0 ;;
-        esac
-        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-      done
-      return 1
-    }
+    # 1. Check for Tmux or Zellij multiplexer hints via PINENTRY_USER_DATA
+    if [ "$PINENTRY_USER_DATA" = "tmux" ] && command -v tmux >/dev/null 2>&1; then
+      exec timeout ${popupTimeout} "${pinentryTmux}/bin/pinentry-tmux" "$@"
+    fi
 
-    if [ -n "$ttyname" ]; then
-      owner=$(__owning_multiplexer "$ttyname")
-      if [ "$owner" = tmux ] && command -v tmux >/dev/null 2>&1; then
-        exec timeout ${popupTimeout} "${pinentryTmux}/bin/pinentry-tmux" "$@"
-      fi
-      if [ "$owner" = zellij ] && command -v zellij >/dev/null 2>&1; then
-        exec timeout ${popupTimeout} "${pinentryZellij}/bin/pinentry-zellij" "$@"
+    if [ "$PINENTRY_USER_DATA" = "zellij" ] && command -v zellij >/dev/null 2>&1; then
+      exec timeout ${popupTimeout} "${pinentryZellij}/bin/pinentry-zellij" "$@"
+    fi
+
+    # 2. Graphical PINEntry fallback (if X11 or Wayland is active)
+    if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+      if [ -x "${pkgs.pinentry-qt}/bin/pinentry-qt" ]; then
+        exec "${pkgs.pinentry-qt}/bin/pinentry-qt" "$@"
+      elif [ -x "${pkgs.pinentry-gnome3}/bin/pinentry-gnome3" ]; then
+        exec "${pkgs.pinentry-gnome3}/bin/pinentry-gnome3" "$@"
       fi
     fi
 
-    for p in ${pkgs.lib.concatStringsSep " " candidates}; do
-      [ -x "$p" ] || continue
-      case "$p" in
-        *pinentry-qt|*pinentry-gnome3)
-          { [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; } || continue
-          ;;
-      esac
-      exec "$p" "$@"
-    done
+    # 3. Local Terminal Curses fallback (for local lazygit/terminal use, outside SSH)
+    # Checks that we have a valid TTY AND are not in an SSH session
+    if [ -z "$SSH_CLIENT" ] && [ -z "$SSH_CONNECTION" ] && { [ -t 0 ] || [ -n "$GPG_TTY" ]; }; then
+      exec "${pkgs.pinentry-curses}/bin/pinentry-curses" "$@"
+    fi
 
+    # 4. Ultimate fallback (SSH sessions or headless environments without TTY redrawing)
     exec "${pkgs.pinentry-tty}/bin/pinentry-tty" "$@"
   '';
 in {
