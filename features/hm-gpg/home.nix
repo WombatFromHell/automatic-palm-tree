@@ -24,19 +24,11 @@
     if ! "${pkgs.ncurses}/bin/infocmp" "$TERM" >/dev/null 2>&1; then
       export TERM=xterm-256color
     fi
-
     export PINENTRY_TMUX_PROGRAM="${pkgs.pinentry-curses}/bin/pinentry-curses"
 
-    # 1. Check for Tmux or Zellij multiplexer hints via PINENTRY_USER_DATA
-    if [ "$PINENTRY_USER_DATA" = "tmux" ] && command -v tmux >/dev/null 2>&1; then
-      exec timeout ${popupTimeout} "${pinentryTmux}/bin/pinentry-tmux" "$@"
-    fi
-
-    if [ "$PINENTRY_USER_DATA" = "zellij" ] && command -v zellij >/dev/null 2>&1; then
-      exec timeout ${popupTimeout} "${pinentryZellij}/bin/pinentry-zellij" "$@"
-    fi
-
-    # 2. Graphical PINEntry fallback (if X11 or Wayland is active)
+    # 1. GUI askpass, whenever a display is actually reachable -- covers
+    # local sessions regardless of tmux/zellij/SSH state, since a real
+    # window always beats a terminal popup when one's available.
     if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
       if [ -x "${pkgs.pinentry-qt}/bin/pinentry-qt" ]; then
         exec "${pkgs.pinentry-qt}/bin/pinentry-qt" "$@"
@@ -45,14 +37,26 @@
       fi
     fi
 
-    # 3. Local Terminal Curses fallback (for local lazygit/terminal use, outside SSH)
-    # Checks that we have a valid TTY AND are not in an SSH session
-    if [ -z "$SSH_CLIENT" ] && [ -z "$SSH_CONNECTION" ] && { [ -t 0 ] || [ -n "$GPG_TTY" ]; }; then
-      exec "${pkgs.pinentry-curses}/bin/pinentry-curses" "$@"
+    # 2. tmux/zellij popup dispatchers -- only when there's no display to
+    # fall back to (i.e. we're on a remote/headless SSH client) AND we're
+    # actually inside a live multiplexer session, checked via the real
+    # $TMUX/$ZELLIJ env vars rather than PINENTRY_USER_DATA.
+    if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
+      if [ -n "$TMUX" ] && command -v tmux >/dev/null 2>&1; then
+        exec timeout ${popupTimeout} "${pinentryTmux}/bin/pinentry-tmux" "$@"
+      fi
+      if [ -n "$ZELLIJ" ] && command -v zellij >/dev/null 2>&1; then
+        exec timeout ${popupTimeout} "${pinentryZellij}/bin/pinentry-zellij" "$@"
+      fi
     fi
 
-    # 4. Ultimate fallback (SSH sessions or headless environments without TTY redrawing)
-    exec "${pkgs.pinentry-tty}/bin/pinentry-tty" "$@"
+    # 3. Local terminal curses fallback, outside SSH, when nothing above matched.
+    if [ -z "$SSH_CLIENT" ] && [ -z "$SSH_CONNECTION" ] && { [ -t 0 ] || [ -n "$GPG_TTY" ]; }; then
+      exec timeout ${popupTimeout} "${pkgs.pinentry-curses}/bin/pinentry-curses" "$@"
+    fi
+
+    # 4. Ultimate fallback: SSH/headless with no multiplexer, no display, no TTY.
+    exec timeout ${popupTimeout} "${pkgs.pinentry-tty}/bin/pinentry-tty" "$@"
   '';
 in {
   home.packages = [pinentryWrapper pinentryTmux pinentryZellij];

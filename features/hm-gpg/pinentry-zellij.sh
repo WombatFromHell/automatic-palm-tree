@@ -1,162 +1,133 @@
 #!/usr/bin/env bash
+# pinentry-zellij.sh – zellij floating-pane pinentry wrapper
 
 # -----------------------------------------------------------------------------
-# If called from within the popup, run the real pinentry program and
-# forward its input and output to the caller pinentry-zellij script.
+# Popup mode: runs inside the zellij floating pane
 # -----------------------------------------------------------------------------
-
-# If a pinentry program has not already been specified via the
-# PINENTRY_TMUX_PROGRAM environment variable, look within the path for an
-# executable named "pinentry".
 if [ -z "${PINENTRY_TMUX_PROGRAM:-}" ]; then
-	while read -r pinentry_program; do
-		if [[ "$pinentry_program" = "$0" || ! -x "$pinentry_program" ]]; then
-			continue
-		fi
-		PINENTRY_TMUX_PROGRAM="$pinentry_program"
-		break
-	done < <(which -a pinentry)
+  while read -r p; do
+    [[ "$p" != "$0" && -x "$p" ]] && {
+      PINENTRY_TMUX_PROGRAM="$p"
+      break
+    }
+  done < <(which -a pinentry)
 fi
 
-# If PINENTRY_TMUX_CALLER is set, we're running inside the zellij floating
-# pane. Run the real pinentry here and forward its output back to the
-# original pinentry-zellij process via the fifo pair.
 if [[ -n "${PINENTRY_TMUX_CALLER:-}" ]]; then
-	popup_tty="$(tty)"
+  # Wait briefly for zellij to finalize pane geometry
+  sleep 0.1
 
-	# Redirect STDIN and STDOUT.
-	exec 1>"${PINENTRY_TMUX_STDOUT}" 0<"${PINENTRY_TMUX_STDIN}"
+  popup_tty="$(tty)"
 
-	unset PINENTRY_TMUX_STDIN
-	unset PINENTRY_TMUX_STDOUT
-	unset ZELLIJ
+  # Use the ACTUAL terminal size instead of assuming xterm defaults
+  TTYTYPE="${TERM:-xterm-256color}"
 
-	# Trap SIGINT to tell the original pinentry-zellij to cancel.
-	trap 'rkill "$PINENTRY_TMUX_CALLER"; kill -USR1 "$PINENTRY_TMUX_CALLER"' INT
+  exec 0<"${PINENTRY_TMUX_STDIN}" 1>"${PINENTRY_TMUX_STDOUT}"
 
-	# Call the real pinentry.
-	# Force the TTY type to xterm for compatibility.
-	exec "${PINENTRY_TMUX_PROGRAM}" \
-		--ttyname="${popup_tty}" \
-		--ttytype="xterm" \
-		--lc-ctype="${LC_CTYPE:-c}"
+  unset ZELLIJ
+  unset ZELLIJ_PANE_ID
+
+  trap 'kill -USR1 "$PINENTRY_TMUX_CALLER" 2>/dev/null; exit 1' INT
+
+  "${PINENTRY_TMUX_PROGRAM}" \
+    --ttyname="$popup_tty" \
+    --ttytype="$TTYTYPE" \
+    --lc-ctype="${LC_CTYPE:-C}"
+  rc=$?
+
+  exit "$rc"
 fi
 
 # -----------------------------------------------------------------------------
-# pinentry-zellij
+# Main wrapper: runs in the original zellij pane
 # -----------------------------------------------------------------------------
-
-set -euo pipefail
-
+set -uo pipefail
 pid_pinentry_tmux=$$
+TIMEOUT="${PINENTRY_TMUX_TIMEOUT:-30}"
 
-# If we're not running inside zellij, call the original pinentry directly.
-if [[ -z "${ZELLIJ:-}" ]]; then
-	exec "$PINENTRY_TMUX_PROGRAM" "$@"
+if [[ -z "${ZELLIJ:-}" ]] || ! zellij action query-tab-names &>/dev/null; then
+  exec "$PINENTRY_TMUX_PROGRAM" "$@"
 fi
 
-# Make a pair of FIFOs to communicate with the popup.
-fifodir=$(mktemp -d)
-PINENTRY_TMUX_STDOUT="$fifodir/r2t.sock"; mkfifo "$PINENTRY_TMUX_STDOUT"
-PINENTRY_TMUX_STDIN="$fifodir/t2r.sock"; mkfifo "$PINENTRY_TMUX_STDIN"
+fifodir=$(mktemp -d -t pinentry-zellij.XXXXXX)
+to_popup="$fifodir/to_popup"
+from_popup="$fifodir/from_popup"
+mkfifo "$to_popup" "$from_popup"
 
-# Function that kills all children of a process, except the process itself.
-# Works with both BSD and GNU coreutils.
-rkill() {
-	{
-		if ps --version &>/dev/null; then
-			ps -o pid --ppid="$1" # GNU ps
-		else
-			ps -o pid -g "$1" # BSD ps
-		fi
-	} \
-		| sed $'1d; s/[ \t]//g' \
-		| grep -Fv "$1" \
-		| xargs kill -INT \
-		|| true
-}
-
-# Traps and cleanup.
 cleanup() {
-	if [ -n "${pid_watchdog:-}" ] && kill -0 "$pid_watchdog" &>/dev/null; then kill "$pid_watchdog" 2>/dev/null; fi
-	if [ -e "$PINENTRY_TMUX_STDOUT" ]; then rm "$PINENTRY_TMUX_STDOUT"; fi
-	if [ -e "$PINENTRY_TMUX_STDIN" ]; then rm "$PINENTRY_TMUX_STDIN"; fi
-	if [ -d "$fifodir" ]; then rmdir "$fifodir"; fi
-	if [ -n "${pid_in_sock:-}" ] && kill -0 "$pid_in_sock" &>/dev/null; then kill -INT "$pid_in_sock"; fi
-	echo "BYE"
+  [[ -n "${pid_watchdog:-}" ]] && kill -0 "$pid_watchdog" 2>/dev/null && kill "$pid_watchdog" 2>/dev/null || true
+  [[ -n "${pid_in_sock:-}" ]] && kill -0 "$pid_in_sock" 2>/dev/null && kill "$pid_in_sock" 2>/dev/null || true
+  rm -rf "$fifodir" 2>/dev/null || true
 }
 
 abort() {
-	echo "ERR 83886179 Operation cancelled <Pinentry-Zellij>"
-	rkill "$pid_pinentry_tmux" 2>/dev/null
-	exit 1
+  echo "ERR 83886179 Operation cancelled <Pinentry-Zellij>"
+  exit 1
 }
 
 trap abort USR1
-trap cleanup EXIT INT
+trap cleanup EXIT
+trap 'exit 1' INT TERM
 
-# Watchdog: we observed an intermittent hang in testing where the outer
-# process can sit forever on the final `wait` calls even after the popup
-# and relay have both finished doing useful work. A stuck sign blocks the
-# caller (git/lazygit) indefinitely, which is worse than a clean failure,
-# so self-terminate after PINENTRY_TMUX_TIMEOUT seconds rather than trust
-# `wait` to always return.
-: "${PINENTRY_TMUX_TIMEOUT:=30}"
+cat <"$from_popup" &
+pid_in_sock=$!
+
 (
-	sleep "$PINENTRY_TMUX_TIMEOUT"
-	kill -USR1 "$pid_pinentry_tmux" 2>/dev/null
+  sleep "$TIMEOUT"
+  kill -USR1 "$pid_pinentry_tmux" 2>/dev/null
 ) &
 pid_watchdog=$!
 
-# Read STDIN from the socket to pinentry-zellij STDOUT.
-cat <"$PINENTRY_TMUX_STDIN" &
-pid_in_sock=$!
-
-# Create the popup.
-#
-# NOTE: this whole block runs in a backgrounded subshell. Backgrounded
-# subshells INHERIT the parent's traps — without stripping them here,
-# any failure inside this subshell (e.g. an unset var, a bad flag) fires
-# the outer script's own `cleanup`/`abort` traps prematurely, deleting the
-# fifos out from under the foreground process that still needs them.
+# Launch floating pane — explicitly exclude ZELLIJ_PANE_ID from inherited env
 (
-	trap - EXIT INT USR1
+  trap - EXIT INT USR1
 
-	# Determine the ideal size for the floating pane, clamped to the
-	# actual zellij client's dimensions if smaller than desired.
-	DESIRED_WIDTH=78
-	DESIRED_HEIGHT=18
+  DESIRED_WIDTH=80
+  DESIRED_HEIGHT=20
 
-	zellij run \
-		--floating \
-		--close-on-exit \
-		--blocking \
-		--width "$DESIRED_WIDTH" \
-		--height "$DESIRED_HEIGHT" \
-		--name "pinentry-zellij" \
-		-- env \
-			PINENTRY_TMUX_CALLER="$pid_pinentry_tmux" \
-			PINENTRY_TMUX_STDIN="$PINENTRY_TMUX_STDOUT" \
-			PINENTRY_TMUX_STDOUT="$PINENTRY_TMUX_STDIN" \
-			PINENTRY_TMUX_PROGRAM="$PINENTRY_TMUX_PROGRAM" \
-			"$0" \
-		|| true
+  envs=()
+  while IFS='=' read -r key _; do
+    # Skip ZELLIJ_PANE_ID to prevent the popup from inheriting the parent's pane ID
+    [[ "$key" == "ZELLIJ_PANE_ID" ]] && continue
+    envs+=("$key")
+  done < <(env)
+
+  # Build clean env array with values
+  clean_env=()
+  for key in "${envs[@]}"; do
+    clean_env+=("${key}=${!key}")
+  done
+
+  zellij run \
+    --floating \
+    --close-on-exit \
+    --width "$DESIRED_WIDTH" \
+    --height "$DESIRED_HEIGHT" \
+    --name "pinentry-zellij" \
+    -- \
+    env \
+    "${clean_env[@]}" \
+    PINENTRY_TMUX_CALLER="$pid_pinentry_tmux" \
+    PINENTRY_TMUX_STDIN="$to_popup" \
+    PINENTRY_TMUX_STDOUT="$from_popup" \
+    PINENTRY_TMUX_PROGRAM="$PINENTRY_TMUX_PROGRAM" \
+    TERM="${TERM:-xterm-256color}" \
+    LC_CTYPE="${LC_CTYPE:-C}" \
+    "$0" || true
 ) &
 pid_popup=$!
 
-# Write STDOUT from pinentry-zellij to the socket STDIN.
-# A couple options will need to be intercepted for this to work properly,
-# since the popup pane — not this process — now owns the real tty that
-# gpg-agent's Assuan negotiation expects to be talking about.
-exec 3>"$PINENTRY_TMUX_STDOUT"
+exec 3>"$to_popup"
 while IFS='' read -r line; do
-	case "$line" in
-		"OPTION ttyname="*) printf "OK\n"; continue ;;
-		"GETINFO flavor"*) printf "D pinentry-zellij\nOK\n"; continue ;;
-		*) printf "%s\n" "$line" 1>&3 ;;
-	esac
+  case "$line" in
+  OPTION\ ttyname=*) printf "OK\n" ;;
+  GETINFO\ flavor*) printf "D pinentry-zellij\nOK\n" ;;
+  *) printf "%s\n" "$line" >&3 ;;
+  esac
 done
 
-# Wait for the real pinentry (via the fifo relay) and the popup pane to finish.
-wait "$pid_in_sock"
-wait "$pid_popup"
+echo "BYE" >&3
+exec 3>&-
+
+wait "$pid_in_sock" 2>/dev/null || true
+wait "$pid_popup" 2>/dev/null || true
