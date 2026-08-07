@@ -27,6 +27,7 @@ in {
     "hm-nh"
     "hm-dcal"
     "hm-xilo"
+    "hm-herdr"
     #
     "hm-nixgl"
     #

@@ -16,6 +16,7 @@ _: {
     "hm-syncthing"
     "hm-dcal"
     "hm-xilo"
+    "hm-herdr"
     #
     "nixos-base"
     "nixos-audio"
