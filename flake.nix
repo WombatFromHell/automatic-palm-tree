@@ -28,7 +28,7 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
     nixgl.url = "github:nix-community/nixGL";
-    xilo.url = "github:stubbedev/xilo?rev=eef4d6d64a36cc5ec5390e997ebb677d16896fe6"; # v1.09
+    xilo.url = "github:stubbedev/xilo?rev=ada25182245e2f80e2490f6620a8292db136cb9c"; # v1.13
   };
 
   outputs = inputs @ {flake-parts, ...}:
