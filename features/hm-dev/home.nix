@@ -1,6 +1,7 @@
 {
   lib,
   pkgs,
+  pkgsUnstable,
   hostConfig,
   ...
 }: {
@@ -12,7 +13,8 @@
       ansible-lint
       bats
       # gcc
-      lazygit
+      pkgsUnstable.lazygit
+      pkgsUnstable.lazydocker
       nil
       nixd
       python314

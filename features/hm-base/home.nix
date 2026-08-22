@@ -21,6 +21,7 @@
 
     # linux-only packages
     btdu
+    duperemove
     fish
     helix
     ncdu
