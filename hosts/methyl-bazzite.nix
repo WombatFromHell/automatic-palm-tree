@@ -12,7 +12,6 @@ _: let
 
     features = {
       zed-editor.enable = true;
-      dcal.enableService = false;
     };
   };
 in {
@@ -25,7 +24,6 @@ in {
     "hm-gpg"
     "hm-media"
     "hm-nh"
-    "hm-dcal"
     "hm-xilo"
     "hm-herdr"
     #
