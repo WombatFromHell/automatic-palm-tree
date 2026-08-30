@@ -4,301 +4,194 @@
 
 ```
 flakeroot/
-├── flake.nix                        # flake-parts entry, imports ./modules
-├── hosts/                           # per-host declarations
-│   ├── methyl-bazzite.nix           # HM-only host
-│   ├── methyl/                      # NixOS host (bare-metal base)
-│   │   ├── default.nix              #   schema: system, features, users
-│   │   ├── base.nix                 #   shared NixOS config (no hw import)
-│   │   ├── nixos.nix                #   host wrapper: hw-config + base
-│   │   ├── home-<user>.nix            #   per-user Home Manager module
+├── flake.nix                       # flake-parts entry, imports ./modules
+├── lib.nix                         # pure lib: hostOptions, feature discovery, overlays, builders
+├── hosts/                          # per-host declarations (auto-discovered)
+│   ├── methyl-bazzite.nix          # HM-only flat host
+│   ├── methyl/                     # NixOS host (bare metal)
+│   │   ├── default.nix             #   {system,isNixOS,users,features}
+│   │   ├── base.nix                #   shared NixOS config (no hw import)
+│   │   ├── nixos.nix               #   host wrapper: hw-config + base
+│   │   ├── home-josh.nix           #   per-user HM module
 │   │   └── hardware-configuration.nix
-│   └── methyl-nixos/                # NixOS host (QEMU VM variant)
-│       ├── default.nix              #   inherits from methyl/
-│       ├── nixos.nix                #   imports [../methyl/base.nix ./hw...]
-│       ├── home-<user>.nix            #   imports [../methyl/home-<user>.nix]
+│   └── methyl-nixos/               # NixOS host (QEMU VM — reuses methyl/)
+│       ├── default.nix
+│       ├── nixos.nix
+│       ├── home-josh.nix           #   re-imports ../methyl/home-josh.nix
 │       └── hardware-configuration.nix
-├── features/                        # composable config units (30 dirs)
-│   ├── hm-base/
-│   ├── hm-dev/
-│   ├── nixos-base/
-│   └── ...
-├── lib/                             # pure Nix library (no options/config)
-│   ├── builders.nix                 # resolveHostOverlays + NixOS/HM build fns (feature overlay extraction, pkgsUnstable creation)
-│   ├── features.nix                 # discoveredFeatures: scan features/ → map
-│   ├── host-schema.nix              # host declaration validation schema
-│   └── builder-helpers.nix          # mkNixosUserModule, mkUserHomeModule, resolveHostModules
-└── modules/                         # flake-parts + NixOS/HM modules
-    ├── default.nix                  # flake-parts: wires builders + flakeModules + flake.features
-    ├── discovery.nix                # discoveredHosts option: readDir hosts/ → pipeline
-    ├── nix-settings.nix             # nix daemon config (substituters, keys)
-    ├── nixos.nix                    # NixOS flake module (stateVersion, fish, user shells)
-    └── home-manager.nix             # HM flake module (stateVersion, manual, nh)
+├── features/                       # 36 composable units, auto-discovered
+│   ├── hm-only    (11)             #   home.nix only
+│   ├── nixos-only (17)             #   nixos.nix only
+│   ├── hybrid      (8)             #   home.nix + nixos.nix: hm-syncthing, nixos-dmemcg, nixos-dms, nixos-flatpak, nixos-kde, nixos-lsfg, nixos-niri, nixos-oom
+│   └── extras                      #   _package.nix / _*.nix / bin/ / *.sh imported by the feature itself
+├── modules/
+│   ├── default.nix                 # host discovery + pkgs wiring → nixosConfigurations/homeConfigurations
+│   ├── bootstrap.nix               # swapfile+zswap for /etc/nixos/swap-prepare.nix (bootstrap.sh)
+│   ├── nix-settings.nix            # substituters, trusted keys, nix.package
+│   ├── defaults/
+│   │   ├── home-manager.nix        # stateVersion, manual off, username/homeDirectory
+│   │   ├── nixos.nix               # stateVersion, fish, kernel
+│   │   └── nixos-users.nix         # genAttrs osUsernames → users.users (+ extraGroups)
+│   └── packages/
+│       └── pyz-wrapper.nix         # generic .pyz fetcher (gamemode, etc.)
+├── bootstrap.sh
+├── flake.nix / flake.lock
+├── lib.nix
+└── DESIGN.md / README.md / REPORT.md / RESEARCH.md
 ```
+
+Feature file convention: `home.nix` → HM platform, `nixos.nix` → NixOS platform. Extras (`_package.nix`, `_*.nix`, `bin/`, `*.sh`) are imported by the feature's own entry point, not discovered.
 
 ---
 
 ## Module Dependency Graph
 
-Static import relationships between all module files.
+Static `imports` vs. runtime `readDir`/`evalModules`.
 
 ```mermaid
 graph TB
-    subgraph Entry ["Flake Entry"]
-        flake["flake.nix\nflake-parts + imports ./modules"]
-    end
+    flake["flake.nix:35\nmkFlake imports ./modules"] --> modDefault["modules/default.nix"]
 
-    subgraph Mods ["modules/"]
-        modsDefault["modules/default.nix\nimports builders + exposes\nflakeModules + flake.features"]
-        disc["modules/discovery.nix\nreadDir hosts/ → discoveredHosts"]
-        nixSettings["modules/nix-settings.nix\nsubstituters + trusted keys + nix.package"]
-    end
+    modDefault -- "import ../lib.nix:7" --> libNix["lib.nix\npure: hostOptions:7, discoveredFeatures:67,\nresolveFeaturePaths:125, resolveHostOverlays:142,\nmkUserHomeModule:172, builders:207/273"]
+    modDefault -. "readDir hosts/:11\nfilter .nix / default.nix" .-> hosts["hosts/*.nix\nhosts/*/default.nix\n{system,isNixOS,users,features,\n nixosModules,homeModules}"]
+    libNix -. "readDir features/:70\nknown={nixos,home}:76" .-> features["features/*/home.nix\nfeatures/*/nixos.nix\n+ _package.nix/bin/*.sh (feature-internal)"]
 
-    subgraph Lib ["lib/ (pure functions)"]
-        feat["lib/features.nix\nscan features/ → discoveredFeatures"]
-        schema["lib/host-schema.nix\nvalidation schema for host files"]
-        bld["lib/builders.nix\nresolveFeaturePaths + resolveHostOverlays\n+ NixOS/HM build fns"]
-    end
+    libNix -- "consumed at build time" --> nixSettings["modules/nix-settings.nix:1\nsubstituters + nix.package"]
+    libNix -- "consumed at build time" --> defaults["modules/defaults/home-manager.nix:1\nmodules/defaults/nixos.nix:1\nmodules/defaults/nixos-users.nix:1"]
+    modDefault -- "re-exposes" --> flakeOut["flake.features\nflake.nixosConfigurations\nflake.homeConfigurations\nflake.hostPackageSets"]
 
-    subgraph HMMod ["HM flake module"]
-        hmMod["modules/home-manager.nix\nstateVersion + nh + manual"]
-    end
-
-    subgraph NixOSMod ["NixOS flake module"]
-        nixOSMod["modules/nixos.nix\nstateVersion + fish + user shells"]
-    end
-
-    subgraph Features ["Feature Modules (discovered)"]
-        hmBase["features/hm-base/home.nix"]
-        hmDev["features/hm-dev/home.nix"]
-        hmGpg["features/hm-gpg/home.nix"]
-        moreFeat["... (30 feature dirs)"]
-    end
-
-    subgraph Hosts ["Host Configs (discovered)"]
-        hostFiles["hosts/*.nix / hosts/*/default.nix\n{system, isNixOS, features, users,\n nixosModules, sharedModules, homeModules}"]
-    end
-
-    flake --> modsDefault
-
-    modsDefault --> bld
-    modsDefault --> feat
-
-    bld --> disc
-    bld --> nixSettings
-
-    disc --> schema
-
-    hmMod --> nixSettings
-    nixOSMod --> nixSettings
-
-    style Mods fill:#e1f5fe
-    style Lib fill:#e8f5e9
-    style Builders fill:#c8e6c9
-    style HMMod fill:#f3e5f5
-    style NixOSMod fill:#f3e5f5
-    style Features fill:#fff3e0
-    style Hosts fill:#fff9c4
+    style libNix fill:#e8f5e9
+    style modDefault fill:#e1f5fe
+    style hosts fill:#fff9c4
+    style features fill:#fff3e0
 ```
+
+`lib.nix` has no `options`/`config` at top level — pure functions. `modules/default.nix` is the sole impure wiring layer (`readDir`, `import`, `evalModules`). `nix-settings.nix` and `defaults/*` are not statically imported by `modules/default.nix`; they are injected by the builders in `lib.nix:225/281`.
 
 ---
 
 ## Build Pipeline
 
-Runtime evaluation flow from flake entry to final configurations.
+Evaluation order in `modules/default.nix` → `lib.nix`.
 
 ```mermaid
 flowchart LR
-    subgraph E ["Entry: flake.nix"]
-        fp["flake-parts.lib.mkFlake\nimports ./modules"]
+    subgraph Disc ["Discovery — modules/default.nix:9-119"]
+        scan["readDir hosts/:11\nfilter regular .nix\nor dir/default.nix"] --> parse["parseHostEntry:21\n{isDir,name,path,hostDir}"]
+        parse --> validate["validateHost:37\nevalModules [hostOptions:6,\n import path]"]
+        validate --> auto["autoDiscoverModules:45\nif isDir: nixos.nix?\n+ home-*.nix → homeModules"]
+        auto --> enrich["enrichHost:77\nimpliedUsers from homeModules\nmergedUsers = implied // cfg.users\nenabled → osUsernames\nfiltered → hmUsernames"]
+        enrich --> discovered["discoveredHosts:119\nmapAttrs buildHost"]
     end
-
-    subgraph M ["modules/default.nix"]
-        mm["imports builders\n+ exposes flake.flakeModules\n+ flake.features"]
+    subgraph Pkgs ["Overlay & pkgs — modules/default.nix:124"]
+        overlays["resolveHostOverlays lib.nix:142\n evalModules (nixos+home features\n + featureOptionsModule{_check=false})\n → config.overlays/unstableOverlays\n → {stable, unstable}:167"]
+        mkPkgs["hostsWithPkgs:124\nmapAttrs host:\n pkgs= nixpkgs+stable\n pkgsUnstable= nixpkgs-unstable+unstable\n allowUnfree=true"]
+        overlays --> mkPkgs
     end
-
-    subgraph D ["Discovery (modules/discovery.nix)"]
-        scan["readDir hosts/"]
-        importHost["import each host/*.nix"]
-        validate["evalModules against lib/host-schema.nix"]
-        enrich["derive osUsernames + hmUsernames\n+ merge auto-discovered modules"]
+    subgraph Out ["Builders — lib.nix:207/273"]
+        nixos["buildNixosConfigurations:207\nfilter isNixOS\n→ nixosSystem per host"]
+        hm["buildHomeConfigurations:273\nfilter !isNixOS\n→ homeManagerConfiguration\n per user@host"]
     end
+    discovered --> overlays
+    mkPkgs --> nixos & hm
 
-    subgraph B ["Builders (lib/builders.nix)"]
-        resolveFeat["resolveFeaturePaths\nfeature modules + overlay paths\nper platform"]
-        collectO["resolveHostOverlays\nbatch evalModules across all\nfeature modules (nixos+home)\n→ {stable, unstable} overlays"]
-        filterN["isNixOS == true"]
-        nixosSys["nixpkgs.lib.nixosSystem\nmodules: feature aggregates\n+ nix-settings + flakeModules\n+ host modules + home-manager\npkgsUnstable created inside eval\nwith unstable overlays applied"]
-        filterH["isNixOS == false"]
-        hmPkgs["pkgs (stable overlays)\npkgsUnstable (unstable overlays)"]
-        hmConfig["homeManagerConfiguration\npkgs (stable overlays)\nmodules: nix-settings\n+ per-user feature chain"]
-    end
-
-    fp --> M
-
-    M --> D
-    M --> B
-
-    scan --> importHost --> validate --> enrich
-
-    enrich --> resolveFeat
-    enrich --> collectO
-
-    collectO --> nixosSys
-    collectO --> hmPkgs
-    hmPkgs --> hmConfig
-
-    filterN --> nixosSys
-    filterH --> hmPkgs
-
-    style M fill:#e1f5fe
-    style D fill:#e1f5fe
-    style B fill:#c8e6c9
+    checkWarn["checkAdminWarning lib.nix:196\nisNixOS=false + isAdmin → warning"] -.-> discovered
 ```
+
+`hostsWithPkgs` computed once (`modules/default.nix:124`) and shared by both builders — single overlay evaluation per host.
 
 ---
 
 ## Host Type Resolution
 
-A host file is classified by its `isNixOS` field in the schema.
-
 ```mermaid
 flowchart TD
-    Start(["hosts/<name>.nix"]) --> read["import file"]
-    read --> schema["validate against\nlib/host-schema.nix"]
-    schema --> isNixOS{"isNixOS == true?"}
+    f["hosts/<name>.nix\nor hosts/<name>/default.nix"] --> v["validateHost lib.nix:7\n hostOptions.isNixOS default false"]
+    v --> q{"cfg.isNixOS?"}
+    q -->|true| N["NixOS host\nlib.nix:208 filter isNixOS\n→ nixosConfigurations.<name>\n+ homeConfigurations.<user>@<name>\n(via home-manager.users)"]
+    q -->|false| H["HM-only host\nlib.nix:274 filter !isNixOS\n→ homeConfigurations.<user>@<name>\n(homeManagerConfiguration)"]
 
-    isNixOS -->|yes| nixosHost["NixOS host"]
-    isNixOS -->|no| hmOnly["Home Manager–only host"]
+    N -.-> warnCheck{"checkAdminWarning lib.nix:196\nisNixOS=false && isAdmin?"}
+    H -.-> warnCheck
+    warnCheck -->|admin on HM| warn["warning: isAdmin is no-op\non standalone HM"]
 
-    nixosHost --> nixosOut["nixosConfigurations.<name>\n+ homeConfigurations.<user>@<name>"]
-    hmOnly --> hmOut["homeConfigurations.<user>@<name>"]
-
-    style nixosHost fill:#c8e6c9,stroke:#333
-    style hmOnly fill:#fff9c4,stroke:#333
+    style N fill:#c8e6c9
+    style H fill:#fff9c4
 ```
+
+`isQemuVM` (`lib.nix:43`) and `bootstrap` (`lib.nix:9`) are orthogonal — they don't affect host classification, only feature/overlay gating downstream.
 
 ---
 
 ## Feature System
 
-Features are auto-discovered from `features/<name>/` directories. Each directory contains platform-tagged `.nix` files (e.g., `home.nix`, `nixos.nix`). Resolution is handled by `lib/builders.nix`, which silently skips features without a module for the requested platform and throws on unknown feature names.
-
 ```mermaid
 flowchart LR
-    subgraph Discover ["Discovery (lib/features.nix)"]
-        scan["readDir features/"]
-        map["map → {<feature>: {<platform>: path}}"]
+    subgraph Discover ["Discovery — lib.nix:67"]
+        scan["readDir features/:70\nfilter directories"] --> map["discoveredFeatures:73\nmapAttrs featureDir\n known=[nixos,home]:76\n→ {feature: {nixos?:path, home?:path}}"]
     end
-
-    subgraph HostCtx ["Resolution (lib/builders.nix)"]
-        validate["resolveFeaturePaths\nsingle pass: modules + overlay paths\nunknown → throw, missing → skip"]
-        overlays["resolveHostOverlays\nbatch evalModules across all\nfeature modules (nixos+home)\n→ {stable, unstable} overlays"]
-        ctxOut["stable → applied to nixpkgs (pkgs)\nunstable → applied to\nnixpkgs-unstable (pkgsUnstable)"]
+    subgraph Resolve ["Resolution — lib.nix:125/142"]
+        resolve["resolveFeaturePaths:125\nfor f in featureList:\n !hasAttr → throw 'Unknown … Available: …':129\n hasAttr && has platform → path\n else → null, filtered"]
+        collect["resolveHostOverlays:142\n evalModules (resolve nixos:154\n + resolve home:155\n + featureOptionsModule{_check=false}:156)\n → config.overlays/unstableOverlays\n → {stable: unique flatten, unstable: …}:167"]
+        resolve --> collect
     end
-
-    subgraph Builders ["Builder Usage"]
-        nixosFeat["nixosSystem:\npkgsUnstable created inside\neval with unstable overlays"]
-        hmFeat["homeManagerConfiguration:\npkgs = nixpkgs (stable overlays)\npkgsUnstable in extraSpecialArgs"]
+    subgraph Consume ["Consumption — lib.nix:214/172"]
+        nixosUse["nixosSystem:214\nimports = resolve nixos + featureOptionsModule"]
+        hmUse["mkUserHomeModule:172\nimports = resolve home + featureOptionsModule\n+ defaults/home-manager.nix:190"]
+        pkgsUse["hostsWithPkgs modules/default.nix:130\npkgs←stable, pkgsUnstable←unstable"]
     end
+    map --> resolve
+    collect --> pkgsUse
+    resolve --> nixosUse & hmUse
 
-    scan --> map
-
-    map --> validate --> overlays --> ctxOut
-
-    ctxOut --> nixosFeat
-    ctxOut --> hmFeat
-
-    style Discover fill:#e3f2fd
-    style HostCtx fill:#e8f5e9
-    style Builders fill:#f5f5f5
+    featOpt["featureOptionsModule lib.nix:92\noverlays, unstableOverlays, extraGroups\n(extraGroups warns if users.users missing:117)"] -. contributes .-> collect
 ```
+
+Unknown feature throws with sorted `Available:` list (`lib.nix:123`). Missing platform silently skipped (`lib.nix:133` null filtered). Extras like `_package.nix`/`bin/*.pyz` are not discovered — the feature's own `home.nix`/`nixos.nix` imports them.
 
 ---
 
 ## Configuration Composition
 
-### NixOS Host
+### NixOS Host — `buildNixosConfigurations` (`lib.nix:207`)
 
 ```mermaid
 flowchart LR
-    subgraph M["Modules (merged via lib.flatten)"]
-        nixSet["modules/nix-settings.nix\n(substituters, trusted keys, nix.package)"]
-        nixosMod["modules/nixos.nix\n(stateVersion, fish, user shells)"]
-        autoUser["mkNixosUserModule\n(genAttrs osUsernames → users.users)"]
-        featMod["mkFeatureAggregator host 'nixos'\n(resolved NixOS feature modules)"]
-        hostMod["resolveHostModules host 'nixos'\n(host-local + shared modules)"]
-        hmMod["home-manager.nixosModules.home-manager"]
-        hmCfg["hmUsernames →\n mkUserHomeModule\n(per-user feature + host chain)"]
+    subgraph Mods ["nixosSystem modules — lib.nix:213 flatten"]
+        feat["1 feature aggregator:214\n imports = resolveFeaturePaths 'nixos'\n + featureOptionsModule:222"]
+        nixSet["2 nix-settings:225\nsubstituters + nix.package"]
+        defNixos["3 defaults/nixos.nix:227\nstateVersion + fish + kernel"]
+        defUsers["4 defaults/nixos-users.nix:229\ngenAttrs osUsernames → users.users\n+ extraGroups for isAdmin"]
+        hostMods["5 host.nixosModules:230\n auto nixos.nix + cfg.nixosModules"]
+        hmMod["6 home-manager.nixosModules.home-manager:237"]
+        inline["7 inline:239\n allowUnfree, nixpkgs.overlays=config.overlays,\n _module.args.pkgsUnstable,\n home-manager {useGlobalPkgs,\n  extraSpecialArgs, users=genAttrs hmUsernames\n   mkUserHomeModule}"]
+
+        feat --> nixSet --> defNixos --> defUsers --> hostMods --> hmMod --> inline --> merged["nixosSystem"]
     end
-    subgraph Inline ["Inline module (_module.args)"]
-        pkgsUnstable["pkgsUnstable = import nixpkgs-unstable\nwith (resolveHostOverlays host).unstable\nconfig.allowUnfree = true"]
+    subgraph Args ["specialArgs lib.nix:262"]
+        sa["osUsernames, hmUsernames,\n bootstrap, inputs, self, hostConfig"]
     end
-    subgraph SA["specialArgs"]
-        inputs["inputs + self"]
-        osUsernames["host.osUsernames"]
-        hmUsernames["host.hmUsernames"]
-        hostConfig["hostConfig"]
-        bootstrap["bootstrap"]
-    end
-    nixSet --> merged["inputs.nixpkgs.lib.nixosSystem"]
-    nixosMod --> merged
-    autoUser --> merged
-    featMod --> merged
-    hostMod --> merged
-    hmMod --> merged
-    hmCfg --> merged
-    pkgsUnstable --> merged
-    style M fill:#e3f2fd
+    sa -.-> merged
 ```
 
-### Home Manager–Only Host
+`mkUserHomeModule` chain per user (`lib.nix:172`): `resolve home` + `host.homeModules.<user>` + `featureOptionsModule` + `defaults/home-manager.nix:190` + `_module.args.user`.
+
+### HM-Only Host — `buildHomeConfigurations` (`lib.nix:273`)
 
 ```mermaid
 flowchart LR
-    subgraph Pkgs["pkgs construction"]
-        stable["import nixpkgs\noverlays = hostOverlays.stable\nconfig.allowUnfree = true"]
-        unstable["import nixpkgs-unstable\noverlays = hostOverlays.unstable\nconfig.allowUnfree = true"]
+    subgraph Pkgs ["pkgs — modules/default.nix:130 pre-built"]
+        stable["pkgs = nixpkgs + stable overlays"]
+        unstable["pkgsUnstable = nixpkgs-unstable + unstable\nalso in extraSpecialArgs"]
     end
-    subgraph M["Modules"]
-        nixSet["modules/nix-settings.nix"]
-        baseModule["mkUserHomeModule\n(home features + host modules\n+ per-user mods)"]
-        generic["targets.genericLinux.enable"]
+    subgraph Mods2 ["homeManagerConfiguration modules lib.nix:278"]
+        nixSet2["nix-settings.nix:281"]
+        userMod["mkUserHomeModule:282\n resolve 'home' + host.homeModules.<user>\n + featureOptionsModule\n + defaults/home-manager.nix"]
+        generic["targets.genericLinux.enable\n = !isNixOS:283"]
+        nixSet2 --> userMod --> generic --> merged2["homeManagerConfiguration"]
     end
-    subgraph EA["extraSpecialArgs"]
-        pkgsUnstable["pkgsUnstable (built above)"]
-        inputs["inputs + self"]
-        hostConfig["hostConfig"]
-    end
-    stable --> merged["homeManagerConfiguration"]
-    unstable --> EA
-    nixSet --> merged
-    baseModule --> merged
-    generic --> merged
-    style M fill:#e3f2fd
-```
-
-### NixOS Host — Home Manager Integration
-
-When `isNixOS = true`, home-manager runs inside NixOS via `home-manager.users`. Each user gets a module chain built by `mkUserHomeModule`:
-
-```mermaid
-flowchart LR
-    subgraph HM["Per-user HM chain (mkUserHomeModule)"]
-        homeFeat["host.homeModules\n(resolved home features)"]
-        hostMod["resolveHostModules host 'home'\n(host-local home modules)"]
-        perUser["host.homeModules.<user>\n(e.g. home-<user>.nix)"]
-        featOpt["featureOptionsModule\n(overlays + unstableOverlays)"]
-        hmFlakeMod["self.flakeModules.home-manager"]
-        defaults["home.username + home.homeDirectory"]
-    end
-    homeFeat --> chain["lib.flatten → imports"]
-    hostMod --> chain
-    perUser --> chain
-    featOpt --> chain
-    hmFlakeMod --> chain
-    defaults --> chain
-    style HM fill:#e8f5e9
+    stable --> merged2
+    unstable -. extraSpecialArgs .-> merged2
 ```
 
 ---
@@ -307,51 +200,34 @@ flowchart LR
 
 ```mermaid
 graph LR
-    subgraph Static ["Static (builtins.readDir)"]
-        hosts["hosts/ directory"]
-        features["features/ directory"]
-    end
+    hosts["hosts/"] -- readDir 11 --> disc["modules/default.nix\ndiscoveredHosts:119"]
+    features["features/"] -- readDir 70 --> featMap["lib.nix:73\ndiscoveredFeatures"]
+    disc --> hostsWithPkgs["hostsWithPkgs:124\nresolveHostOverlays:142\n→ pkgs / pkgsUnstable"]
+    featMap --> hostsWithPkgs
+    hostsWithPkgs --> nixosOut["nixosConfigurations\nlib.nix:207"]
+    hostsWithPkgs --> hmOut["homeConfigurations\nlib.nix:273"]
+    hostsWithPkgs --> pkgSets["hostPackageSets\nmodules/default.nix:149"]
+    featMap --> flakeFeat["flake.features"]
 
-    subgraph Lib ["lib/ (evaluation time)"]
-        featLib["lib/features.nix\n→ discoveredFeatures map"]
-        bldLib["lib/builders.nix\nresolveHostOverlays → {stable, unstable} overlays\n+ nixosModules + homeModules\n+ buildNixosConfigurations\n+ buildHomeConfigurations"]
-    end
-
-    subgraph Disc ["modules/discovery.nix"]
-        disc["discoverHosts\n→ {host: {system, isNixOS, osUsernames,\n hmUsernames, features, modules}}"]
-    end
-
-    hosts --> disc
-    features --> featLib
-
-    disc --> bldLib
-    featLib --> bldLib
-
-    bldLib --> nixosOut["nixosConfigurations"]
-    bldLib --> hmOut["homeConfigurations"]
-
-    style Static fill:#f5f5f5
-    style Lib fill:#e8f5e9
-    style Disc fill:#e1f5fe
-    style Builders fill:#c8e6c9
+    style disc fill:#e1f5fe
+    style featMap fill:#e8f5e9
+    style hostsWithPkgs fill:#c8e6c9
 ```
 
 ---
 
 ## Key Design Decisions
 
-| Decision                                     | Rationale                                                                                                                                                                                                                                                                                                     |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `isNixOS` boolean in host schema             | Simple, explicit classification — `true` → NixOS host, `false` → HM-only                                                                                                                                                                                                                                      |
-| `system` read from host file                 | `discovery.nix` validates `system` via host-schema; used for `pkgs` resolution                                                                                                                                                                                                                                |
-| Flat host files + directory hosts            | Single `hosts/<name>.nix` for simple hosts; directory hosts auto-discover `nixos.nix`, `shared.nix`, `home-<user>.nix` from the directory                                                                                                                                                                     |
-| Feature modules auto-discovered              | `lib/features.nix` scans `features/` at evaluation time — no manual registration needed                                                                                                                                                                                                                       |
-| Host overlays + builders consolidated        | `lib/builders.nix` handles both overlay extraction (`resolveHostOverlays`) and configuration building (`buildNixosConfigurations`, `buildHomeConfigurations`). Feature overlays extracted via targeted `evalModules` with `_module.check = false` — all overlay resolution and build logic lives in one file. |
-| `lib/` is pure functions                     | Nothing in `lib/` has `options`, `config`, or `imports` at the top level. Everything is importable without side effects                                                                                                                                                                                       |
-| `modules/` wires the system                  | Flake-parts modules, NixOS/HM modules, and discovery logic live here — they contribute to the module system                                                                                                                                                                                                   |
-| Two builders, same file                      | `buildNixosConfigurations` and `buildHomeConfigurations` both live in `lib/builders.nix` alongside `resolveHostOverlays`. NixOS and HM have different output targets and pkgs wiring, but sharing the imports/helpers reduces duplication.                                                                    |
-| `flakeModules` for reusable modules          | `modules/nixos.nix` and `modules/home-manager.nix` are exposed as flake modules, usable by other flakes or imported directly                                                                                                                                                                                  |
-| `nix-settings.nix` shared across all configs | Injected into every NixOS and Home Manager configuration to ensure consistent nix settings and cachix substituters                                                                                                                                                                                            |
-| Separate `pkgs` / `pkgsUnstable`             | Stable nixpkgs and unstable nixpkgs imported independently; feature `overlays` apply to pkgs, `unstableOverlays` to pkgsUnstable. Both use `allowUnfree = true`.                                                                                                                                              |
-| `hmEnabled` per-user toggle                  | `users.<name>.hmEnabled = false` creates the NixOS system user but skips loading their home-manager module                                                                                                                                                                                                    |
-| `home-manager` inside NixOS vs standalone    | NixOS hosts embed home-manager via `home-manager.users`; HM-only hosts get standalone `homeManagerConfiguration`                                                                                                                                                                                              |
+| Decision | Rationale |
+|---|---|
+| Single `lib.nix` (was `lib/`) | One pure file, no directory indirection; all shareable logic in one import |
+| `isNixOS` bool | Explicit host classification; `false` default keeps HM-only hosts terse |
+| `system` in host file | Single source of truth for `pkgs` system |
+| Flat `hosts/<name>.nix` + directory hosts | Simple hosts stay one file; complex hosts auto-discover `nixos.nix`/`home-*.nix` |
+| Feature dirs auto-discovered | No registry; add `features/foo/{home,nixos}.nix` and list `"foo"` in host |
+| `overlays`/`unstableOverlays` via `featureOptionsModule` | Features declare overlays declaratively; resolved once via `evalModules {_module.check=false}` |
+| `hostsWithPkgs` in `modules/default.nix` | Overlays evaluated once, `pkgs`/`pkgsUnstable` reused by builders and exposed as `hostPackageSets` |
+| `modules/defaults/*` | Shared stateVersion/shell/user defaults, not duplicated per host |
+| `bootstrap` flag | Gates cache-dependent options during first deploy (`bootstrap.sh`) |
+| `hmEnabled` per user | NixOS user exists without HM when `false` |
+| `extraGroups` aggregation | Features append groups only for `isAdmin` users (`nixos-users.nix:14`) |
