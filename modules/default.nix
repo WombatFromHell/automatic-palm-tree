@@ -2,7 +2,6 @@
   self,
   lib,
   inputs,
-  ...
 }: let
   flakeLib = import ../lib.nix {inherit lib self inputs;};
 
@@ -140,16 +139,15 @@
     })
   discoveredHosts;
 in {
-  flake = {
-    features = flakeLib.discoveredFeatures;
+  inherit (flakeLib) discoveredFeatures;
+  features = flakeLib.discoveredFeatures;
 
-    nixosConfigurations = flakeLib.buildNixosConfigurations hostsWithPkgs;
-    homeConfigurations = flakeLib.buildHomeConfigurations hostsWithPkgs;
+  nixosConfigurations = flakeLib.buildNixosConfigurations hostsWithPkgs;
+  homeConfigurations = flakeLib.buildHomeConfigurations hostsWithPkgs;
 
-    hostPackageSets =
-      lib.mapAttrs (_: h: {
-        inherit (h) pkgs pkgsUnstable;
-      })
-      hostsWithPkgs;
-  };
+  hostPackageSets =
+    lib.mapAttrs (_: h: {
+      inherit (h) pkgs pkgsUnstable;
+    })
+    hostsWithPkgs;
 }

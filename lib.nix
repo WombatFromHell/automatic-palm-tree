@@ -95,17 +95,17 @@
     ...
   }: {
     options = {
-      overlays = lib.mkOption {
+      __overlays = lib.mkOption {
         type = lib.types.listOf lib.types.unspecified;
         default = [];
         internal = true;
-        description = "Overlays to apply to pkgs when this feature is enabled.";
+        description = "Overlays to apply to pkgs (pure-extracted, no pre-eval).";
       };
-      unstableOverlays = lib.mkOption {
+      __unstableOverlays = lib.mkOption {
         type = lib.types.listOf lib.types.unspecified;
         default = [];
         internal = true;
-        description = "Overlays to apply to pkgsUnstable when this feature is enabled.";
+        description = "Overlays to apply to pkgsUnstable (pure-extracted).";
       };
       extraGroups = lib.mkOption {
         type = lib.types.listOf lib.types.str;
@@ -114,58 +114,71 @@
         description = "Groups to add isAdmin-enabled users to when this feature is enabled.";
       };
     };
-    config.warnings = lib.optionals (config.extraGroups != [] && !(builtins.hasAttr "users.users" options)) [
+    config.warnings = lib.optionals (config.extraGroups != [] && !(lib.hasAttrByPath ["users" "users"] options)) [
       "Feature module declares extraGroups ${builtins.toJSON config.extraGroups} but 'users.users' is unavailable in standalone home-manager modules."
     ];
   };
 
-  # ── feature path resolution ──
+  # ── feature path resolution (direct path interpolation, idiomatic) ──
   availableFeatures = lib.concatStringsSep ", " (lib.naturalSort (lib.attrNames discoveredFeatures));
 
   resolveFeaturePaths = featureList: platform:
     lib.flatten (
-      map (f:
-        if !(builtins.hasAttr f discoveredFeatures)
-        then throw "Unknown feature '${f}'. Available: ${availableFeatures}"
-        else let
-          feature = builtins.getAttr f discoveredFeatures;
-          platformMod =
-            if builtins.hasAttr platform feature
-            then builtins.getAttr platform feature
-            else null;
-        in
-          lib.filter (p: p != null) [platformMod])
+      map (f: let
+        p = self + "/features/${f}/${platform}.nix";
+        dirExists = builtins.pathExists (self + "/features/${f}");
+      in
+        if builtins.pathExists p
+        then [p]
+        else if dirExists
+        then [] # known feature but no module for this platform (hybrid skip)
+        else throw "Unknown feature '${f}'. Available: ${availableFeatures}")
       featureList
     );
 
-  # ── overlay resolution ──
+  # ── overlay resolution (pure, no evalModules) ──
   resolveHostOverlays = host: let
     hostFeatures =
       if builtins.hasAttr "features" host
       then host.features
       else [];
-    mergedCfg =
-      (lib.evalModules {
-        specialArgs = {
-          inherit inputs;
-          hostConfig = host;
-        };
-        modules =
-          resolveFeaturePaths hostFeatures "nixos"
-          ++ resolveFeaturePaths hostFeatures "home"
-          ++ [featureOptionsModule {_module.check = false;}];
-      }).config;
-    stableOverlays =
-      if builtins.hasAttr "overlays" mergedCfg
-      then mergedCfg.overlays
-      else [];
-    unstableOverlays =
-      if builtins.hasAttr "unstableOverlays" mergedCfg
-      then mergedCfg.unstableOverlays
-      else [];
+    paths = resolveFeaturePaths hostFeatures "nixos" ++ resolveFeaturePaths hostFeatures "home";
+    extract = isUnstable: p: let
+      raw = import p;
+      evaluated =
+        if builtins.isFunction raw
+        then
+          raw {
+            inherit inputs lib;
+            hostConfig = host;
+            pkgs = null;
+            pkgsUnstable = null;
+            config = {};
+          }
+        else raw;
+      key =
+        if isUnstable
+        then "__unstableOverlays"
+        else "__overlays";
+      legacyKey =
+        if isUnstable
+        then "unstableOverlays"
+        else "overlays";
+      v =
+        if builtins.hasAttr key evaluated
+        then builtins.getAttr key evaluated
+        else if builtins.hasAttr legacyKey evaluated
+        then builtins.getAttr legacyKey evaluated
+        else null;
+    in
+      if v == null
+      then []
+      else if builtins.isFunction v
+      then v host
+      else v;
   in {
-    stable = lib.unique (lib.flatten stableOverlays);
-    unstable = lib.unique (lib.flatten unstableOverlays);
+    stable = lib.unique (lib.flatten (map (extract false) paths));
+    unstable = lib.unique (lib.flatten (map (extract true) paths));
   };
 
   # ── Home Manager user module (was lib/builder-helpers.nix) ──
@@ -223,10 +236,8 @@
             }
             # Nix daemon settings
             (self + /modules/nix-settings.nix)
-            # Common NixOS defaults
+            # Common NixOS defaults + user defaults (merged)
             (self + /modules/defaults/nixos.nix)
-            # NixOS user defaults
-            (self + /modules/defaults/nixos-users.nix)
             # Host-local modules
             (
               if builtins.hasAttr "nixosModules" host
@@ -235,14 +246,9 @@
             )
             # Home Manager integration
             inputs.home-manager.nixosModules.home-manager
-            # Inline: unfree pkgs, overlay wiring, pkgsUnstable, HM wiring
-            ({
-              config,
-              lib,
-              ...
-            }: {
+            # Inline: unfree pkgs, pkgsUnstable, HM wiring
+            ({lib, ...}: {
               nixpkgs.config.allowUnfree = true;
-              nixpkgs.overlays = config.overlays;
 
               _module.args.pkgsUnstable = host.pkgsUnstable;
 

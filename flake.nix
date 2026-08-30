@@ -25,32 +25,33 @@
     #   inputs.nixpkgs.follows = "nixpkgs-unstable";
     # };
 
-    flake-parts.url = "github:hercules-ci/flake-parts";
     nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
     nixgl.url = "github:nix-community/nixGL";
     xilo.url = "github:stubbedev/xilo?rev=ada25182245e2f80e2490f6620a8292db136cb9c"; # v1.13
   };
 
-  outputs = inputs @ {flake-parts, ...}:
-    flake-parts.lib.mkFlake {inherit inputs;} {
-      imports = [./modules];
-
-      debug = false;
-      systems = ["x86_64-linux"];
-
-      perSystem = {pkgs, ...}: {
-        devShells.default = pkgs.mkShell {
-          # our './bootstrap.sh init' flow requires some dependencies
-          packages = with pkgs; [
-            git
-            pkgconf
-            cmake
-          ];
-
-          shellHook = ''
-            export FUSE_USE_VERSION=31
-          '';
-        };
-      };
+  outputs = inputs @ {self, ...}: let
+    cfg = import ./modules {
+      inherit self inputs;
+      lib = inputs.nixpkgs.lib;
     };
+  in {
+    inherit (cfg) nixosConfigurations homeConfigurations features hostPackageSets;
+
+    devShells.x86_64-linux.default = let
+      pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
+    in
+      pkgs.mkShell {
+        # our './bootstrap.sh init' flow requires some dependencies
+        packages = with pkgs; [
+          git
+          pkgconf
+          cmake
+        ];
+
+        shellHook = ''
+          export FUSE_USE_VERSION=31
+        '';
+      };
+  };
 }
