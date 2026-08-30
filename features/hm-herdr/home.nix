@@ -1,3 +1,3 @@
-{ pkgsUnstable, ... }: {
-  home.packages = [ pkgsUnstable.herdr ];
+{pkgsUnstable, ...}: {
+  home.packages = [pkgsUnstable.herdr];
 }
