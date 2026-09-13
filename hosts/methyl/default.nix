@@ -14,7 +14,6 @@ _: {
     "hm-zed"
     "hm-nasmount"
     "hm-syncthing"
-    "hm-dcal"
     "hm-xilo"
     "hm-herdr"
     #

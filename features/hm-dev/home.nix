@@ -12,6 +12,7 @@
       ansible
       ansible-lint
       bats
+      rustup
       # gcc
       pkgsUnstable.lazygit
       pkgsUnstable.lazydocker
