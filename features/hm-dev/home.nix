@@ -18,6 +18,7 @@
       pkgsUnstable.lazydocker
       nil
       nixd
+      npins
       python314
       ruff
       shellcheck

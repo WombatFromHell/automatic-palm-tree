@@ -3,11 +3,11 @@
     "dank-qml-common": {
       "flake": false,
       "locked": {
-        "lastModified": 1788219423,
-        "narHash": "sha256-U4WBPh+pfM2IRF+IOWWHaw3cWaR1kYtl+Rdp7i9S2OQ=",
+        "lastModified": 1789422809,
+        "narHash": "sha256-xfWdZ5WFluH0hcDiLrVacJok/1n/+u3wTt8rKe1xlQc=",
         "owner": "AvengeMedia",
         "repo": "dank-qml-common",
-        "rev": "a9ae19facd460a4150da269dafcfb044b0dd9eea",
+        "rev": "e145d7857264daa0359f83aa5cd382d76742a1bd",
         "type": "github"
       },
       "original": {
@@ -40,11 +40,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789138010,
-        "narHash": "sha256-f2moZqMyPxtmii/wWNihZ2Wyo/2krOnGiGuET7PbSqY=",
+        "lastModified": 1789434892,
+        "narHash": "sha256-IIGqpoDvkQflZOZ8aJIHfVR/kahk3Lix3mq6j/DvbhQ=",
         "ref": "refs/heads/master",
-        "rev": "22c0df043d050149cbaa6990cafacfeadfc3f921",
-        "revCount": 182,
+        "rev": "f4673822cd43bb3db1e75025c2412c85cc3c8ad0",
+        "revCount": 199,
         "type": "git",
         "url": "https://github.com/AvengeMedia/dankcalendar.git"
       },
@@ -62,11 +62,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789229382,
-        "narHash": "sha256-jm04gSTS4GIYh59pReT/assmaitLIJo1v+yS96a0Xuk=",
+        "lastModified": 1789653810,
+        "narHash": "sha256-Zc+ZIg8qYNX/Y5JtwUxwlfY/V9KJRPK0VCBbkgn3fOc=",
         "ref": "refs/heads/master",
-        "rev": "6b50696b8acc25e9fc6d12fe88d86060525c97f0",
-        "revCount": 4736,
+        "rev": "0d81d0fc2e7fc78a50c6955c5f770a32eaf729e1",
+        "revCount": 4758,
         "type": "git",
         "url": "https://github.com/AvengeMedia/DankMaterialShell.git"
       },
@@ -168,11 +168,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789182507,
-        "narHash": "sha256-9nt4W0HNNP84B+b37yRs9Zxat1ZR5guJxEZDEjAgex4=",
+        "lastModified": 1789267039,
+        "narHash": "sha256-LWiBv9yAYFi2LPbUhDGHPGKYskJQjj2fw12OlyO1uQo=",
         "owner": "nix-community",
         "repo": "home-manager",
-        "rev": "b1d1b60084970f9d1e2b72662639dab6d039be71",
+        "rev": "ec172013fa62135f58fb58dd17ae9651e8f39727",
         "type": "github"
       },
       "original": {
@@ -255,12 +255,12 @@
     },
     "nixpkgs-unstable": {
       "locked": {
-        "lastModified": 1789149629,
-        "narHash": "sha256-H6GwaZzZf+4npqv0tph94w9tZddSjFjmQrVsW0z78uk=",
-        "rev": "eaad089433ca2bb662274377d33df3d0e51ef28b",
-        "revCount": 1072397,
+        "lastModified": 1789546076,
+        "narHash": "sha256-zVxLZiSnmaaPLwnhj7pwmqe3axBg/C6nG5JZsJMh2g4=",
+        "rev": "b1b875982b17dabde9b4a37f3e229e74913e6db3",
+        "revCount": 1074753,
         "type": "tarball",
-        "url": "https://api.flakehub.com/f/pinned/NixOS/nixpkgs/0.1.1072397%2Brev-eaad089433ca2bb662274377d33df3d0e51ef28b/01a096b2-d158-7183-ae68-b86674ebb578/source.tar.gz"
+        "url": "https://api.flakehub.com/f/pinned/NixOS/nixpkgs/0.1.1074753%2Brev-b1b875982b17dabde9b4a37f3e229e74913e6db3/01a0abaa-ae2e-7230-bd71-cbc4ff564bff/source.tar.gz"
       },
       "original": {
         "type": "tarball",
@@ -284,12 +284,12 @@
     },
     "nixpkgs_3": {
       "locked": {
-        "lastModified": 1787962033,
-        "narHash": "sha256-u6z9VTZA4Kf3RkHQo9sQI7NI4Ei/uiU9vrMqOiwWP1Y=",
-        "rev": "c5c4a43b0e8056328ec4529f735cabdb8f1942bb",
-        "revCount": 1012930,
+        "lastModified": 1788690626,
+        "narHash": "sha256-+v4I4LawmRD/mVxO7QIAerRrCkElp3YImzWkkUnvOTg=",
+        "rev": "c25784012c9982bca5b3e0de87e90bbdac8927d3",
+        "revCount": 1013518,
         "type": "tarball",
-        "url": "https://api.flakehub.com/f/pinned/DeterminateSystems/nixpkgs-26.05-chilled/0.1.1012930%2Brev-c5c4a43b0e8056328ec4529f735cabdb8f1942bb/01a07f85-4ae2-7101-a842-19eb989e7cfc/source.tar.gz"
+        "url": "https://api.flakehub.com/f/pinned/DeterminateSystems/nixpkgs-26.05-chilled/0.1.1013518%2Brev-c25784012c9982bca5b3e0de87e90bbdac8927d3/01a0a392-776a-7d02-a7d2-577fc0d5cb88/source.tar.gz"
       },
       "original": {
         "type": "tarball",
