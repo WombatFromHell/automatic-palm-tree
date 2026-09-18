@@ -6,12 +6,11 @@
   ...
 }: let
   cfg = config.features.lsfg;
-  # lsfgPkg = [pkgsUnstable.lsfg-vk];
   lsfgDeriv = pkgs.callPackage ./_package.nix {};
   lsfgPkg = [lsfgDeriv];
 in {
   options.features.lsfg = {
-    enable = lib.mkEnableOption "Korthos' Low-Latency Vulkan Layer";
+    enable = lib.mkEnableOption "Korthos' Low-Latency Vulkan Layer" // {default = true;};
   };
 
   config = lib.mkIf cfg.enable {

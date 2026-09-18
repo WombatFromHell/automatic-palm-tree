@@ -17,11 +17,6 @@
   };
 
   features = {
-    # kde.useUnstable = true;
-    niri.enable = true;
-    dms.enable = true;
-    oomd.enable = true;
-    korthos.enable = true;
-    lsfg.enable = true;
+    oomd.notify = true;
   };
 }

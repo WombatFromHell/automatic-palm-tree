@@ -9,10 +9,6 @@ _: let
       #
       trash-cli
     ];
-
-    features = {
-      zed-editor.enable = true;
-    };
   };
 in {
   system = "x86_64-linux";

@@ -7,10 +7,9 @@
 }: let
   cfg = config.features.dms;
   dmsPkg = pkgsUnstable.dms-shell;
-  # dmsPkg = inputs.dms.packages.${pkgs.stdenv.hostPlatform.system}.default;
 in {
   options.features.dms = {
-    enable = lib.mkEnableOption "DMS (Desktop Media Session) service";
+    enable = lib.mkEnableOption "DMS (Desktop Media Session) service" // {default = true;};
 
     niriCompat = lib.mkOption {
       type = lib.types.bool;

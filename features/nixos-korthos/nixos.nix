@@ -8,7 +8,7 @@
   lowLatencyLayer = pkgs.callPackage ./_package.nix {};
 in {
   options.features.korthos = {
-    enable = lib.mkEnableOption "Korthos' Low-Latency Vulkan Layer";
+    enable = lib.mkEnableOption "Korthos' Low-Latency Vulkan Layer" // {default = true;};
   };
 
   config = lib.mkIf cfg.enable {

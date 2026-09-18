@@ -108,13 +108,14 @@
         description = "Overlays to apply to pkgsUnstable (pure-extracted).";
       };
       extraGroups = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
+        # attrset (feature -> [groups]) so multiple features merge by key, not last-wins
+        type = lib.types.attrsOf (lib.types.listOf lib.types.str);
+        default = {};
         internal = true;
         description = "Groups to add isAdmin-enabled users to when this feature is enabled.";
       };
     };
-    config.warnings = lib.optionals (config.extraGroups != [] && !(lib.hasAttrByPath ["users" "users"] options)) [
+    config.warnings = lib.optionals (config.extraGroups != {} && !(lib.hasAttrByPath ["users" "users"] options)) [
       "Feature module declares extraGroups ${builtins.toJSON config.extraGroups} but 'users.users' is unavailable in standalone home-manager modules."
     ];
   };
@@ -122,17 +123,15 @@
   # ── feature path resolution (direct path interpolation, idiomatic) ──
   availableFeatures = lib.concatStringsSep ", " (lib.naturalSort (lib.attrNames discoveredFeatures));
 
+  # Resolves a host's feature list to file paths for one platform, reading the
+  # single source of truth (discoveredFeatures) rather than re-walking features/.
+  # A feature present without a module for this platform (hybrid) resolves to [].
   resolveFeaturePaths = featureList: platform:
     lib.flatten (
-      map (f: let
-        p = self + "/features/${f}/${platform}.nix";
-        dirExists = builtins.pathExists (self + "/features/${f}");
-      in
-        if builtins.pathExists p
-        then [p]
-        else if dirExists
-        then [] # known feature but no module for this platform (hybrid skip)
-        else throw "Unknown feature '${f}'. Available: ${availableFeatures}")
+      map (f:
+        if !builtins.hasAttr f discoveredFeatures
+        then throw "Unknown feature '${f}'. Available: ${availableFeatures}"
+        else lib.optional (builtins.hasAttr platform discoveredFeatures.${f}) discoveredFeatures.${f}.${platform})
       featureList
     );
 
@@ -206,15 +205,11 @@
   };
 
   # ── helper: emit a warning for admin users on non-NixOS hosts ──
-  checkAdminWarning = name: cfg:
-    lib.optional (!cfg.isNixOS) (
-      let
-        adminNames = lib.filter (n: cfg.users.${n}.isAdmin) (builtins.attrNames cfg.users);
-      in
-        lib.optional (adminNames != [])
-        "${name}: 'isNixOS = false', but users.${lib.concatStringsSep ", " adminNames}.isAdmin = true! "
-        + "This is a no-op on standalone home-manager hosts."
-    );
+  checkAdminWarning = name: cfg: let
+    adminNames = lib.filter (n: cfg.users.${n}.isAdmin) (builtins.attrNames cfg.users);
+  in
+    lib.optionals (!cfg.isNixOS && adminNames != [])
+    ["${name}: 'isNixOS = false', but users.${lib.concatStringsSep ", " adminNames}.isAdmin = true! This is a no-op on standalone home-manager hosts."];
 
   # ── NixOS configuration builder ──
   buildNixosConfigurations = hostsWithPkgs: let
@@ -249,6 +244,7 @@
             # Inline: unfree pkgs, pkgsUnstable, HM wiring
             ({lib, ...}: {
               nixpkgs.config.allowUnfree = true;
+              warnings = host.warnings or [];
 
               _module.args.pkgsUnstable = host.pkgsUnstable;
 
@@ -267,7 +263,6 @@
             })
           ];
           specialArgs = {
-            inherit (host) osUsernames hmUsernames bootstrap;
             inherit inputs self;
             hostConfig = host;
           };
@@ -286,7 +281,8 @@
           modules = [
             (self + /modules/nix-settings.nix)
             (mkUserHomeModule {inherit user host;})
-            {targets.genericLinux.enable = lib.mkDefault (!host.isNixOS);}
+            {targets.genericLinux.enable = lib.mkDefault true;}
+            {warnings = host.warnings or [];}
           ];
           extraSpecialArgs = {
             inherit (host) pkgsUnstable;

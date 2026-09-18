@@ -107,6 +107,13 @@ hosts/myhost-vm/                 # QEMU variant
 This keeps `hardware-configuration.nix` strictly per-host and avoids conflicting
 definitions when both variants inherit the same `nixos.nix`.
 
+> **Extending a list (adding features), not just a scalar?** `base // { … }` replaces
+> whole fields, so a variant that wants "base + one extra feature" must re-list the
+> rest. For that, make the variant a module the module system can merge and validate:
+> `_: { imports = [ ../myhost/default.nix ]; … }` and extend the list explicitly
+> (`features = base.features ++ [ "extra" ]`). methyl-nixos stays on `//` — its only
+> override is the scalar `isQemuVM`.
+
 ## User Options
 
 | Option      | Default | Description                                                           |
@@ -116,4 +123,16 @@ definitions when both variants inherit the same `nixos.nix`.
 | `hmEnabled` | `true`  | Set `false` to create the NixOS user but skip its home-manager module |
 | `isQemuVM`  | `false` | Whether this host is a QEMU/KVM virtual machine                       |
 
+## Features
+
 Feature modules under `features/<name>/` are auto-discovered — no registration needed.
+A directory may contain `nixos.nix` (NixOS module) and/or `home.nix` (Home Manager
+module). The `nixos-*` / `hm-*` prefix marks the _primary_ platform only — a feature is
+a **hybrid** when it ships both files (e.g. `nixos-oom`, `nixos-dms`, `nixos-kde`). A
+feature a host lists but that has no file for that platform is silently skipped.
+
+**Overlay contract.** To collect `__overlays` / `__unstableOverlays` without a full
+package-set eval, every feature file is imported once with `pkgs = null`,
+`pkgsUnstable = null`, `config = {}`. This works only because overlay definitions stay
+lazy: keep them as `let` bindings or `final: prev: …` functions. Don't force `pkgs.*`
+at the top level of the returned attrset — it throws on the `pkgs = null` pass.

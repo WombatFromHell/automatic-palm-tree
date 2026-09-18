@@ -28,7 +28,7 @@
   };
 in {
   options.features.niri = {
-    enable = lib.mkEnableOption "Niri compositor configuration";
+    enable = lib.mkEnableOption "Niri compositor configuration" // {default = true;};
   };
 
   config = lib.mkIf cfg.enable {

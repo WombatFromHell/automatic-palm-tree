@@ -8,7 +8,7 @@
   dmemcgPkg = pkgs.callPackage ./_package.nix {};
 in {
   options.features.dmemcg-booster = {
-    enable = lib.mkEnableOption "dmemcg-booster: dmemcg protection for foreground vram when gaming";
+    enable = lib.mkEnableOption "dmemcg-booster: dmemcg protection for foreground vram when gaming" // {default = true;};
   };
 
   config = lib.mkIf cfg.enable {

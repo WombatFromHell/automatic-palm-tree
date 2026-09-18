@@ -7,9 +7,9 @@
   cfg = config.features.oomd;
 in {
   options.features.oomd = {
-    enable = lib.mkEnableOption "systemd-oomd OOM killer";
+    enable = lib.mkEnableOption "systemd-oomd OOM killer" // {default = true;};
 
-    enableNotify = lib.mkOption {
+    notify = lib.mkOption {
       type = lib.types.bool;
       default = false;
       description = "Install the OOM userspace notify daemon.";
@@ -59,7 +59,7 @@ in {
     };
 
     # ── Define the notify daemon globally if enabled ────────────────────────────
-    environment.etc = lib.mkIf cfg.enableNotify {
+    environment.etc = lib.mkIf cfg.notify {
       "systemd/user/oomd-notify.service" = {
         text = let
           oomd-notify-daemon = pkgs.writeShellApplication {

@@ -2,7 +2,6 @@
   description = "Unified dendritic Nix/NixOS/Home-Manager configuration";
 
   inputs = {
-    # nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     nixpkgs.url = "https://flakehub.com/f/DeterminateSystems/nixpkgs-26.05-chilled/0.1";
 
     home-manager = {
@@ -20,11 +19,6 @@
       url = "git+https://github.com/AvengeMedia/dankcalendar.git";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
-    # quickshell = {
-    #   url = "git+https://git.outfoxxed.me/quickshell/quickshell?rev=d99d87d5e5ec4e696815348692fdaaf0b6be1b2c";
-    #   inputs.nixpkgs.follows = "nixpkgs-unstable";
-    # };
-
     nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
     nixgl.url = "github:nix-community/nixGL";
     xilo.url = "github:stubbedev/xilo?rev=ada25182245e2f80e2490f6620a8292db136cb9c"; # v1.13

@@ -1,11 +1,18 @@
-_: let
+{
+  lib,
+  config,
+  ...
+}: let
+  cfg = config.features.lsfg;
   dllPath = "%h/.local/share/Lossless.dll";
   envMode = "1"; # don't use '$HOME/.config/lsfg-vk/conf.toml'
   multiplier = "2"; # set a default of 2x
   performanceMode = "1"; # default to true
 in {
+  options.features.lsfg.enable = lib.mkEnableOption "Korthos' Low-Latency Vulkan Layer" // {default = true;};
+
   # expect the user to copy/link 'Lossless.dll' or override the dll path themselves
-  systemd.user.sessionVariables = {
+  config.systemd.user.sessionVariables = lib.mkIf cfg.enable {
     LSFG_LEGACY = envMode;
     LSFG_DLL_PATH = dllPath;
     LSFG_MULTIPLIER = multiplier;

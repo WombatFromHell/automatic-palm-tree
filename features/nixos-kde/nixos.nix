@@ -1,13 +1,8 @@
 {
   lib,
-  config,
   hostConfig,
   ...
 }: {
-  options.features.kde = {
-    useUnstable = lib.mkEnableOption "Pull KDE packages from nixpkgs-unstable instead of stable";
-  };
-
   config = {
     services = {
       xserver.enable = lib.mkIf hostConfig.isQemuVM true;

@@ -1,4 +1,3 @@
-# ./modules/features/nixos-oom/home.nix
 {
   lib,
   config,

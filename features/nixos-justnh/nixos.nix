@@ -5,7 +5,7 @@
   pkgsUnstable,
   ...
 }: {
-  options.system.justHelper.flakeRoot = lib.mkOption {
+  options.features.justnh.flakeRoot = lib.mkOption {
     type = lib.types.str;
     default = "~/.config/flakeroot";
     description = "Path to your NixOS flake root directory";
@@ -25,13 +25,13 @@
         default:
         ${"\t"}@just --list
         switch:
-        ${"\t"}nh os switch ${config.system.justHelper.flakeRoot}
+        ${"\t"}nh os switch ${config.features.justnh.flakeRoot}
         rswitch:
-        ${"\t"}sudo nixos-rebuild switch --flake ${config.system.justHelper.flakeRoot} -L -v
+        ${"\t"}sudo nixos-rebuild switch --flake ${config.features.justnh.flakeRoot} -L -v
         dswitch:
-        ${"\t"}nh os switch -n ${config.system.justHelper.flakeRoot}
+        ${"\t"}nh os switch -n ${config.features.justnh.flakeRoot}
         dry:
-        ${"\t"}sudo nixos-rebuild build --flake ${config.system.justHelper.flakeRoot} --show-trace -L -v
+        ${"\t"}sudo nixos-rebuild build --flake ${config.features.justnh.flakeRoot} --show-trace -L -v
         list:
         ${"\t"}nh os info
         clean *args="--keep 3":

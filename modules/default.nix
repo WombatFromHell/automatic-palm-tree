@@ -139,7 +139,6 @@
     })
   discoveredHosts;
 in {
-  inherit (flakeLib) discoveredFeatures;
   features = flakeLib.discoveredFeatures;
 
   nixosConfigurations = flakeLib.buildNixosConfigurations hostsWithPkgs;

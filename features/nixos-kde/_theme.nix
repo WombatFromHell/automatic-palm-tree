@@ -8,7 +8,7 @@
   breezePkgs = pkgs.kdePackages;
 in {
   options.features.theming = {
-    enable = lib.mkEnableOption "Enable consistent default theming across Qt, GTK, and Wayland";
+    enable = lib.mkEnableOption "consistent default theming across Qt, GTK, and Wayland" // {default = true;};
 
     gtkTheme = {
       name = lib.mkOption {

@@ -18,7 +18,7 @@
     };
   };
 
-  # add calling isAdmin-enabled users to our feature group
-  extraGroups = ["libvirtd"];
+  # add calling isAdmin-enabled users to our feature group (attrset merges across features)
+  extraGroups = {qemu = ["libvirtd"];};
   boot.extraModprobeConfig = "options kvm_intel kvm_amd nested=1";
 }

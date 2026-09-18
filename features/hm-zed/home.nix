@@ -18,7 +18,7 @@
     else basePackage;
 in {
   options.features.zed-editor = {
-    enable = lib.mkEnableOption "Zed-Preview high-performance code editor";
+    enable = lib.mkEnableOption "Zed-Preview high-performance code editor" // {default = true;};
     useFHS = lib.mkOption {
       type = lib.types.bool;
       default = false;

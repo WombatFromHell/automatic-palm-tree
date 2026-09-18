@@ -8,7 +8,7 @@
   nasmount-sshfs = pkgs.writeShellScriptBin "nasmount-sshfs" (builtins.readFile ./nasmount-sshfs.sh);
 in {
   options.features.nasmount = {
-    enable = lib.mkEnableOption "nasmount-sshfs: automount network share via sshfs on login";
+    enable = lib.mkEnableOption "nasmount-sshfs: automount network share via sshfs on login" // {default = true;};
   };
 
   config = lib.mkIf cfg.enable {

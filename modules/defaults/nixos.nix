@@ -17,7 +17,7 @@
     isAdmin = builtins.hasAttr "isAdmin" userCfg && userCfg.isAdmin;
     featureExtraGroups =
       if builtins.hasAttr "extraGroups" config
-      then config.extraGroups
+      then lib.concatLists (lib.attrValues config.extraGroups)
       else [];
   in {
     isNormalUser = true;
