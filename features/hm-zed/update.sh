@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# 
-# Fetches the latest Zed stable release tag from GitHub, prefetches the
-# per-arch tar.gz hashes, and rewrites version/sha256 in _package.nix in
-# place. Relies on `url` already being templated with ${version} — only
-# `version` and each system's `sha256` are ever touched.
+# hm-zed/update.sh
+#
+# Updates metadata.json with the latest Zed STABLE release info.
+# Filters out preview/prerelease tags explicitly.
 #
 # Usage:
-#   ./update.sh            # update if newer version found
-#   ./update.sh --check    # exit 0/1 without writing, for CI gating
+#   ./update.sh            # Update if newer version found
+#   ./update.sh --check    # Exit 0 if up-to-date, 1 if update available (CI gating)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_NIX="$SCRIPT_DIR/_package.nix"
+METADATA_JSON="$SCRIPT_DIR/metadata.json"
 REPO="zed-industries/zed"
 CHECK_ONLY=false
 
@@ -20,122 +19,103 @@ if [[ "${1:-}" == "--check" ]]; then
   CHECK_ONLY=true
 fi
 
-# --- 1. Resolve the latest stable release tag -------------------------------
-# Zed tags stable releases as vX.Y.Z but also publishes preview releases
-# (vX.Y.Z-pre) which we want to skip — filter to plain vX.Y.Z tags only.
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
 
-echo "==> Querying latest Zed release tag..." >&2
+# --- 1. Resolve Latest Stable Release ----------------------------------------
 
-latest_tag="$(
+echo "==> Querying latest Zed stable release tag..." >&2
+
+# Zed publishes many prereleases. We filter for:
+# 1. Not a prerelease (.prerelease == false)
+# 2. Tag matches vX.Y.Z strictly (no -pre, no -beta, etc.)
+LATEST_TAG=$(
   curl -sfL \
     -H "Accept: application/vnd.github+json" \
     ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
     "https://api.github.com/repos/${REPO}/releases?per_page=20" |
-    jq -r '[.[] | select(.prerelease == false) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))][0].tag_name'
-)"
+    jq -r '
+      [.[] | select(.prerelease == false) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))][0].tag_name
+    '
+) || die "Failed to query GitHub API"
 
-if [[ -z "$latest_tag" || "$latest_tag" == "null" ]]; then
-  echo "error: could not resolve latest stable release tag from GitHub API" >&2
-  exit 1
-fi
+[[ "$LATEST_TAG" != "null" ]] || die "Could not resolve latest stable release tag"
 
-new_version="${latest_tag#v}"
+NEW_VERSION="${LATEST_TAG#v}"
+CURRENT_VERSION=$(jq -r '.version' "$METADATA_JSON")
 
-current_version="$(
-  sed -nE 's/^\s*version = "(.*)";/\1/p' "$PACKAGE_NIX" | head -n1
-)"
+echo "==> Current: $CURRENT_VERSION | Latest: $NEW_VERSION" >&2
 
-echo "==> current: $current_version  latest: $new_version" >&2
-
-if [[ "$new_version" == "$current_version" ]]; then
-  echo "==> already up to date" >&2
+if [[ "$NEW_VERSION" == "$CURRENT_VERSION" ]]; then
+  echo "==> Already up to date." >&2
   exit 0
 fi
 
 if $CHECK_ONLY; then
-  echo "==> update available: $current_version -> $new_version" >&2
+  echo "==> Update available: $CURRENT_VERSION -> $NEW_VERSION" >&2
   exit 1
 fi
 
-# --- 2. Bump top-level version = "...";  --------------------------------
-# This alone updates every `url` field, since they interpolate ${version}.
+# --- 2. Prefetch Assets ------------------------------------------------------
 
-sed -i -E "s/^(\s*version = \")[^\"]*(\";)/\1${new_version}\2/" "$PACKAGE_NIX"
-
-# --- 3. Prefetch each per-arch asset and patch its sha256 in place ---------
-
-declare -A ASSET_SUFFIX=(
+# Map Nix systems to Zed asset suffixes
+declare -A ARCH_MAP=(
   ["x86_64-linux"]="x86_64"
-  # zed-linux-aarch64.tar.gz also exists upstream — uncomment to track it
-  # once/if added to `assets` in _package.nix:
+  # Uncomment when/if Zed starts publishing stable arm64 linux binaries
   # ["aarch64-linux"]="aarch64"
 )
 
-for system in "${!ASSET_SUFFIX[@]}"; do
-  suffix="${ASSET_SUFFIX[$system]}"
-  url="https://github.com/${REPO}/releases/download/${latest_tag}/zed-linux-${suffix}.tar.gz"
+TMP_META=$(mktemp)
+jq --arg ver "$NEW_VERSION" '.version = $ver' "$METADATA_JSON" >"$TMP_META"
 
-  echo "==> prefetching $system : $url" >&2
+for system in "${!ARCH_MAP[@]}"; do
+  suffix="${ARCH_MAP[$system]}"
+  url="https://github.com/${REPO}/releases/download/${LATEST_TAG}/zed-linux-${suffix}.tar.gz"
 
-  hash_b32="$(nix-prefetch-url --type sha256 "$url" 2>/dev/null | tail -n1)"
-  if [[ -z "$hash_b32" ]]; then
-    echo "error: failed to prefetch $url (has the asset naming changed upstream?)" >&2
-    exit 1
-  fi
+  echo "==> Prefetching $system ($suffix)..." >&2
 
-  hash_sri="$(nix hash convert --hash-algo sha256 --to sri "$hash_b32")"
+  hash_b32=$(nix-prefetch-url --type sha256 "$url" 2>/dev/null) || die "Failed to prefetch $url"
+  hash_sri=$(nix hash convert --hash-algo sha256 --to sri "$hash_b32")
+
   echo "    -> $hash_sri" >&2
 
-  # Only replace the sha256 line inside this system's block, identified by
-  # the preceding `"<system>" = {` line — never touches `url`.
-  awk -v sys="\"${system}\" = {" -v hash="$hash_sri" '
-    BEGIN { in_block = 0 }
-    {
-      if ($0 ~ sys) { in_block = 1 }
-      if (in_block && $0 ~ /sha256 = "/) {
-        sub(/sha256 = "[^"]*"/, "sha256 = \"" hash "\"")
-        in_block = 0
-      }
-      print
-    }
-  ' "$PACKAGE_NIX" >"${PACKAGE_NIX}.tmp" && mv "${PACKAGE_NIX}.tmp" "$PACKAGE_NIX"
+  TMP_META_NEXT=$(mktemp)
+  jq --arg sys "$system" --arg h "$hash_sri" '.hashes[$sys] = $h' "$TMP_META" >"$TMP_META_NEXT"
+  mv "$TMP_META_NEXT" "$TMP_META"
 done
 
-echo "==> updated $PACKAGE_NIX: $current_version -> $new_version" >&2
+mv "$TMP_META" "$METADATA_JSON"
+echo "==> Updated $METADATA_JSON to version $NEW_VERSION" >&2
 
-# --- 4. Optional: sanity build check ----------------------------------------
+# --- 3. Sanity Build Check ---------------------------------------------------
 
 if [[ "${SKIP_BUILD_CHECK:-0}" != "1" ]]; then
-  echo "==> building to verify hashes..." >&2
+  echo "==> Verifying build..." >&2
 
-  find_flake_root() {
-    local dir="$1"
-    while [[ "$dir" != "/" ]]; do
-      if [[ -f "$dir/flake.nix" ]]; then
-        echo "$dir"
-        return 0
-      fi
-      dir="$(dirname "$dir")"
-    done
-    return 1
-  }
+  FLAKE_ROOT=""
+  DIR="$SCRIPT_DIR"
+  while [[ "$DIR" != "/" ]]; do
+    if [[ -f "$DIR/flake.nix" ]]; then
+      FLAKE_ROOT="$DIR"
+      break
+    fi
+    DIR="$(dirname "$DIR")"
+  done
 
-  FLAKE_ROOT="$(find_flake_root "$SCRIPT_DIR")" || {
-    echo "error: could not locate flake.nix by walking up from $SCRIPT_DIR" >&2
-    exit 1
-  }
-
-  build_expr='
-    let
-      flake = builtins.getFlake (toString '"$FLAKE_ROOT"');
-      pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
-    in
-      pkgs.callPackage '"$PACKAGE_NIX"' {}
-  '
-
-  if ! nix build --no-link --impure --expr "$build_expr" 2>&1 | tail -n 40; then
-    echo "error: build failed after update — leaving file changed for inspection" >&2
-    exit 1
+  if [[ -z "$FLAKE_ROOT" ]]; then
+    die "Could not find flake.nix upwards from $SCRIPT_DIR"
   fi
-  echo "==> build OK" >&2
+
+  # Attempt build via flake reference (assumes you have an output like .#hm-zed)
+  # If not exposed, fallback to direct callPackage
+  if ! nix build --no-link --impure ".#hm-zed" 2>&1 | tail -n 20; then
+    BUILD_EXPR="(import <nixpkgs> {}).callPackage '$SCRIPT_DIR/_package.nix' {}"
+    if ! nix-build --no-out-link -E "$BUILD_EXPR" >/dev/null 2>&1; then
+      die "Build verification failed after update."
+    fi
+  fi
+
+  echo "==> Build OK" >&2
 fi

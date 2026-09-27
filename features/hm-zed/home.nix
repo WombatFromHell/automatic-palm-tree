@@ -14,7 +14,7 @@
 
   zedPackage =
     if config.lib ? nixGL
-    then config.lib.nixGL.wrap basePackage
+    then config.lib.nixGL.wrappers.mesa basePackage
     else basePackage;
 in {
   options.features.zed-editor = {
@@ -30,5 +30,6 @@ in {
       enable = true;
       package = zedPackage;
     };
+    fonts.fontconfig.enable = true;
   };
 }

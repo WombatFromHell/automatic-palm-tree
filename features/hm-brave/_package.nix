@@ -3,9 +3,8 @@
   fetchurl,
   patchelf,
   makeWrapper,
-  nix-update-script,
   lib,
-  # runtime deps — trim/extend based on `ldd` against the extracted binary
+  # Runtime deps trimmed for brevity in this example, keep your full list
   alsa-lib,
   at-spi2-atk,
   at-spi2-core,
@@ -22,6 +21,8 @@
   libnotify,
   libpulseaudio,
   libsecret,
+  libva,
+  libvdpau,
   libx11,
   libxcb,
   libxcomposite,
@@ -41,29 +42,31 @@
   pango,
   systemd,
   vulkan-loader,
+  wayland,
 }: let
-  version = "1.96.59"; # placeholder — see updateScript below
+  # Load mutable metadata
+  meta = builtins.fromJSON (builtins.readFile ./metadata.json);
 
-  # Brave publishes per-arch .deb assets on the same GitHub Releases page
-  # they tag for every stable release, so we can point nix-update-script
-  # at the exact same mechanism the Zed module uses.
-  assets = {
-    "x86_64-linux" = {
-      url = "https://github.com/brave/brave-browser/releases/download/v${version}/brave-browser_${version}_amd64.deb";
-      sha256 = "sha256-sFEpxpB2cLICni8Bdz0ZLIuHwwdbJYc+o7wia7DxXx4=";
-    };
-    "aarch64-linux" = {
-      url = "https://github.com/brave/brave-browser/releases/download/v${version}/brave-browser_${version}_arm64.deb";
-      sha256 = "sha256-uCp6SIybwMexj+oaLaistJ9CtKhWST1qTOdaC5pJ/uM=";
-    };
-  };
+  inherit (meta) version;
+
+  # Construct assets dynamically from metadata
+  assets =
+    lib.mapAttrs (_: sha256: {
+      url = "https://github.com/brave/brave-browser/releases/download/v${version}/brave-browser_${version}_${
+        if builtins.elem system ["x86_64-linux"]
+        then "amd64"
+        else "arm64"
+      }.deb";
+      inherit sha256;
+    })
+    meta.hashes;
 
   system = stdenv.hostPlatform.system;
 
   info =
     if lib.hasAttr system assets
     then assets.${system}
-    else lib.throwError "brave-bin: unsupported system ${system}";
+    else lib.throwError "brave-bin: unsupported system ${system}. Available: ${toString (lib.attrNames assets)}";
 
   nixDeps = [
     alsa-lib
@@ -82,6 +85,8 @@
     libnotify
     libpulseaudio
     libsecret
+    libva
+    libvdpau
     libx11
     libxcb
     libxcomposite
@@ -99,11 +104,11 @@
     nspr
     nss
     pango
-    systemd # for libudev
+    systemd
     vulkan-loader
+    wayland
   ];
 
-  libPath = lib.makeLibraryPath nixDeps;
   executableName = "brave";
 in
   stdenv.mkDerivation (finalAttrs: {
@@ -127,31 +132,23 @@ in
       cp -R usr/share $out/share
 
       mkdir -p $out/bin
-      ln -s "$out/opt/brave.com/brave/brave" "$out/bin/${executableName}"
+      rpath="${lib.makeLibraryPath ([stdenv.cc.cc] ++ nixDeps)}"
 
       patchelf \
         --set-interpreter "$(cat $NIX_CC/nix-support/dynamic-linker)" \
-        --set-rpath "${lib.makeLibraryPath ([stdenv.cc.cc] ++ nixDeps)}" \
+        --set-rpath "$rpath" \
         "$out/opt/brave.com/brave/brave"
 
-      # patch the other ELF binaries/libs shipped alongside it
       for f in "$out/opt/brave.com/brave"/*.so* "$out/opt/brave.com/brave/chrome_crashpad_handler" "$out/opt/brave.com/brave/brave_crashpad_handler"; do
         [ -e "$f" ] || continue
-        patchelf --set-rpath "${lib.makeLibraryPath ([stdenv.cc.cc] ++ nixDeps)}" "$f" || true
+        patchelf --set-rpath "$rpath" "$f" || true
       done
 
-      wrapProgram "$out/opt/brave.com/brave/brave" \
-        --prefix LD_LIBRARY_PATH ":" ${libPath}
+      # correct the 'Exec=...' refs to point at the nix store location
+      sed -i "s|^Exec=.*|Exec=$out/bin/brave-browser %U|" "$out/share/applications/com.brave.Browser.desktop"
+      ln -s "$out/opt/brave.com/brave/brave" "$out/bin/brave"
+      ln -s "$out/opt/brave.com/brave/brave-browser" "$out/bin/brave-browser"
     '';
-
-    passthru = {
-      updateScript = nix-update-script {
-        extraArgs = [
-          "--version-regex"
-          "^v(.+)$"
-        ];
-      };
-    };
 
     meta = with lib; {
       description = "Privacy-oriented browser for Desktop and Laptop, built on Chromium";

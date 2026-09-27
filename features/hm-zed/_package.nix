@@ -15,25 +15,33 @@
   wayland,
   vulkan-loader,
   buildFHSEnv,
-  nix-update-script,
   testers,
   lib,
 }: let
-  version = "1.21.0";
+  # Load mutable metadata
+  meta = builtins.fromJSON (builtins.readFile ./metadata.json);
 
-  assets = {
-    "x86_64-linux" = {
-      url = "https://github.com/zed-industries/zed/releases/download/v${version}/zed-linux-x86_64.tar.gz";
-      sha256 = "sha256-t5qZLpYO1AZ8srUNZnie2GGO6xeA7WoPjx5x3YD3QgA=";
-    };
-  };
+  inherit (meta) version;
+
+  # Construct assets dynamically from metadata hashes
+  # We map system -> { url, sha256 }
+  assets =
+    lib.mapAttrs (_: sha256: {
+      url = "https://github.com/zed-industries/zed/releases/download/v${version}/zed-linux-${
+        if builtins.elem system ["x86_64-linux"]
+        then "x86_64"
+        else "aarch64"
+      }.tar.gz";
+      inherit sha256;
+    })
+    meta.hashes;
 
   system = stdenv.hostPlatform.system;
 
   info =
     if lib.hasAttr system assets
     then assets.${system}
-    else lib.throwError "zed-editor-bin: unsupported system ${system}";
+    else lib.throwError "zed-editor-bin: unsupported system ${system}. Available: ${toString (lib.attrNames assets)}";
 
   nixDeps = [
     glib
@@ -52,8 +60,8 @@
   libPath = lib.makeLibraryPath nixDeps;
   executableName = "zed";
 
-  # buildFHSEnv allows for users to use the existing Zed extensions
-  fhs = {
+  # FHS Wrapper Definition
+  fhsFn = {
     zed-editor,
     additionalPkgs ? pkgs: [],
   }:
@@ -69,7 +77,7 @@
       '';
       runScript = "${zed-editor}/bin/${executableName}";
 
-      # Prevent the FHS env from creating a user namespace.
+      # Prevent the FHS env from creating a user namespace (required for some GPU drivers)
       unshareUser = false;
 
       passthru = {
@@ -110,16 +118,19 @@ in
       cp "$appdir/libexec/zed-editor" $out/libexec/
       cp -R "$appdir/share"/* $out/share/
 
+      # Patch main binary
       patchelf \
         --set-interpreter "$(cat $NIX_CC/nix-support/dynamic-linker)" \
         --set-rpath "${lib.makeLibraryPath ([stdenv.cc.cc] ++ nixDeps)}" \
         "$out/bin/zed"
 
+      # Patch helper binary
       patchelf \
         --set-interpreter "$(cat $NIX_CC/nix-support/dynamic-linker)" \
         --set-rpath "${lib.makeLibraryPath ([stdenv.cc.cc] ++ nixDeps)}" \
         "$out/libexec/zed-editor"
 
+      # Wrap with LD_LIBRARY_PATH for safety
       wrapProgram $out/bin/zed \
         --prefix LD_LIBRARY_PATH ":" ${libPath}
 
@@ -128,22 +139,20 @@ in
     '';
 
     passthru = {
-      updateScript = nix-update-script {
-        extraArgs = [
-          "--version-regex"
-          "^v(?!.*(?:0.999999.0|0.9999-temporary)$)(.+)$"
-        ];
-      };
-      fhs = fhs {zed-editor = finalAttrs.finalPackage;};
+      # Expose FHS wrappers
+      fhs = fhsFn {zed-editor = finalAttrs.finalPackage;};
       fhsWithPackages = f:
-        fhs {
+        fhsFn {
           zed-editor = finalAttrs.finalPackage;
           additionalPkgs = f;
         };
+
       noFHS = finalAttrs.finalPackage;
+
       tests = {
         remoteServerVersion = testers.testVersion {
-          package = finalAttrs.finalPackage.remote_server;
+          package = finalAttrs.finalPackage.remote_server or finalAttrs.finalPackage;
+          # Note: remote_server might not be exposed directly depending on upstream structure
           command = "zed-remote-server-stable-${finalAttrs.version} version";
         };
       };

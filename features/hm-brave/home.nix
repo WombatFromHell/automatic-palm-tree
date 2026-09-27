@@ -10,7 +10,7 @@
 
   bravePackage =
     if config.lib ? nixGL
-    then config.lib.nixGL.wrap basePackage
+    then config.lib.nixGL.wrappers.mesa basePackage
     else basePackage;
 in {
   options.features.brave-browser = {
@@ -22,10 +22,12 @@ in {
     };
   };
   config = lib.mkIf cfg.enable {
+    home.packages = [bravePackage];
     programs.chromium = {
       enable = true;
       package = bravePackage;
       commandLineArgs = lib.optional (cfg.passwordStore != null) "--password-store=${cfg.passwordStore}";
     };
+    fonts.fontconfig.enable = true;
   };
 }
