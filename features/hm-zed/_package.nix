@@ -19,12 +19,12 @@
   testers,
   lib,
 }: let
-  version = "1.19.2";
+  version = "1.21.0";
 
   assets = {
     "x86_64-linux" = {
       url = "https://github.com/zed-industries/zed/releases/download/v${version}/zed-linux-x86_64.tar.gz";
-      sha256 = "sha256-xaz/LlKsPGSJDM6FJQc0z3J5wd5W1ZJuT04dTPZ2NZw=";
+      sha256 = "sha256-t5qZLpYO1AZ8srUNZnie2GGO6xeA7WoPjx5x3YD3QgA=";
     };
   };
 
