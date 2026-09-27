@@ -144,8 +144,19 @@ in
         patchelf --set-rpath "$rpath" "$f" || true
       done
 
-      # correct the 'Exec=...' refs to point at the nix store location
-      sed -i "s|^Exec=.*|Exec=$out/bin/brave-browser %U|" "$out/share/applications/com.brave.Browser.desktop"
+      # correct the 'Exec=...' refs to point at the nix store location.
+      # Patch both files: com.brave.Browser.desktop is NoDisplay=true (kept for
+      # XDG-portal app-id matching), brave-browser.desktop is the visible entry.
+      # Prefix-only substitution so [Desktop Action] args (%U, --incognito) survive.
+      sed -i "s|^Exec=/usr/bin/brave-browser-stable|Exec=$out/bin/brave-browser|" \
+        "$out/share/applications/com.brave.Browser.desktop" \
+        "$out/share/applications/brave-browser.desktop"
+
+      # Expose the bundled logo as the hicolor icon (Icon=brave-browser).
+      # One size is enough - the theme scales it for the menu.
+      install -Dm644 "$out/opt/brave.com/brave/product_logo_128.png" \
+        "$out/share/icons/hicolor/128x128/apps/brave-browser.png"
+
       ln -s "$out/opt/brave.com/brave/brave" "$out/bin/brave"
       ln -s "$out/opt/brave.com/brave/brave-browser" "$out/bin/brave-browser"
     '';
