@@ -22,7 +22,7 @@ in {
     };
   };
   config = lib.mkIf cfg.enable {
-    programs.brave-browser = {
+    programs.chromium = {
       enable = true;
       package = bravePackage;
       commandLineArgs = lib.optional (cfg.passwordStore != null) "--password-store=${cfg.passwordStore}";

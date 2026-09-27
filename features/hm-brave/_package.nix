@@ -23,6 +23,7 @@
   libpulseaudio,
   libsecret,
   libx11,
+  libxcb,
   libxcomposite,
   libxcursor,
   libxdamage,
@@ -82,6 +83,7 @@
     libpulseaudio
     libsecret
     libx11
+    libxcb
     libxcomposite
     libxcursor
     libxdamage
