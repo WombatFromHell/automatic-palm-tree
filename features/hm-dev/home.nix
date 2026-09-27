@@ -11,6 +11,7 @@
       alejandra
       ansible
       ansible-lint
+      aria2
       bats
       rustup
       # gcc
