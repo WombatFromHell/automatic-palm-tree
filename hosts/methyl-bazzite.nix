@@ -22,10 +22,10 @@ in {
     "hm-nh"
     "hm-xilo"
     "hm-herdr"
-    "hm-brave"
     #
     "hm-nixgl"
     #
+    "hm-brave"
     "hm-zed"
   ];
 

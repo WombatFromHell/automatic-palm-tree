@@ -36,7 +36,6 @@
   libxrender,
   libxscrnsaver,
   libxtst,
-  mesa,
   nspr,
   nss,
   pango,
@@ -100,7 +99,6 @@
     libxrender
     libxscrnsaver
     libxtst
-    mesa
     nspr
     nss
     pango
@@ -144,7 +142,7 @@ in
         patchelf --set-rpath "$rpath" "$f" || true
       done
 
-      sed -i "s|^Exec=/usr/bin/brave-browser-stable|Exec=$out/bin/brave-browser|" \
+      sed -i "s|^Exec=/usr/bin/brave-browser-stable|Exec=brave-browser|" \
         "$out/share/applications/com.brave.Browser.desktop" \
         "$out/share/applications/brave-browser.desktop"
 
