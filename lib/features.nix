@@ -41,12 +41,6 @@
     ...
   }: {
     options = {
-      __overlays = lib.mkOption {
-        type = lib.types.listOf lib.types.unspecified;
-        default = [];
-        internal = true;
-        description = "Overlays to apply to pkgs (pure-extracted, no pre-eval).";
-      };
       extraGroups = lib.mkOption {
         # attrset (feature -> [groups]) so multiple features merge by key, not last-wins
         type = lib.types.attrsOf (lib.types.listOf lib.types.str);
@@ -75,21 +69,16 @@
       featureList
     );
 
-  # ── overlay resolution (pure, no evalModules) ──
+  # ── overlay resolution (reads _overlays.nix per feature, no module import) ──
   resolveHostOverlays = host: let
-    paths = resolveFeaturePaths host.features "nixos" ++ resolveFeaturePaths host.features "home";
-    extract = p: let
-      evaluated = (import p) {
-        inherit inputs lib;
-        hostConfig = host;
-        pkgs = null;
-        pkgsUnstable = null;
-        config = {};
-      };
+    extract = featName: let
+      overlaysPath = featuresDir + "/${featName}/_overlays.nix";
     in
-      evaluated.__overlays or [];
+      if builtins.pathExists overlaysPath
+      then import overlaysPath {inherit inputs;}
+      else [];
   in
-    lib.unique (lib.flatten (map extract paths));
+    lib.unique (lib.concatLists (map extract host.features));
 in {
   inherit discoveredFeatures featureOptionsModule resolveFeaturePaths resolveHostOverlays;
 }
