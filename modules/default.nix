@@ -2,8 +2,9 @@
   self,
   lib,
   inputs,
+  ...
 }: let
-  flakeLib = import ../lib.nix {inherit lib self inputs;};
+  flakeLib = import ../lib {inherit lib self inputs;};
 
   # ── host discovery ──
   hostsDir = self + /hosts;
@@ -88,13 +89,9 @@
     mergedUsers = impliedUsers // evaluatedConfig.users;
     enabledUsers = lib.filterAttrs (_: u: u.enabled) mergedUsers;
     osUsernames = lib.attrNames enabledUsers;
-    hmUsernames =
-      builtins.filter (
-        u:
-          (autoModules.homeModules ? ${u} || evaluatedConfig.homeModules ? ${u})
-          && (let uInfo = mergedUsers.${u}; in !(uInfo ? hmEnabled) || uInfo.hmEnabled)
-      )
-      osUsernames;
+    hasHomeModule = u: autoModules.homeModules ? ${u} || evaluatedConfig.homeModules ? ${u};
+    hmEnabledFor = u: let uInfo = mergedUsers.${u}; in !(uInfo ? hmEnabled) || uInfo.hmEnabled;
+    hmUsernames = builtins.filter (u: hasHomeModule u && hmEnabledFor u) osUsernames;
   in {
     nixosModules = autoModules.nixosModules ++ evaluatedConfig.nixosModules;
     homeModules = autoModules.homeModules // evaluatedConfig.homeModules;
@@ -105,13 +102,13 @@
     entry = parseHostEntry filename type;
     inherit (entry) isDir name path hostDir;
     evaluatedHost = validateHost path;
-    cfg = evaluatedHost.config;
+    evaluatedConfig = evaluatedHost.config;
     autoModules = autoDiscoverModules isDir hostDir;
-    enriched = enrichHost cfg autoModules;
-    warnings = flakeLib.checkAdminWarning name cfg;
+    enrichedHost = enrichHost evaluatedConfig autoModules;
+    warnings = flakeLib.checkAdminWarning name evaluatedConfig;
   in
-    cfg
-    // enriched
+    evaluatedConfig
+    // enrichedHost
     // {inherit name;}
     // lib.optionalAttrs (warnings != []) {inherit warnings;};
 
@@ -121,19 +118,17 @@
   # This runs once here so that hostPackageSets and the configs use the
   # same pkgs/pkgsUnstable with the same overlays applied.
   hostsWithPkgs = lib.mapAttrs (_name: host: let
-    overlays = flakeLib.resolveHostOverlays host;
+    hostOverlays = flakeLib.resolveHostOverlays host;
   in
     host
     // {
-      inherit overlays;
       pkgs = import inputs.nixpkgs {
         inherit (host) system;
-        overlays = overlays.stable;
+        overlays = hostOverlays;
         config.allowUnfree = true;
       };
       pkgsUnstable = import inputs.nixpkgs-unstable {
         inherit (host) system;
-        overlays = overlays.unstable;
         config.allowUnfree = true;
       };
     })

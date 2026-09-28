@@ -14,11 +14,8 @@
       if builtins.hasAttr username hostConfig.users
       then hostConfig.users.${username}
       else {};
-    isAdmin = builtins.hasAttr "isAdmin" userCfg && userCfg.isAdmin;
-    featureExtraGroups =
-      if builtins.hasAttr "extraGroups" config
-      then lib.concatLists (lib.attrValues config.extraGroups)
-      else [];
+    isAdmin = userCfg.isAdmin or false;
+    featureExtraGroups = lib.concatLists (lib.attrValues config.extraGroups);
   in {
     isNormalUser = true;
     home = "/home/${username}";
