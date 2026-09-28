@@ -19,11 +19,11 @@
     "dank-qml-common_2": {
       "flake": false,
       "locked": {
-        "lastModified": 1790454246,
-        "narHash": "sha256-H4z2oxSO6DHTH93seEsY/WuiYuKCXKPreoQTBrU1XLY=",
+        "lastModified": 1790556036,
+        "narHash": "sha256-E72MwG5riYkqj4mjW8BMsUnjlJqPc8HBSll+iUWxPtU=",
         "owner": "AvengeMedia",
         "repo": "dank-qml-common",
-        "rev": "9594c1e3bdc561da82b74fd188811f66b64d1e12",
+        "rev": "660b04470bb7937b970c862024bcadd7000e6a89",
         "type": "github"
       },
       "original": {
@@ -62,11 +62,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1790524673,
-        "narHash": "sha256-hh0UvyS2SRv/ZBt113oqYUt5RXGoJTK35VK2AvBD6aY=",
+        "lastModified": 1790557006,
+        "narHash": "sha256-B3YtotTBV1wEK3dVbBMGRKkme8w2qzjZCcpQgKAU760=",
         "ref": "refs/heads/master",
-        "rev": "e4fb86be91cb4cfc78f8ac936b68cc587848c1de",
-        "revCount": 4923,
+        "rev": "c45579746be64cd36b1f52d13df5e0fb48a845d6",
+        "revCount": 4928,
         "type": "git",
         "url": "https://github.com/AvengeMedia/DankMaterialShell.git"
       },
@@ -206,7 +206,9 @@
     "nixgl": {
       "inputs": {
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": [
+          "nixpkgs-unstable"
+        ]
       },
       "locked": {
         "lastModified": 1762090880,
@@ -269,21 +271,6 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1746378225,
-        "narHash": "sha256-OeRSuL8PUjIfL3Q0fTbNJD/fmv1R+K2JAOqWJd3Oceg=",
-        "owner": "nixos",
-        "repo": "nixpkgs",
-        "rev": "93e8cdce7afc64297cfec447c311470788131cd9",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nixos",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs_3": {
-      "locked": {
         "lastModified": 1789344334,
         "narHash": "sha256-vdhpDJ3Lr24lkZ+fDCjmBRRtw9/vcSzkqGJOJyF5h2U=",
         "rev": "c3eea5b2156db11c7eeeada3dc737711255b253e",
@@ -296,13 +283,13 @@
         "url": "https://flakehub.com/f/DeterminateSystems/nixpkgs-26.05-chilled/0.1"
       }
     },
-    "nixpkgs_4": {
+    "nixpkgs_3": {
       "locked": {
-        "lastModified": 1785692966,
-        "narHash": "sha256-vUfIeBEfpbAfZ5zjgIkYk7eHBeVfCYVjLbWnMkseYnk=",
+        "lastModified": 1790185690,
+        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "643809054d65fdd466a63e3155b8c498cb483c04",
+        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
         "type": "github"
       },
       "original": {
@@ -319,7 +306,7 @@
         "home-manager": "home-manager",
         "nix-cachyos-kernel": "nix-cachyos-kernel",
         "nixgl": "nixgl",
-        "nixpkgs": "nixpkgs_3",
+        "nixpkgs": "nixpkgs_2",
         "nixpkgs-unstable": "nixpkgs-unstable",
         "xilo": "xilo"
       }
@@ -357,20 +344,20 @@
     "xilo": {
       "inputs": {
         "flake-utils": "flake-utils_2",
-        "nixpkgs": "nixpkgs_4"
+        "nixpkgs": "nixpkgs_3"
       },
       "locked": {
-        "lastModified": 1785823593,
-        "narHash": "sha256-R7tb5yjUzCfoughsyZ77OJsbKVda3R9NqFQ1hQfONek=",
+        "lastModified": 1790340748,
+        "narHash": "sha256-c7qXDDrXvMpMRTk1mwPC6kcUYmj3PHpR4d1RXv+VwFg=",
         "owner": "stubbedev",
         "repo": "xilo",
-        "rev": "ada25182245e2f80e2490f6620a8292db136cb9c",
+        "rev": "4528483a1a261f5ed6578606d30526c6a908d1b4",
         "type": "github"
       },
       "original": {
         "owner": "stubbedev",
         "repo": "xilo",
-        "rev": "ada25182245e2f80e2490f6620a8292db136cb9c",
+        "rev": "4528483a1a261f5ed6578606d30526c6a908d1b4",
         "type": "github"
       }
     }

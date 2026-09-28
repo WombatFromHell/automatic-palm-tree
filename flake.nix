@@ -20,8 +20,11 @@
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
     nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
-    nixgl.url = "github:nix-community/nixGL";
-    xilo.url = "github:stubbedev/xilo?rev=ada25182245e2f80e2490f6620a8292db136cb9c"; # v1.13
+    nixgl = {
+      url = "github:nix-community/nixGL";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
+    };
+    xilo.url = "github:stubbedev/xilo?rev=4528483a1a261f5ed6578606d30526c6a908d1b4"; # v1.2.2
   };
 
   outputs = inputs @ {self, ...}: let

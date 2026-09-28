@@ -1,11 +1,11 @@
 {
   lib,
   config,
-  pkgs,
+  pkgsUnstable,
   ...
 }: let
   cfg = config.features.brave-browser;
-  brave-custom = pkgs.callPackage ./_package.nix {};
+  brave-custom = pkgsUnstable.callPackage ./_package.nix {};
   basePackage = brave-custom;
 
   bravePackage =
