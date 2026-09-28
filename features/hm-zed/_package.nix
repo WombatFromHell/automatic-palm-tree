@@ -15,7 +15,6 @@
   wayland,
   vulkan-loader,
   buildFHSEnv,
-  testers,
   lib,
 }: let
   # Load mutable metadata
@@ -23,25 +22,22 @@
 
   inherit (meta) version;
 
-  # Construct assets dynamically from metadata hashes
-  # We map system -> { url, sha256 }
-  assets =
-    lib.mapAttrs (_: sha256: {
+  system = stdenv.hostPlatform.system;
+
+  # Per-system release asset from metadata hashes
+  info = let
+    sha256 = meta.hashes.${system} or null;
+  in
+    if sha256 == null
+    then lib.throw "zed-editor-bin: unsupported system ${system}. Available: ${toString (lib.attrNames meta.hashes)}"
+    else {
       url = "https://github.com/zed-industries/zed/releases/download/v${version}/zed-linux-${
-        if builtins.elem system ["x86_64-linux"]
+        if system == "x86_64-linux"
         then "x86_64"
         else "aarch64"
       }.tar.gz";
       inherit sha256;
-    })
-    meta.hashes;
-
-  system = stdenv.hostPlatform.system;
-
-  info =
-    if lib.hasAttr system assets
-    then assets.${system}
-    else lib.throwError "zed-editor-bin: unsupported system ${system}. Available: ${toString (lib.attrNames assets)}";
+    };
 
   nixDeps = [
     glib
@@ -61,17 +57,10 @@
   executableName = "zed";
 
   # FHS Wrapper Definition
-  fhsFn = {
-    zed-editor,
-    additionalPkgs ? pkgs: [],
-  }:
+  fhsFn = zed-editor:
     buildFHSEnv {
       name = executableName;
-      targetPkgs = pkgs:
-        (with pkgs; [
-          glibc
-        ])
-        ++ additionalPkgs pkgs;
+      targetPkgs = pkgs: with pkgs; [glibc];
       extraInstallCommands = ''
         ln -s "${zed-editor}/share" "$out/"
       '';
@@ -80,10 +69,6 @@
       # Prevent the FHS env from creating a user namespace (required for some GPU drivers)
       unshareUser = false;
 
-      passthru = {
-        inherit executableName;
-        inherit (zed-editor) pname version;
-      };
       meta =
         zed-editor.meta
         // {
@@ -105,6 +90,9 @@ in
 
     phases = ["unpackPhase" "installPhase"];
 
+    # NOTE: do not use stdenv's default unpackPhase — unpackFile cd's into the
+    # single top-level dir (zed.app) and sets a relative sourceRoot, which
+    # breaks the appdir lookup below.
     unpackPhase = ''
       tar xzf "$src"
     '';
@@ -140,22 +128,8 @@ in
 
     passthru = {
       # Expose FHS wrappers
-      fhs = fhsFn {zed-editor = finalAttrs.finalPackage;};
-      fhsWithPackages = f:
-        fhsFn {
-          zed-editor = finalAttrs.finalPackage;
-          additionalPkgs = f;
-        };
-
+      fhs = fhsFn finalAttrs.finalPackage;
       noFHS = finalAttrs.finalPackage;
-
-      tests = {
-        remoteServerVersion = testers.testVersion {
-          package = finalAttrs.finalPackage.remote_server or finalAttrs.finalPackage;
-          # Note: remote_server might not be exposed directly depending on upstream structure
-          command = "zed-remote-server-stable-${finalAttrs.version} version";
-        };
-      };
     };
 
     meta = with lib; {
@@ -164,6 +138,6 @@ in
       changelog = "https://github.com/zed-industries/zed/releases/tag/v${finalAttrs.version}";
       mainProgram = executableName;
       license = licenses.gpl3Only;
-      platforms = attrNames assets;
+      platforms = attrNames meta.hashes;
     };
   })
