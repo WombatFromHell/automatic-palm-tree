@@ -131,8 +131,8 @@ module). The `nixos-*` / `hm-*` prefix marks the _primary_ platform only — a f
 a **hybrid** when it ships both files (e.g. `nixos-oom`, `nixos-dms`, `nixos-kde`). A
 feature a host lists but that has no file for that platform is silently skipped.
 
-**Overlay contract.** To collect `__overlays` / `__unstableOverlays` without a full
-package-set eval, every feature file is imported once with `pkgs = null`,
-`pkgsUnstable = null`, `config = {}`. This works only because overlay definitions stay
-lazy: keep them as `let` bindings or `final: prev: …` functions. Don't force `pkgs.*`
-at the top level of the returned attrset — it throws on the `pkgs = null` pass.
+**Overlay contract.** A feature that needs overlays ships a `_overlays.nix` file in
+its directory: `{inputs, ...}: [ … ]`. The loader imports it directly (no module
+eval, no `pkgs = null` sentinel). Features without `_overlays.nix` contribute no
+overlays. Keep overlay definitions lazy (`final: prev: …`); don't force `pkgs.*` at
+top level.
