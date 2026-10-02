@@ -24,9 +24,9 @@ flakeroot/
 │       ├── nixos.nix
 │       ├── home-josh.nix           #   re-imports ../methyl/home-josh.nix
 │       └── hardware-configuration.nix
-├── features/                       # 35 composable units, auto-discovered
+├── features/                       # 38 composable units, auto-discovered
 │   ├── hm-only    (13)             #   home.nix only
-│   ├── nixos-only (14)             #   nixos.nix only
+│   ├── nixos-only (17)             #   nixos.nix only
 │   ├── hybrid      (8)             #   home.nix + nixos.nix: hm-syncthing, nixos-dmemcg, nixos-dms, nixos-flatpak, nixos-kde, nixos-lsfg, nixos-niri, nixos-oom
 │   ├── _overlays.nix               #   optional: {inputs, ...}: [ … ] per feature
 │   └── extras                      #   _package.nix / _*.nix / bin/ / *.sh imported by the feature itself

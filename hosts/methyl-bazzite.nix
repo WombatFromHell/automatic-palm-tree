@@ -22,6 +22,7 @@ in {
     "hm-nh"
     "hm-xilo"
     "hm-herdr"
+    "hm-agenix"
     #
     "hm-nixgl"
     #

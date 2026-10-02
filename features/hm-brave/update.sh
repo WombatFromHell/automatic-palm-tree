@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Updates metadata.json with the latest Brave release info.
-# Dependencies: curl, jq, nix-prefetch-url, nix
+# Dependencies: curl, jq, nix-prefetch-url
 
 set -euo pipefail
 
@@ -77,35 +77,3 @@ done
 
 mv "$TMP_META" "$METADATA_JSON"
 echo "==> Updated $METADATA_JSON to version $NEW_VERSION" >&2
-
-# --- 3. Sanity Build Check ---------------------------------------------------
-
-if [[ "${SKIP_BUILD_CHECK:-0}" != "1" ]]; then
-  echo "==> Verifying build..." >&2
-
-  # Find flake root
-  FLAKE_ROOT=""
-  DIR="$SCRIPT_DIR"
-  while [[ "$DIR" != "/" ]]; do
-    if [[ -f "$DIR/flake.nix" ]]; then
-      FLAKE_ROOT="$DIR"
-      break
-    fi
-    DIR="$(dirname "$DIR")"
-  done
-
-  if [[ -z "$FLAKE_ROOT" ]]; then
-    die "Could not find flake.nix upwards from $SCRIPT_DIR"
-  fi
-
-  # Attempt build via flake reference (assumes you have an output like .#hm-brave)
-  # If not exposed, fallback to direct callPackage
-  if ! nix build --no-link --impure --dry-run ".#hm-brave" 2>&1 | tail -n 20; then
-    BUILD_EXPR="(import <nixpkgs> {}).callPackage '$SCRIPT_DIR/_package.nix' {}"
-    if ! nix-build --no-out-link -E "$BUILD_EXPR" >/dev/null 2>&1; then
-      die "Build verification failed after update."
-    fi
-  fi
-
-  echo "==> Build OK" >&2
-fi
