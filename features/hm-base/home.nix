@@ -16,7 +16,6 @@
     ripgrep
     starship
     topgrade
-    tmux
     tuckr
     zoxide
 
