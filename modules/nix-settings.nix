@@ -11,7 +11,7 @@
     extra-substituters = [
       "https://nix-community.cachix.org/"
       "https://attic.xuyh0120.win/lantian"
-      # "https://xilo.nanogoblin.duckdns.org/c/default/xilopkgs"
+      "https://xilo.nanogoblin.duckdns.org/c/default/xilopkgs"
     ];
     extra-trusted-public-keys = [
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
@@ -19,6 +19,10 @@
       "xilopkgs:t7bPM4c3zgmTCtV7XYCDTGiShoplykV8ZhQnEbukaFU="
     ];
     trusted-users = ["@wheel"];
+
+    connect-timeout = 5;
+    stalled-download-timeout = 10;
+    download-attempts = 2;
   };
 
   # Home Manager strictly requires `nix.package` to be set when using `nix.settings`.
