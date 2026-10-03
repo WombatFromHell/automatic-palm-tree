@@ -11,12 +11,15 @@ _: {
     "hm-dev"
     "hm-gpg"
     "hm-media"
-    "hm-zed"
     "hm-nasmount"
     "hm-syncthing"
     "hm-xilo"
     "hm-herdr"
+    #
+    "hm-zed"
     "hm-brave"
+    #
+    "hm-tmux"
     #
     "nixos-base"
     "nixos-audio"

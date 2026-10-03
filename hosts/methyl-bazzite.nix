@@ -9,6 +9,10 @@ _: let
       #
       trash-cli
     ];
+
+    features = {
+      tmux-git.enable = true;
+    };
   };
 in {
   system = "x86_64-linux";
@@ -28,6 +32,8 @@ in {
     #
     "hm-brave"
     "hm-zed"
+    #
+    "hm-tmux"
   ];
 
   homeModules.josh = [myHome];

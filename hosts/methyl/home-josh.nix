@@ -16,5 +16,6 @@
       niri-watcher.enable = true;
     };
     oomd.notify = true;
+    tmux-git.enable = true;
   };
 }
