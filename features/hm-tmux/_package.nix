@@ -11,36 +11,61 @@
   systemdLibs,
   libutempter,
 }:
-stdenv.mkDerivation {
-  pname = "tmux";
-  version = "3.8"; # date of the pinned rev
+let
+  # Mutable pin metadata, updated by ./update.sh.
+  # version = release tag or full commit hash (passed as `rev`).
+  meta = builtins.fromJSON (builtins.readFile ./metadata.json);
 
-  outputs = ["out" "man"];
+  system = stdenv.hostPlatform.system;
+
+  hash =
+    meta.hashes.${system}
+      or (lib.throw "tmux: unsupported system '${system}'. Available: ${toString (lib.attrNames meta.hashes)}");
 
   src = fetchFromGitHub {
     owner = "tmux";
     repo = "tmux";
-    rev = "596d04a1937d0f62aaa5f945a59311fa0c9cb924";
-    hash = "sha256-oWcj+7yWNVIWMxxWX4RGuuz5MOvMdS02Hz0TpR7Cjr0=";
+    rev = meta.version;
+    hash = hash;
   };
+in
+stdenv.mkDerivation {
+  pname = "tmux";
+  version = meta.version;
 
-  nativeBuildInputs = [autoreconfHook bison pkg-config];
+  outputs = [
+    "out"
+    "man"
+  ];
 
-  buildInputs =
-    [libevent ncurses utf8proc]
-    ++ lib.optionals stdenv.hostPlatform.isLinux [systemdLibs libutempter];
+  src = src;
 
-  configureFlags =
-    [
-      "--sysconfdir=/etc"
-      "--localstatedir=/var"
-      "--enable-sixel"
-      "--enable-utf8proc"
-    ]
-    ++ lib.optionals stdenv.hostPlatform.isLinux [
-      "--enable-systemd"
-      "--enable-utempter"
-    ];
+  nativeBuildInputs = [
+    autoreconfHook
+    bison
+    pkg-config
+  ];
+
+  buildInputs = [
+    libevent
+    ncurses
+    utf8proc
+  ]
+  ++ lib.optionals stdenv.hostPlatform.isLinux [
+    systemdLibs
+    libutempter
+  ];
+
+  configureFlags = [
+    "--sysconfdir=/etc"
+    "--localstatedir=/var"
+    "--enable-sixel"
+    "--enable-utf8proc"
+  ]
+  ++ lib.optionals stdenv.hostPlatform.isLinux [
+    "--enable-systemd"
+    "--enable-utempter"
+  ];
 
   enableParallelBuilding = true;
 
