@@ -31,7 +31,7 @@ while IFS= read -r script; do
   count=$((count + 1))
   echo "==> Running $script${args:+: ${args[*]}}" >&2
   "$script" "${args[@]}"
-done < <(find features -type f -name update.sh | sort)
+done < <(find features \( -type f -o -type l \) -name update.sh | sort)
 
 if [[ $count -eq 0 ]]; then
   echo "==> No update.sh scripts found under features/" >&2

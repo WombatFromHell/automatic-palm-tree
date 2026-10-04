@@ -1,4 +1,8 @@
 {
+  "repo": "tmux/tmux",
+  "kind": "nar",
+  "strategy": "none",
+  "url": "https://github.com/{repo}/archive/{version}.tar.gz",
   "version": "3.8-rc3",
   "hashes": {
     "x86_64-linux": "sha256-dWUD62onx4cSwngtZTlF9pggA/9Z/Vmn77nD53luld0="

@@ -1,7 +1,13 @@
 {
+  "repo": "brave/brave-browser",
+  "kind": "sri",
+  "strategy": "latest",
+  "url": "https://github.com/{repo}/releases/download/v{version}/brave-browser_{version}_{arch}.deb",
+  "arches": {
+    "x86_64-linux": "amd64"
+  },
   "version": "1.96.61",
   "hashes": {
-    "x86_64-linux": "sha256-UOgyz04xOYl5YwwGQTLDBTI/0FTM2xjNX06RyTlLt8s=",
-    "aarch64-linux": "sha256-fQjhzazFdIUt7BqIl71butJUhnIkS7F0boyuBo4H/94="
+    "x86_64-linux": "sha256-UOgyz04xOYl5YwwGQTLDBTI/0FTM2xjNX06RyTlLt8s="
   }
 }

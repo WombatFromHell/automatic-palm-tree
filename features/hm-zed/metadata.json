@@ -1,4 +1,11 @@
 {
+  "repo": "zed-industries/zed",
+  "kind": "sri",
+  "strategy": "semver",
+  "url": "https://github.com/{repo}/releases/download/v{version}/zed-linux-{arch}.tar.gz",
+  "arches": {
+    "x86_64-linux": "x86_64"
+  },
   "version": "1.22.0",
   "hashes": {
     "x86_64-linux": "sha256-XOOZGzSo+tCiNiX1ghzaYBxxUKbMaWg8CXuNGwg6vFA="
