@@ -6,8 +6,8 @@
   "arches": {
     "x86_64-linux": "x86_64"
   },
-  "version": "1.22.0",
+  "version": "1.23.2",
   "hashes": {
-    "x86_64-linux": "sha256-XOOZGzSo+tCiNiX1ghzaYBxxUKbMaWg8CXuNGwg6vFA="
+    "x86_64-linux": "sha256-yr3dWvKyahljPqOfXd4HDiqtIEu4Fb+nTLZQc//V/zk="
   }
 }
