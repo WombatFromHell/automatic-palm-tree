@@ -10,8 +10,7 @@
   utf8proc,
   systemdLibs,
   libutempter,
-}:
-let
+}: let
   # Mutable pin metadata, updated by ./update.sh.
   # version = release tag or full commit hash (passed as `rev`).
   meta = builtins.fromJSON (builtins.readFile ./metadata.json);
@@ -26,54 +25,55 @@ let
     owner = "tmux";
     repo = "tmux";
     rev = meta.version;
-    hash = hash;
+    inherit hash;
   };
 in
-stdenv.mkDerivation {
-  pname = "tmux";
-  version = meta.version;
+  stdenv.mkDerivation {
+    pname = "tmux";
+    inherit (meta) version;
+    inherit src;
 
-  outputs = [
-    "out"
-    "man"
-  ];
+    outputs = [
+      "out"
+      "man"
+    ];
 
-  src = src;
+    nativeBuildInputs = [
+      autoreconfHook
+      bison
+      pkg-config
+    ];
 
-  nativeBuildInputs = [
-    autoreconfHook
-    bison
-    pkg-config
-  ];
+    buildInputs =
+      [
+        libevent
+        ncurses
+        utf8proc
+      ]
+      ++ lib.optionals stdenv.hostPlatform.isLinux [
+        systemdLibs
+        libutempter
+      ];
 
-  buildInputs = [
-    libevent
-    ncurses
-    utf8proc
-  ]
-  ++ lib.optionals stdenv.hostPlatform.isLinux [
-    systemdLibs
-    libutempter
-  ];
+    configureFlags =
+      [
+        "--sysconfdir=/etc"
+        "--localstatedir=/var"
+        "--enable-sixel"
+        "--enable-utf8proc"
+      ]
+      ++ lib.optionals stdenv.hostPlatform.isLinux [
+        "--enable-systemd"
+        "--enable-utempter"
+      ];
 
-  configureFlags = [
-    "--sysconfdir=/etc"
-    "--localstatedir=/var"
-    "--enable-sixel"
-    "--enable-utf8proc"
-  ]
-  ++ lib.optionals stdenv.hostPlatform.isLinux [
-    "--enable-systemd"
-    "--enable-utempter"
-  ];
+    enableParallelBuilding = true;
 
-  enableParallelBuilding = true;
-
-  meta = {
-    description = "Terminal multiplexer (git build)";
-    homepage = "https://tmux.github.io/";
-    license = lib.licenses.bsd3;
-    platforms = lib.platforms.unix;
-    mainProgram = "tmux";
-  };
-}
+    meta = {
+      description = "Terminal multiplexer (git build)";
+      homepage = "https://tmux.github.io/";
+      license = lib.licenses.bsd3;
+      platforms = lib.platforms.unix;
+      mainProgram = "tmux";
+    };
+  }

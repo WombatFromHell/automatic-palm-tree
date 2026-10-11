@@ -27,6 +27,7 @@
       statix
       ty
       uv
+      zellij
       #
       lixPackageSets.latest.nix-fast-build
       lixPackageSets.latest.nix-eval-jobs
