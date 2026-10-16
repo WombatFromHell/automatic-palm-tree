@@ -34,7 +34,7 @@ _: {
     "nixos-flatpak"
     "nixos-podman"
     #
-    "nixos-cachyos"
+    # "nixos-cachyos"
     "nixos-lix"
     #
     "nixos-automounts"

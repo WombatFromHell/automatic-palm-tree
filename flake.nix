@@ -19,7 +19,7 @@
       url = "git+https://github.com/AvengeMedia/dankcalendar.git";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
-    nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
+    # nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
     nixgl = {
       url = "github:nix-community/nixGL";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
