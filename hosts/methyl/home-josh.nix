@@ -1,9 +1,5 @@
-{
-  pkgs,
-  pkgsUnstable,
-  ...
-}: {
-  home.packages = with pkgsUnstable; [
+{pkgs, ...}: {
+  home.packages = with pkgs.unstable; [
     heroic
     khal
     libqalculate

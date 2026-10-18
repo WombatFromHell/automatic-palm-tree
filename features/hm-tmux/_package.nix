@@ -2,8 +2,7 @@
   lib,
   stdenv,
   fetchFromGitHub,
-  readPin,
-  gitSource,
+  pinMeta,
   autoreconfHook,
   bison,
   pkg-config,
@@ -14,9 +13,9 @@
   libutempter,
 }: let
   # Mutable pin metadata, updated by ./update.sh (version = tag or commit hash).
-  pin = readPin ./metadata.json;
+  pin = lib.importJSON ./metadata.json;
 
-  src = fetchFromGitHub (gitSource pin stdenv.hostPlatform.system);
+  src = fetchFromGitHub (pinMeta.gitSource pin stdenv.hostPlatform.system);
 in
   stdenv.mkDerivation {
     pname = "tmux";

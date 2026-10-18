@@ -9,7 +9,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixpkgs-unstable.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1";
     dms = {
       url = "git+https://github.com/AvengeMedia/DankMaterialShell.git";
@@ -19,7 +18,6 @@
       url = "git+https://github.com/AvengeMedia/dankcalendar.git";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
-    # nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
     nixgl = {
       url = "github:nix-community/nixGL";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
@@ -32,12 +30,12 @@
   };
 
   outputs = inputs @ {self, ...}: let
-    cfg = import ./modules {
+    cfg = import ./lib {
       inherit self inputs;
       lib = inputs.nixpkgs.lib;
     };
   in {
-    inherit (cfg) nixosConfigurations homeConfigurations features hostPackageSets;
+    inherit (cfg) nixosConfigurations homeConfigurations;
 
     devShells.x86_64-linux.default = let
       pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;

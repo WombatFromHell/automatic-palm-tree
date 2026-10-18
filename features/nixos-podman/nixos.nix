@@ -1,7 +1,6 @@
 {
   config,
   lib,
-  hostConfig,
   ...
 }: let
   hasPodmanUser =
@@ -14,7 +13,7 @@
         else [];
     in
       builtins.elem "podman" extraGroups)
-    hostConfig.osUsernames;
+    config.flakeHost.osUsernames;
 in {
   config = {
     warnings =

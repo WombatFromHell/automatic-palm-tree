@@ -1,17 +1,13 @@
 {
   lib,
   config,
-  pkgsUnstable,
+  pkgs,
   ...
 }: let
   cfg = config.features.brave-browser;
-  brave-custom = pkgsUnstable.callPackage ./_package.nix {};
-  basePackage = brave-custom;
+  basePackage = pkgs.unstable.callPackage ./_package.nix {};
 
-  bravePackage =
-    if config.lib ? nixGL
-    then config.lib.nixGL.wrappers.mesa basePackage
-    else basePackage;
+  bravePackage = config.lib.nixGL.wrapMesa basePackage;
 in {
   options.features.brave-browser = {
     enable = lib.mkEnableOption "Privacy-oriented browser for Desktop and Laptop, built on Chromium" // {default = true;};

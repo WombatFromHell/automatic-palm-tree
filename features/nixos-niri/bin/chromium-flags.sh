@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-#==============================================================================
-# Chromium Flags Loader (Strategy Pattern Refactor)
-#==============================================================================
+# Chromium flags loader
 
 readonly FLAGS_CONFIG="${FLAGS_CONFIG:-${HOME}/.config/chromium-flags.conf}"
 
-#------------------------------------------------------------------------------
-# DATA LAYER: Load and clean flags
-#------------------------------------------------------------------------------
+# Load and clean flags
 load_flags() {
   if [[ ! -f "$FLAGS_CONFIG" ]]; then
     return 0
@@ -27,10 +23,8 @@ load_flags() {
   printf '%s\n' "${flags[@]}"
 }
 
-#------------------------------------------------------------------------------
-# STRATEGY LAYER: Argument Transformation Logic
-# Each strategy receives the FULL list of arguments passed to the script.
-#------------------------------------------------------------------------------
+# Argument transformation logic
+# Each function receives the full argument list passed to the script.
 
 strategy_standard() {
   local args=("$@")
@@ -102,7 +96,7 @@ main() {
   local command="${1:-}"
   local final_args=()
 
-  # Strategy Selection (The "Context")
+  # Pick the flag set for this invocation
   if [[ "$command" == "flatpak" && "${2:-}" == "run" ]]; then
     mapfile -t final_args < <(strategy_flatpak "$@")
   elif [[ "$command" == "distrobox-enter" || "$command" == "distrobox" ]]; then

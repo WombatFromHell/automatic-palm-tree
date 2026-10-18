@@ -1,8 +1,7 @@
 {
   lib,
   pkgs,
-  pkgsUnstable,
-  hostConfig,
+  config,
   ...
 }: {
   home.packages = with pkgs;
@@ -15,8 +14,8 @@
       bats
       rustup
       # gcc
-      pkgsUnstable.lazygit
-      pkgsUnstable.lazydocker
+      pkgs.unstable.lazygit
+      pkgs.unstable.lazydocker
       nil
       nixd
       npins
@@ -33,7 +32,7 @@
       lixPackageSets.latest.nix-eval-jobs
     ]
     # only add nerd-fonts if we're on NixOS
-    ++ (lib.optionals (builtins.hasAttr "isNixOS" hostConfig && hostConfig.isNixOS) [
+    ++ (lib.optionals config.flakeHost.isNixOS [
       nerd-fonts.jetbrains-mono
       nerd-fonts.fira-code
       nerd-fonts.iosevka

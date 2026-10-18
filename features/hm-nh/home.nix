@@ -1,6 +1,6 @@
-{pkgsUnstable, ...}: {
+{pkgs, ...}: {
   programs.nh = {
     enable = true;
-    package = pkgsUnstable.nh;
+    package = pkgs.unstable.nh;
   };
 }

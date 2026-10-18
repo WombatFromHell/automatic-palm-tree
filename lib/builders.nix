@@ -2,16 +2,29 @@
 #
 # Consumes the feature machinery (lib/features.nix) for path resolution and the
 # feature options module. `mkUserHomeModule` is internal (wired by both
-# builders); the three public entries are re-exported by lib/default.nix.
+# builders); the two public entries are re-exported by lib/default.nix.
 {
   lib,
   self,
   inputs,
   features,
-  pinMetaOverlay,
+  flakeHostOptions,
   ...
 }: let
-  inherit (features) featureOptionsModule resolveFeaturePaths;
+  inherit (features) resolveFeaturePaths;
+
+  # Options every feature module may read, applied to both namespaces below.
+  featureOptionsModule = import (self + /modules/feature-options.nix);
+
+  # Host facts are declared once here and set per host, so consumers read
+  # config.flakeHost instead of an untyped injected record. The value is the host
+  # record narrowed to flakeHostOptions: a fact the schema declares but the record
+  # lacks is a loud missing-attribute error, an extra attribute is ignored.
+  mkHostFactsModule = host:
+    import (self + /modules/host-facts.nix) {
+      inherit lib flakeHostOptions;
+      flakeHost = lib.getAttrs (lib.attrNames flakeHostOptions) host;
+    };
 
   # ── Home Manager user module ──
   # Imported by the host's NixOS config (via buildNixosConfigurations) and by
@@ -24,34 +37,27 @@
     homeFeaturePaths = resolveFeaturePaths host.features "home";
     userHomeModules = host.homeModules.${user} or [];
   in {
-    imports = lib.flatten [
+    imports =
       homeFeaturePaths
-      userHomeModules
-      featureOptionsModule
-      (self + /modules/defaults/home-manager.nix)
-    ];
-    _module.args.user = user;
+      ++ userHomeModules
+      ++ [
+        featureOptionsModule
+        (self + /modules/defaults/home-manager.nix)
+        (mkHostFactsModule host)
+      ];
+    home.username = lib.mkDefault user;
+    home.homeDirectory = lib.mkDefault "/home/${user}";
   };
 
-  # ── helper: emit a warning for admin users on non-NixOS hosts ──
-  checkAdminWarning = name: cfg: let
-    adminNames = lib.filter (n: cfg.users.${n}.isAdmin) (builtins.attrNames cfg.users);
-  in
-    lib.optionals (!cfg.isNixOS && adminNames != [])
-    ["${name}: 'isNixOS = false', but users.${lib.concatStringsSep ", " adminNames}.isAdmin = true! This is a no-op on standalone home-manager hosts."];
-
-  # ── helper: common special args for host modules ──
-  hostArgs = host: {
-    inherit inputs self;
-    hostConfig = host;
-  };
+  # ── helper: special args for host modules (three features build module paths from inputs) ──
+  inputArgs = {inherit inputs;};
 
   # ── helper: Home Manager wiring for NixOS hosts ──
-  mkHomeManagerModule = {host, ...}: {
+  mkHomeManagerModule = host: {
     home-manager = {
       useGlobalPkgs = true;
       useUserPackages = true;
-      extraSpecialArgs = {inherit (host) pkgsUnstable;} // hostArgs host;
+      extraSpecialArgs = inputArgs;
       users =
         lib.genAttrs host.hmUsernames (user:
           mkUserHomeModule {inherit user host;});
@@ -72,6 +78,8 @@
                 resolveFeaturePaths host.features "nixos"
                 ++ [featureOptionsModule];
             }
+            # Host facts (config.flakeHost)
+            (mkHostFactsModule host)
             # Nix daemon settings
             (self + /modules/nix-settings.nix)
             # Common NixOS defaults + user defaults (merged)
@@ -80,17 +88,14 @@
             host.nixosModules
             # Home Manager integration
             inputs.home-manager.nixosModules.home-manager
-            # Inline: unfree pkgs, pin contract, pkgsUnstable, warnings
-            ({lib, ...}: {
-              nixpkgs.config.allowUnfree = true;
-              nixpkgs.overlays = [pinMetaOverlay];
-              warnings = host.warnings or [];
-              _module.args.pkgsUnstable = host.pkgsUnstable;
-            })
+            # Inline: one package set per host
+            {
+              nixpkgs.pkgs = host.pkgs;
+            }
             # Home Manager wiring
-            (mkHomeManagerModule {inherit host;})
+            (mkHomeManagerModule host)
           ];
-          specialArgs = hostArgs host;
+          specialArgs = inputArgs;
         }
     )
     nixosHosts;
@@ -107,9 +112,8 @@
             (self + /modules/nix-settings.nix)
             (mkUserHomeModule {inherit user host;})
             {targets.genericLinux.enable = lib.mkDefault true;}
-            {warnings = host.warnings or [];}
           ];
-          extraSpecialArgs = {inherit (host) pkgsUnstable;} // hostArgs host;
+          extraSpecialArgs = inputArgs;
         };
     in
       map (user: lib.nameValuePair "${user}@${host.name}" (mkHomeConfig user)) host.hmUsernames;
@@ -119,6 +123,5 @@ in {
   inherit
     buildNixosConfigurations
     buildHomeConfigurations
-    checkAdminWarning
     ;
 }

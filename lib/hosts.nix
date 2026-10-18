@@ -2,7 +2,6 @@
   lib,
   self,
   hostOptions,
-  checkAdminWarning,
 }: let
   # ── host discovery ──
   hostsDir = self + /hosts;
@@ -32,11 +31,16 @@
       else null;
   };
 
-  validateHost = path:
+  # A `home-<user>.nix` file implies that user, so its entry is authored here as
+  # empty and the user submodule fills enabled/isAdmin/hmEnabled defaults.
+  validateHost = path: autoUsers:
     lib.evalModules {
       modules = [
         hostOptions
         (import path {inherit self lib;})
+        ({config, ...}: {
+          users = lib.genAttrs (autoUsers ++ lib.attrNames config.homeModules) (_: {});
+        })
       ];
     };
 
@@ -73,38 +77,40 @@
     };
 
   enrichHost = evaluatedConfig: autoModules: let
-    allUsernames = lib.unique (
-      (builtins.attrNames autoModules.homeModules)
-      ++ (builtins.attrNames evaluatedConfig.homeModules)
-    );
-    impliedUsers = lib.genAttrs allUsernames (_: {enabled = true;});
-    mergedUsers = impliedUsers // evaluatedConfig.users;
-    enabledUsers = lib.filterAttrs (_: u: u.enabled) mergedUsers;
-    osUsernames = lib.attrNames enabledUsers;
+    enabledUsernames = lib.attrNames (lib.filterAttrs (_: u: u.enabled) evaluatedConfig.users);
     hasHomeModule = u: autoModules.homeModules ? ${u} || evaluatedConfig.homeModules ? ${u};
-    hmEnabledFor = u: let uInfo = mergedUsers.${u}; in !(uInfo ? hmEnabled) || uInfo.hmEnabled;
-    hmUsernames = builtins.filter (u: hasHomeModule u && hmEnabledFor u) osUsernames;
   in {
     nixosModules = autoModules.nixosModules ++ evaluatedConfig.nixosModules;
     homeModules = autoModules.homeModules // evaluatedConfig.homeModules;
-    inherit osUsernames hmUsernames;
+    osUsernames = enabledUsernames;
+    hmUsernames = builtins.filter (u: hasHomeModule u && evaluatedConfig.users.${u}.hmEnabled) enabledUsernames;
   };
 
-  buildHost = filename: type: let
-    entry = parseHostEntry filename type;
+  buildHost = entry: let
     inherit (entry) isDir name path hostDir;
-    evaluatedHost = validateHost path;
-    evaluatedConfig = evaluatedHost.config;
     autoModules = autoDiscoverModules isDir hostDir;
+    evaluatedConfig =
+      (validateHost path (builtins.attrNames autoModules.homeModules)).config;
     enrichedHost = enrichHost evaluatedConfig autoModules;
-    warnings = checkAdminWarning name evaluatedConfig;
   in
     evaluatedConfig
     // enrichedHost
-    // {inherit name;}
-    // lib.optionalAttrs (warnings != []) {inherit warnings;};
+    // {inherit name;};
 
-  discoveredHosts = lib.mapAttrs buildHost hostEntries;
+  # Hosts are keyed by their own name (`name` above, the same name `<user>@<host>`
+  # uses), not by file name, so every public output agrees on one host name.
+  # A flat `foo.nix` beside a `foo/` directory would silently overwrite, so
+  # discovery throws instead.
+  namedHosts = map (filename: let
+    entry = parseHostEntry filename entries.${filename};
+  in
+    lib.nameValuePair entry.name (buildHost entry)) (builtins.attrNames hostEntries);
+  hostNames = map (pair: pair.name) namedHosts;
+  duplicateName = lib.findFirst (n: lib.count (x: x == n) hostNames > 1) null hostNames;
+  discoveredHosts =
+    if duplicateName != null
+    then throw "Two host definitions resolve to the name '${duplicateName}' (for example hosts/${duplicateName}.nix beside hosts/${duplicateName}/default.nix): rename one."
+    else builtins.listToAttrs namedHosts;
 in {
   inherit discoveredHosts;
 }

@@ -2,9 +2,7 @@
 
 set -euo pipefail
 
-# ==============================================================================
-# ZONE 1: CONFIGURATION
-# ==============================================================================
+# Configuration
 readonly CONTAINER_NAME="bravebox"
 if [ -f "$HOME/.local/bin/scripts/chromium-flags.sh" ]; then
   CHROMIUM_FLAGS_SCRIPT="$HOME/.local/bin/scripts/chromium-flags.sh"
@@ -15,14 +13,12 @@ readonly NOTIFY_APP="brave-wrapper"
 readonly BROWSER_CANDIDATES=(brave brave-browser-beta brave-browser)
 readonly FLATPAK_ID="com.brave.Browser"
 
-# Dependency Injection for Testing
+# Override CONTAINER_ENV_FILE to fake container detection in tests
 CONTAINER_ENV_FILE="${CONTAINER_ENV_FILE:-/run/.containerenv}"
 DOCKER_ENV_FILE="${DOCKER_ENV_FILE:-/.dockerenv}"
 PROC_CGROUP_PATH="${PROC_CGROUP_PATH:-/proc/1/cgroup}"
 
-# ==============================================================================
-# ZONE 2: LOGIC (Pure Decision Making)
-# ==============================================================================
+# Launcher detection
 
 is_in_container() {
   [[ -n "${CONTAINER_ID:-}" ]] ||
@@ -79,9 +75,7 @@ determine_launch_method() {
   fi
 }
 
-# ==============================================================================
-# ZONE 3: ACTIONS (Strategy Pattern & Execution)
-# ==============================================================================
+# Update paths
 
 notify() {
   local title="$1" body="$2" urgency="${3:-normal}" timeout="${4:-3000}"
@@ -101,7 +95,7 @@ run_command_or_fail() {
   "$@"
 }
 
-# --- Update Strategy: Flatpak ---
+# Update: flatpak
 _update_strategy_flatpak() {
   local target="$1"
   echo "Checking for flatpak updates for ${target}..."
@@ -127,7 +121,7 @@ _update_strategy_flatpak() {
   return "$rc"
 }
 
-# --- Update Strategy: DNF (Direct) ---
+# Update: dnf
 _update_strategy_dnf() {
   local target="$1"
   echo "Checking for ${target} updates via dnf..."
@@ -157,7 +151,7 @@ _update_strategy_dnf() {
   return "$actual_rc"
 }
 
-# --- Unified Update Interface (The Context) ---
+# Update entry point
 perform_browser_update() {
   local strategy="${1}" # 'flatpak' or 'dnf'
   local target="${2}"   # The ID or Binary name
@@ -189,9 +183,7 @@ execute_launch() {
   esac
 }
 
-# ==============================================================================
-# ZONE 4: ORCHESTRATION (CLI & Main)
-# ==============================================================================
+# CLI
 
 _dispatch() {
   local cmd="$1"

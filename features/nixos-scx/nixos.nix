@@ -1,6 +1,6 @@
 {
   inputs,
-  pkgsUnstable,
+  pkgs,
   ...
 }: {
   imports = [
@@ -9,7 +9,7 @@
 
   services.scx-loader = {
     enable = true;
-    package = pkgsUnstable.scx-loader;
+    package = pkgs.unstable.scx-loader;
 
     config = {
       default_mode = "Auto";

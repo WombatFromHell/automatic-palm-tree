@@ -1,11 +1,10 @@
 {
   config,
-  pkgsUnstable,
-  inputs,
   lib,
+  pkgs,
   ...
 }: let
-  dcalPkg = inputs.dcal.packages.${pkgsUnstable.system}.default;
+  dcalPkg = pkgs.unstable.flakePackages.dcal.${pkgs.unstable.system}.default;
   cfg = config.features.dcal;
 in {
   options.features.dcal = {
@@ -46,7 +45,7 @@ in {
 
       Service = {
         Type = "simple";
-        ExecCondition = "${pkgsUnstable.bash}/bin/sh -c '[ \"$XDG_CURRENT_DESKTOP\" = \"niri\" ]'";
+        ExecCondition = "${pkgs.unstable.bash}/bin/sh -c '[ \"$XDG_CURRENT_DESKTOP\" = \"niri\" ]'";
 
         # Points directly to the binary inside the flake package
         ExecStart = "${dcalPkg}/bin/dcal";

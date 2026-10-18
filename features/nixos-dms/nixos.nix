@@ -1,12 +1,12 @@
 {
-  pkgsUnstable,
   lib,
   config,
+  pkgs,
   ...
 }: let
   cfg = config.features.dms;
-  dmsPkg = pkgsUnstable.dms-shell;
-  quickshellPkg = pkgsUnstable.quickshell;
+  dmsPkg = pkgs.unstable.dms-shell;
+  quickshellPkg = pkgs.unstable.quickshell;
 in {
   options.features.dms = {
     enable = lib.mkEnableOption "DMS (Desktop Media Session) service" // {default = true;};

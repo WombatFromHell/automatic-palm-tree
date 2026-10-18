@@ -1,14 +1,14 @@
 {
   lib,
-  hostConfig,
+  config,
   ...
 }: {
   config = {
     services = {
-      xserver.enable = lib.mkIf hostConfig.isQemuVM true;
+      xserver.enable = lib.mkIf config.flakeHost.isQemuVM true;
       displayManager.sddm = {
         enable = true;
-        wayland.enable = lib.mkOverride 500 (!hostConfig.isQemuVM);
+        wayland.enable = lib.mkOverride 500 (!config.flakeHost.isQemuVM);
       };
       desktopManager.plasma6.enable = true;
       xserver.xkb = {

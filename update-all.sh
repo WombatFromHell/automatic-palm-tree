@@ -26,6 +26,16 @@ for a in "$@"; do
   esac
 done
 
+# --- Symlink drift guard ----------------------------------------------------
+# features/<name>/update.sh symlinks lib/updater.sh. A copy still runs, then drifts
+# silently from the shared updater, so a copy stops here rather than at the pin.
+copies=$(find features -name update.sh ! -type l -printf '%p\n' | sort)
+if [[ -n $copies ]]; then
+  echo "==> features/ update.sh entries that are copies, not symlinks to lib/updater.sh:" >&2
+  sed 's/^/  /' <<<"$copies"
+  exit 1
+fi
+
 count=0
 while IFS= read -r script; do
   count=$((count + 1))

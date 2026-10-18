@@ -1,14 +1,10 @@
 {
   config,
-  inputs,
+  pkgs,
   ...
 }: {
   targets.genericLinux.nixGL = {
-    inherit (inputs.nixgl) packages;
+    packages = pkgs.flakePackages.nixgl;
     defaultWrapper = "mesa";
   };
-  lib.nixGL.wrapMesa = pkg:
-    if config.lib ? nixGL
-    then config.lib.nixGL.wrappers.mesa pkg
-    else pkg;
 }

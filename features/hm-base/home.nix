@@ -1,11 +1,7 @@
-{
-  pkgs,
-  pkgsUnstable,
-  ...
-}: {
+{pkgs, ...}: {
   home.packages = with pkgs; [
     # CLI utilities
-    pkgsUnstable.atuin
+    pkgs.unstable.atuin
     bat
     eza
     fd
@@ -26,6 +22,6 @@
     helix
     ncdu
     squashfuse
-    pkgsUnstable.yazi
+    pkgs.unstable.yazi
   ];
 }

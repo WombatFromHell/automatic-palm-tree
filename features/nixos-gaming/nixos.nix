@@ -1,8 +1,4 @@
-{
-  pkgs,
-  pkgsUnstable,
-  ...
-}: let
+{pkgs, ...}: let
   nscb = pkgs.callPackage ./_nscb_pkg.nix {};
   protonfetcher = pkgs.callPackage ./_protonfetcher_pkg.nix {};
 in {
@@ -21,7 +17,7 @@ in {
     protonfetcher
     #
     gamescope
-    pkgsUnstable.mesa
+    pkgs.unstable.mesa
     protonplus
     steam-run
     vulkan-tools

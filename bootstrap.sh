@@ -27,6 +27,7 @@ STAGE2_ANSIBLE_ROOT="$SSHFS_MNTDIR/Projects/silver-octo-bassoon/"
 ANSIBLE_ROOT="$HOME/.ansible-root"
 #
 NH_FLAKE_ROOT="$HOME/.config/flakeroot"
+NH_SPEC="github:NixOS/nixpkgs/nixos-26.05#nh"
 DOTFILES_DIR="$HOME/.config/dotfiles"
 
 first_stage() {
@@ -208,7 +209,7 @@ cmd_init() {
     if [ "$use_nh" = "true" ]; then
         local nh_cmd=(
             env NH_FLAKE_ROOT="$NH_FLAKE_ROOT"
-            nix run "github:NixOS/nixpkgs/nixos-26.05#nh" --
+            nix run "$NH_SPEC" --
         )
 
         if [ "$mode" = "os" ]; then
@@ -241,7 +242,7 @@ cmd_clean() {
     echo "Running 'nh clean all'..."
     local cmd=(
         env NIX_CONFIG="extra-experimental-features = nix-command flakes" "NH_FLAKE_ROOT=$NH_FLAKE_ROOT"
-        nix run "github:NixOS/nixpkgs/nixos-26.05#nh" --
+        nix run "$NH_SPEC" --
         clean all
     )
     "${cmd[@]}" "$@"

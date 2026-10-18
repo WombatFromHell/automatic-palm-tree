@@ -2,7 +2,6 @@
   lib,
   config,
   pkgs,
-  pkgsUnstable,
   ...
 }: {
   options.features.justnh.flakeRoot = lib.mkOption {
@@ -14,7 +13,7 @@
   config = {
     programs.nh = {
       enable = true;
-      package = pkgsUnstable.nh;
+      package = pkgs.unstable.nh;
     };
     environment = {
       systemPackages = with pkgs; [

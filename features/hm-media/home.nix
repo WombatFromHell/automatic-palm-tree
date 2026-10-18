@@ -1,5 +1,5 @@
-{pkgsUnstable, ...}: {
+{pkgs, ...}: {
   home.packages = [
-    pkgsUnstable.yt-dlp
+    pkgs.unstable.yt-dlp
   ];
 }

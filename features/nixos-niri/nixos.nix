@@ -1,6 +1,5 @@
 {
   pkgs,
-  pkgsUnstable,
   config,
   lib,
   ...
@@ -12,8 +11,8 @@
 
   config = lib.mkIf config.features.niri.enable {
     environment.systemPackages = with pkgs; [
-      pkgsUnstable.niri
-      pkgsUnstable.dsearch
+      pkgs.unstable.niri
+      pkgs.unstable.dsearch
       kdePackages.qt6ct
       liberation_ttf
       noto-fonts

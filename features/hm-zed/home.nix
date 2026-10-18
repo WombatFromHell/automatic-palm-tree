@@ -12,10 +12,7 @@
     then zed-custom.fhs
     else zed-custom.noFHS;
 
-  zedPackage =
-    if config.lib ? nixGL
-    then config.lib.nixGL.wrappers.mesa basePackage
-    else basePackage;
+  zedPackage = config.lib.nixGL.wrapMesa basePackage;
 in {
   options.features.zed-editor = {
     enable = lib.mkEnableOption "Zed-Preview high-performance code editor" // {default = true;};

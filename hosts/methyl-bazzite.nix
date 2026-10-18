@@ -1,11 +1,7 @@
 _: let
-  myHome = {
-    pkgs,
-    pkgsUnstable,
-    ...
-  }: {
+  myHome = {pkgs, ...}: {
     home.packages = with pkgs; [
-      pkgsUnstable.yt-dlp
+      pkgs.unstable.yt-dlp
       #
       trash-cli
     ];

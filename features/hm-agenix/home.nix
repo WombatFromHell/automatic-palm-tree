@@ -6,5 +6,5 @@
   system = pkgs.stdenv.hostPlatform.system;
 in {
   imports = [inputs.agenix.homeManagerModules.default];
-  home.packages = [inputs.agenix.packages.${system}.default];
+  home.packages = [pkgs.flakePackages.agenix.${system}.default];
 }

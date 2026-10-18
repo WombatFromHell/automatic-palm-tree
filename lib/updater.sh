@@ -43,11 +43,13 @@ STRATEGY=$(j .strategy)
 URL=$(j .url)
 
 meta_version() { j .version; }
-meta_hash() { jq -r ".hashes[\"$1\"]" "$META"; }
+meta_hash() { jq -r --arg s "$1" '.hashes[$s] // ""' "$META"; }
 systems() { jq -r '.hashes | keys[]' "$META"; }
 arch_of() { jq -r --arg s "$1" '.arches[$s] // ""' "$META"; }
 
 # render_url <system> <version> -> expanded asset/archive URL
+# ponytail: template expansion is duplicated in lib/pin-meta.nix releaseAsset; keep in sync,
+# upgrade path is a one-shot parity check over features/*/metadata.json
 render_url() {
   local u="$URL"
   u="${u//\{repo\}/$REPO}"

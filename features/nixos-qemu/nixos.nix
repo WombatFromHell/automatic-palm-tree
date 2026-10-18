@@ -1,18 +1,18 @@
-{pkgsUnstable, ...}: {
+{pkgs, ...}: {
   virtualisation.libvirtd = {
     enable = true;
     qemu = {
-      package = pkgsUnstable.qemu_kvm;
+      package = pkgs.unstable.qemu_kvm;
       runAsRoot = true;
       swtpm.enable = true;
-      vhostUserPackages = [pkgsUnstable.virtiofsd];
+      vhostUserPackages = [pkgs.unstable.virtiofsd];
       # Declarative OVMF/UEFI support
       # This replaces the manual ~/.config/libvirt/qemu.conf nvram edit
       ovmf = {
         enable = true;
         packages = [
-          pkgsUnstable.OVMF.fd
-          pkgsUnstable.AAVMF.fd
+          pkgs.unstable.OVMF.fd
+          pkgs.unstable.AAVMF.fd
         ];
       };
     };

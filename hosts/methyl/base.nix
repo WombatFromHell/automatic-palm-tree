@@ -10,8 +10,6 @@
       "kvm.report_ignored_msrs=0"
     ];
   };
-  networking.hostName = lib.mkDefault "methyl";
-
   services = {
     openssh.enable = true;
   };

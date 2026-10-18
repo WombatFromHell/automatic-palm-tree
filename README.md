@@ -22,7 +22,7 @@ _: {
   isNixOS = false;
   features = [ "hm-base" ];
   homeModules.someuser = [{
-    home.packages = with pkgsUnstable; [ helix tmux ];
+    home.packages = with pkgs.unstable; [ helix tmux ];
   }];
 }
 ```
@@ -56,11 +56,11 @@ _: {
 }
 ```
 
-`home-<user>.nix` — plain Home Manager module (`pkgs`, `pkgsUnstable`, `hostConfig` available):
+`home-<user>.nix` — plain Home Manager module (`pkgs`, `config.flakeHost` available):
 
 ```nix
-{ pkgsUnstable, ... }: {
-  home.packages = with pkgsUnstable; [ heroic khal trash-cli ];
+{ pkgs, ... }: {
+  home.packages = with pkgs.unstable; [ heroic khal trash-cli ];
   programs.gpg.enable = true;
 }
 ```

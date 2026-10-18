@@ -2,18 +2,15 @@
   lib,
   pkgs,
   config,
-  hostConfig,
   ...
 }: {
   system.stateVersion = "25.11";
+  networking.hostName = lib.mkDefault config.flakeHost.name;
   programs.fish.enable = lib.mkDefault true;
   boot.kernelPackages = pkgs.linuxPackages_latest;
 
-  users.users = lib.genAttrs hostConfig.osUsernames (username: let
-    userCfg =
-      if builtins.hasAttr username hostConfig.users
-      then hostConfig.users.${username}
-      else {};
+  users.users = lib.genAttrs config.flakeHost.osUsernames (username: let
+    userCfg = config.flakeHost.users.${username} or {};
     isAdmin = userCfg.isAdmin or false;
     featureExtraGroups = lib.concatLists (lib.attrValues config.extraGroups);
   in {

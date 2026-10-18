@@ -2,11 +2,10 @@
   lib,
   config,
   pkgs,
-  pkgsUnstable,
   ...
 }: let
   cfg = config.features.dms;
-  dmsPkg = pkgsUnstable.dms-shell;
+  dmsPkg = pkgs.unstable.dms-shell;
 in {
   options.features.dms = {
     enable = lib.mkEnableOption "DMS (Desktop Media Session) service" // {default = true;};

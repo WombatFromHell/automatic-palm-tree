@@ -1,3 +1,3 @@
-{pkgsUnstable, ...}: {
-  home.packages = [pkgsUnstable.herdr];
+{pkgs, ...}: {
+  home.packages = [pkgs.unstable.herdr];
 }

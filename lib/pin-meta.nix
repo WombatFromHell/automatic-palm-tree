@@ -3,14 +3,11 @@
 # Owns what lib/updater.sh writes and what features/*/_package.nix reads:
 # version (tag/commit), url (template with {repo} {version} {arch}),
 # arches (nix system -> release-arch token), hashes (nix system -> asset hash).
-# modules/default.nix injects it into the host package sets as `pinMeta`, so a
-# derivation takes it like any other build dependency (`pinMeta.releaseAsset pin system`)
+# lib/default.nix puts this attrset into both host package sets as the `pinMeta`
+# member, so a derivation takes it like any other build dependency (`pinMeta.releaseAsset pin system`)
 # and never re-implements the template or the lookup.
 {lib, ...}: let
   inherit (lib) attrNames concatStringsSep filter hasAttr head last replaceStrings splitString;
-
-  # parse a pin file (this Nix has no native JSON import)
-  readPin = path: builtins.fromJSON (builtins.readFile path);
 
   # ── boundary check: arches and hashes must describe the same systems ──
   # Runs on every resolution, so a malformed pin names the offending key here
@@ -34,6 +31,8 @@
     or (throw "metadata for '${pin.repo}' pins no hash for system '${system}'. Pinned systems: ${concatStringsSep ", " (pinnedSystems pin)}.");
 
   # release asset for one system: fetchurl-ready {url, sha256}
+  # ponytail: template expansion is duplicated in lib/updater.sh render_url; keep in sync,
+  # upgrade path is a one-shot parity check over features/*/metadata.json
   releaseAsset = pin: system: let
     arch =
       pin.arches.${system}
@@ -53,9 +52,7 @@
     hash = assetHash pin system;
   };
   pinContract = {
-    inherit readPin releaseAsset gitSource pinnedSystems;
+    inherit releaseAsset gitSource pinnedSystems;
   };
 in
-  # `overlay` is how the contract lands in a package set, so callPackage can
-  # supply it to _package.nix like a build dependency (see DESIGN.md).
-  pinContract // {overlay = _final: _prev: pinContract;}
+  pinContract
