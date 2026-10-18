@@ -24,20 +24,21 @@
 
   system = stdenv.hostPlatform.system;
 
-  # Per-system release asset from metadata hashes
-  info = let
-    sha256 = meta.hashes.${system} or null;
-  in
-    if sha256 == null
-    then lib.throw "zed-editor-bin: unsupported system ${system}. Available: ${toString (lib.attrNames meta.hashes)}"
-    else {
-      url = "https://github.com/zed-industries/zed/releases/download/v${version}/zed-linux-${
-        if system == "x86_64-linux"
-        then "x86_64"
-        else "aarch64"
-      }.tar.gz";
-      inherit sha256;
-    };
+  # Release asset URL and hash come from the metadata update.sh verifies
+  renderUrl = sys:
+    lib.replaceStrings ["{repo}" "{version}" "{arch}"] [
+      meta.repo
+      version
+      meta.arches.${sys} or (throw "zed-editor-bin: metadata arches has no ${sys}. Available: ${toString (lib.attrNames meta.arches)}")
+    ]
+    meta.url;
+
+  releaseAsset = {
+    url = renderUrl system;
+    sha256 =
+      meta.hashes.${system}
+      or (throw "zed-editor-bin: unsupported system '${system}'. Available: ${toString (lib.attrNames meta.hashes)}");
+  };
 
   nixDeps = [
     glib
@@ -86,7 +87,7 @@ in
     nativeBuildInputs = [patchelf makeWrapper];
     buildInputs = nixDeps;
 
-    src = fetchurl {inherit (info) url sha256;};
+    src = fetchurl {inherit (releaseAsset) url sha256;};
 
     phases = ["unpackPhase" "installPhase"];
 

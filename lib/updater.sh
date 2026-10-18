@@ -97,44 +97,47 @@ verify_pin() {
 
 # echo the latest auto-discoverable version, or nothing if strategy is "none"
 latest_version() {
-  local tag
+  local endpoint filter tag
   case "$STRATEGY" in
   none)
-    echo ""
     return 0
     ;;
   latest)
-    tag=$(
-      curl -sfL -H "Accept: application/vnd.github+json" \
-        ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
-        "https://api.github.com/repos/${REPO}/releases/latest" | jq -r '.tag_name'
-    ) || die "Failed to query GitHub API"
+    endpoint="releases/latest"
+    filter='.tag_name'
     ;;
   semver)
-    tag=$(
-      curl -sfL -H "Accept: application/vnd.github+json" \
-        ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
-        "https://api.github.com/repos/${REPO}/releases?per_page=20" | jq -r '
-          [.[] | select(.prerelease == false) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))][0].tag_name
-        '
-    ) || die "Failed to query GitHub API"
+    endpoint="releases?per_page=20"
+    filter='[.[] | select(.prerelease == false) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))][0].tag_name'
     ;;
   *) die "unknown strategy '$STRATEGY' in $META" ;;
   esac
+  tag=$(
+    curl -sfL -H "Accept: application/vnd.github+json" \
+      ${GITHUB_TOKEN:+-H "Authorization: Bearer $GITHUB_TOKEN"} \
+      "https://api.github.com/repos/${REPO}/${endpoint}" | jq -r "$filter"
+  ) || die "Failed to query GitHub API"
   [[ $tag != "null" ]] || die "Could not resolve latest release for $REPO"
   printf '%s' "${tag#v}"
 }
 
 update_to() {
-  local ver=$1 sys h
-  meta_set --arg ver "$ver" '.version = $ver'
+  local ver=$1 sys h hashes='{}'
   for sys in $(systems); do
     echo "==> Prefetching $sys..." >&2
     h=$(fetch_hash "$(render_url "$sys" "$ver")") || die "Failed to prefetch $sys at $ver"
     echo "    -> $h" >&2
-    meta_set --arg sys "$sys" --arg h "$h" '.hashes[$sys] = $h'
+    hashes=$(jq -c -n --argjson h "$hashes" --arg s "$sys" --arg v "$h" '.h[$s] = $v')
   done
+  meta_set --arg ver "$ver" --argjson hashes "$hashes" '.version = $ver | .hashes = $hashes'
   echo "==> Updated $META to version $ver" >&2
+}
+
+# CUR/LATEST are globals so both entry paths issue one upstream query.
+update_available() {
+  CUR=$(meta_version)
+  LATEST=$(latest_version) || die "latest_version failed"
+  [[ -n $LATEST && $LATEST != "$CUR" ]]
 }
 
 main() {
@@ -146,10 +149,8 @@ main() {
     if [[ $KIND == nar ]]; then
       verify_pin || exit 1
     fi
-    local latest
-    latest=$(latest_version) || die "latest_version failed"
-    if [[ -n $latest && $latest != "$(meta_version)" ]]; then
-      echo "==> Update available: $(meta_version) -> $latest" >&2
+    if update_available; then
+      echo "==> Update available: $CUR -> $LATEST" >&2
       exit 1
     fi
     echo "==> Already up to date." >&2
@@ -159,15 +160,12 @@ main() {
     update_to "$arg"
     return 0
   fi
-  local cur latest
-  cur=$(meta_version)
-  latest=$(latest_version) || die "latest_version failed"
-  if [[ -n $latest && $latest != "$cur" ]]; then
-    echo "==> Updating $cur -> $latest" >&2
-    update_to "$latest"
+  if update_available; then
+    echo "==> Updating $CUR -> $LATEST" >&2
+    update_to "$LATEST"
   elif [[ $KIND == nar ]]; then
     verify_pin || exit 1
-    echo "==> Pin $cur is still valid." >&2
+    echo "==> Pin $CUR is still valid." >&2
   else
     echo "==> Already up to date." >&2
   fi

@@ -77,13 +77,7 @@
       (builtins.attrNames autoModules.homeModules)
       ++ (builtins.attrNames evaluatedConfig.homeModules)
     );
-    impliedUsers = builtins.listToAttrs (
-      map (user: {
-        name = user;
-        value = {enabled = true;};
-      })
-      allUsernames
-    );
+    impliedUsers = lib.genAttrs allUsernames (_: {enabled = true;});
     mergedUsers = impliedUsers // evaluatedConfig.users;
     enabledUsers = lib.filterAttrs (_: u: u.enabled) mergedUsers;
     osUsernames = lib.attrNames enabledUsers;

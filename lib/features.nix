@@ -19,19 +19,14 @@
   discoveredFeatures = lib.mapAttrs (featureName: _: let
     dirPath = featuresDir + "/${featureName}";
     files = builtins.readDir dirPath;
-    known = [
-      "nixos"
-      "home"
-    ];
+    known = ["nixos" "home"];
   in
-    builtins.listToAttrs (lib.concatMap (
-        p:
-          lib.optional (builtins.hasAttr "${p}.nix" files && files."${p}.nix" == "regular") {
-            name = p;
-            value = dirPath + "/${p}.nix";
-          }
-      )
-      known))
+    builtins.listToAttrs (map
+      (p: {
+        name = p;
+        value = dirPath + "/${p}.nix";
+      })
+      (lib.filter (p: (files."${p}.nix" or null) == "regular") known)))
   featureDirs;
 
   featureOptionsModule = {
@@ -62,10 +57,12 @@
   # A feature present without a module for this platform (hybrid) resolves to [].
   resolveFeaturePaths = featureList: platform:
     lib.flatten (
-      map (f:
-        if !builtins.hasAttr f discoveredFeatures
-        then throw "Unknown feature '${f}'. Available: ${availableFeatures}"
-        else lib.optional (builtins.hasAttr platform discoveredFeatures.${f}) discoveredFeatures.${f}.${platform})
+      map (
+        f: let
+          feature = discoveredFeatures.${f} or (throw "Unknown feature '${f}'. Available: ${availableFeatures}");
+        in
+          lib.optional (feature ? ${platform}) feature."${platform}"
+      )
       featureList
     );
 

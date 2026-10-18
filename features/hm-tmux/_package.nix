@@ -19,7 +19,7 @@
 
   hash =
     meta.hashes.${system}
-      or (lib.throw "tmux: unsupported system '${system}'. Available: ${toString (lib.attrNames meta.hashes)}");
+      or (throw "tmux: unsupported system '${system}'. Available: ${toString (lib.attrNames meta.hashes)}");
 
   src = fetchFromGitHub {
     owner = "tmux";

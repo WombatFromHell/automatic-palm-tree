@@ -21,10 +21,7 @@
     host,
   }: let
     homeFeaturePaths = resolveFeaturePaths host.features "home";
-    userHomeModules =
-      if builtins.hasAttr user host.homeModules
-      then host.homeModules.${user}
-      else [];
+    userHomeModules = host.homeModules.${user} or [];
   in {
     imports = lib.flatten [
       homeFeaturePaths

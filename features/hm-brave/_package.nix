@@ -48,24 +48,28 @@
 
   inherit (meta) version;
 
+  # Release asset URL comes from the metadata template that update.sh verifies
+  renderUrl = sys:
+    lib.replaceStrings ["{repo}" "{version}" "{arch}"] [
+      meta.repo
+      version
+      meta.arches.${sys} or (throw "brave-bin: metadata arches has no ${sys}. Available: ${toString (lib.attrNames meta.arches)}")
+    ]
+    meta.url;
+
   # Construct assets dynamically from metadata
   assets =
-    lib.mapAttrs (_: sha256: {
-      url = "https://github.com/brave/brave-browser/releases/download/v${version}/brave-browser_${version}_${
-        if builtins.elem system ["x86_64-linux"]
-        then "amd64"
-        else "arm64"
-      }.deb";
+    lib.mapAttrs (sys: sha256: {
+      url = renderUrl sys;
       inherit sha256;
     })
     meta.hashes;
 
   system = stdenv.hostPlatform.system;
 
-  info =
-    if lib.hasAttr system assets
-    then assets.${system}
-    else lib.throwError "brave-bin: unsupported system ${system}. Available: ${toString (lib.attrNames assets)}";
+  releaseAsset =
+    assets.${system}
+    or (throw "brave-bin: unsupported system ${system}. Available: ${toString (lib.attrNames assets)}");
 
   nixDeps = [
     alsa-lib
@@ -116,7 +120,7 @@ in
     nativeBuildInputs = [patchelf makeWrapper];
     buildInputs = nixDeps;
 
-    src = fetchurl {inherit (info) url sha256;};
+    src = fetchurl {inherit (releaseAsset) url sha256;};
 
     phases = ["unpackPhase" "installPhase"];
 
