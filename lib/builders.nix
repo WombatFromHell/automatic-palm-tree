@@ -8,6 +8,7 @@
   self,
   inputs,
   features,
+  pinMetaOverlay,
   ...
 }: let
   inherit (features) featureOptionsModule resolveFeaturePaths;
@@ -79,9 +80,10 @@
             host.nixosModules
             # Home Manager integration
             inputs.home-manager.nixosModules.home-manager
-            # Inline: unfree pkgs, pkgsUnstable, warnings
+            # Inline: unfree pkgs, pin contract, pkgsUnstable, warnings
             ({lib, ...}: {
               nixpkgs.config.allowUnfree = true;
+              nixpkgs.overlays = [pinMetaOverlay];
               warnings = host.warnings or [];
               _module.args.pkgsUnstable = host.pkgsUnstable;
             })

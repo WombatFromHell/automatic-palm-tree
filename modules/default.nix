@@ -16,11 +16,12 @@
     // {
       pkgs = import inputs.nixpkgs {
         inherit (host) system;
-        overlays = hostOverlays;
+        overlays = [flakeLib.pinMetaOverlay] ++ hostOverlays;
         config.allowUnfree = true;
       };
       pkgsUnstable = import inputs.nixpkgs-unstable {
         inherit (host) system;
+        overlays = [flakeLib.pinMetaOverlay];
         config.allowUnfree = true;
       };
     })

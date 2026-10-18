@@ -122,12 +122,12 @@ latest_version() {
 }
 
 update_to() {
-  local ver=$1 sys h hashes='{}'
+  local ver=$1 sys pinHash hashes='{}'
   for sys in $(systems); do
     echo "==> Prefetching $sys..." >&2
-    h=$(fetch_hash "$(render_url "$sys" "$ver")") || die "Failed to prefetch $sys at $ver"
-    echo "    -> $h" >&2
-    hashes=$(jq -c -n --argjson h "$hashes" --arg s "$sys" --arg v "$h" '.h[$s] = $v')
+    pinHash=$(fetch_hash "$(render_url "$sys" "$ver")") || die "Failed to prefetch $sys at $ver"
+    echo "    -> $pinHash" >&2
+    hashes=$(jq -c --arg s "$sys" --arg v "$pinHash" '.[$s] = $v' <<<"$hashes")
   done
   meta_set --arg ver "$ver" --argjson hashes "$hashes" '.version = $ver | .hashes = $hashes'
   echo "==> Updated $META to version $ver" >&2

@@ -2,6 +2,8 @@
   lib,
   stdenv,
   fetchFromGitHub,
+  readPin,
+  gitSource,
   autoreconfHook,
   bison,
   pkg-config,
@@ -11,26 +13,14 @@
   systemdLibs,
   libutempter,
 }: let
-  # Mutable pin metadata, updated by ./update.sh.
-  # version = release tag or full commit hash (passed as `rev`).
-  meta = builtins.fromJSON (builtins.readFile ./metadata.json);
+  # Mutable pin metadata, updated by ./update.sh (version = tag or commit hash).
+  pin = readPin ./metadata.json;
 
-  system = stdenv.hostPlatform.system;
-
-  hash =
-    meta.hashes.${system}
-      or (throw "tmux: unsupported system '${system}'. Available: ${toString (lib.attrNames meta.hashes)}");
-
-  src = fetchFromGitHub {
-    owner = "tmux";
-    repo = "tmux";
-    rev = meta.version;
-    inherit hash;
-  };
+  src = fetchFromGitHub (gitSource pin stdenv.hostPlatform.system);
 in
   stdenv.mkDerivation {
     pname = "tmux";
-    inherit (meta) version;
+    inherit (pin) version;
     inherit src;
 
     outputs = [

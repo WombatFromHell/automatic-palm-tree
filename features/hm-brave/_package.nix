@@ -4,6 +4,9 @@
   patchelf,
   makeWrapper,
   lib,
+  readPin,
+  releaseAsset,
+  pinnedSystems,
   # Runtime deps trimmed for brevity in this example, keep your full list
   alsa-lib,
   at-spi2-atk,
@@ -43,33 +46,15 @@
   vulkan-loader,
   wayland,
 }: let
-  # Load mutable metadata
-  meta = builtins.fromJSON (builtins.readFile ./metadata.json);
+  # Mutable pin metadata, written by ./update.sh
+  pin = readPin ./metadata.json;
 
-  inherit (meta) version;
-
-  # Release asset URL comes from the metadata template that update.sh verifies
-  renderUrl = sys:
-    lib.replaceStrings ["{repo}" "{version}" "{arch}"] [
-      meta.repo
-      version
-      meta.arches.${sys} or (throw "brave-bin: metadata arches has no ${sys}. Available: ${toString (lib.attrNames meta.arches)}")
-    ]
-    meta.url;
-
-  # Construct assets dynamically from metadata
-  assets =
-    lib.mapAttrs (sys: sha256: {
-      url = renderUrl sys;
-      inherit sha256;
-    })
-    meta.hashes;
+  inherit (pin) version;
 
   system = stdenv.hostPlatform.system;
 
-  releaseAsset =
-    assets.${system}
-    or (throw "brave-bin: unsupported system ${system}. Available: ${toString (lib.attrNames assets)}");
+  # Release asset URL + hash come from the shared pin contract
+  asset = releaseAsset pin system;
 
   nixDeps = [
     alsa-lib
@@ -120,7 +105,7 @@ in
     nativeBuildInputs = [patchelf makeWrapper];
     buildInputs = nixDeps;
 
-    src = fetchurl {inherit (releaseAsset) url sha256;};
+    src = fetchurl {inherit (asset) url sha256;};
 
     phases = ["unpackPhase" "installPhase"];
 
@@ -163,6 +148,6 @@ in
       changelog = "https://github.com/brave/brave-browser/blob/master/CHANGELOG_DESKTOP.md";
       mainProgram = executableName;
       license = licenses.mpl20;
-      platforms = attrNames assets;
+      platforms = pinnedSystems pin;
     };
   })

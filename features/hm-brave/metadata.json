@@ -8,8 +8,6 @@
   },
   "version": "1.97.59",
   "hashes": {
-    "h": {
-      "x86_64-linux": "sha256-Zm+Be2QKMoT7tcmzSRe3iFTirNkvp/661wTcKyk0m+U="
-    }
+    "x86_64-linux": "sha256-Zm+Be2QKMoT7tcmzSRe3iFTirNkvp/661wTcKyk0m+U="
   }
 }

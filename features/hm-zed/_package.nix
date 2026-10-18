@@ -16,29 +16,19 @@
   vulkan-loader,
   buildFHSEnv,
   lib,
+  readPin,
+  releaseAsset,
+  pinnedSystems,
 }: let
-  # Load mutable metadata
-  meta = builtins.fromJSON (builtins.readFile ./metadata.json);
+  # Mutable pin metadata, written by ./update.sh
+  pin = readPin ./metadata.json;
 
-  inherit (meta) version;
+  inherit (pin) version;
 
   system = stdenv.hostPlatform.system;
 
-  # Release asset URL and hash come from the metadata update.sh verifies
-  renderUrl = sys:
-    lib.replaceStrings ["{repo}" "{version}" "{arch}"] [
-      meta.repo
-      version
-      meta.arches.${sys} or (throw "zed-editor-bin: metadata arches has no ${sys}. Available: ${toString (lib.attrNames meta.arches)}")
-    ]
-    meta.url;
-
-  releaseAsset = {
-    url = renderUrl system;
-    sha256 =
-      meta.hashes.${system}
-      or (throw "zed-editor-bin: unsupported system '${system}'. Available: ${toString (lib.attrNames meta.hashes)}");
-  };
+  # Release asset URL + hash come from the shared pin contract
+  asset = releaseAsset pin system;
 
   nixDeps = [
     glib
@@ -87,7 +77,7 @@ in
     nativeBuildInputs = [patchelf makeWrapper];
     buildInputs = nixDeps;
 
-    src = fetchurl {inherit (releaseAsset) url sha256;};
+    src = fetchurl {inherit (asset) url sha256;};
 
     phases = ["unpackPhase" "installPhase"];
 
@@ -139,6 +129,6 @@ in
       changelog = "https://github.com/zed-industries/zed/releases/tag/v${finalAttrs.version}";
       mainProgram = executableName;
       license = licenses.gpl3Only;
-      platforms = attrNames meta.hashes;
+      platforms = pinnedSystems pin;
     };
   })

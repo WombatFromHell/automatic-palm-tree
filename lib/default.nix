@@ -11,8 +11,11 @@
   features = import ./features.nix {inherit lib self inputs;};
   inherit (features) discoveredFeatures featureOptionsModule resolveFeaturePaths resolveHostOverlays;
 
+  # ── pin metadata contract (lib/pin-meta.nix) ──
+  pinMetaOverlay = (import ./pin-meta.nix {inherit lib;}).overlay;
+
   # ── config builders (lib/builders.nix) ──
-  builders = import ./builders.nix {inherit lib self inputs features;};
+  builders = import ./builders.nix {inherit lib self inputs features pinMetaOverlay;};
   inherit (builders) buildNixosConfigurations buildHomeConfigurations checkAdminWarning;
 
   # ── host pipeline (lib/hosts.nix) ──
@@ -22,5 +25,5 @@
   };
   inherit (hosts) discoveredHosts;
 in {
-  inherit hostOptions discoveredFeatures featureOptionsModule resolveHostOverlays buildNixosConfigurations buildHomeConfigurations checkAdminWarning discoveredHosts;
+  inherit hostOptions discoveredFeatures featureOptionsModule resolveHostOverlays pinMetaOverlay buildNixosConfigurations buildHomeConfigurations checkAdminWarning discoveredHosts;
 }
