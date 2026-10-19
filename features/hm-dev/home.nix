@@ -12,6 +12,8 @@
       ansible-lint
       aria2
       bats
+      gh
+      oras
       rustup
       # gcc
       pkgs.unstable.lazygit
