@@ -10,6 +10,7 @@
     };
 
     nixpkgs-unstable.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1";
+    kait2en.url = "github:LukeChannings/KaiT2en-NixOS";
     dms = {
       url = "git+https://github.com/AvengeMedia/DankMaterialShell.git";
       inputs.nixpkgs.follows = "nixpkgs-unstable";

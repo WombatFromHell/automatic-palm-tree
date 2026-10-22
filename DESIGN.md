@@ -20,14 +20,20 @@ flakeroot/
 │   │   ├── nixos.nix               #   host wrapper: hw-config + base
 │   │   ├── home-josh.nix           #   per-user HM module
 │   │   └── hardware-configuration.nix
-│   └── methyl-nixos/               # NixOS host (QEMU VM — reuses methyl/)
-│       ├── default.nix
-│       ├── nixos.nix
-│       ├── home-josh.nix           #   re-imports ../methyl/home-josh.nix
-│       └── hardware-configuration.nix
-├── features/                       # 39 composable units, auto-discovered
+│   ├── methyl-nixos/               # NixOS host (QEMU VM — reuses methyl/)
+│   │   ├── default.nix
+│   │   ├── nixos.nix
+│   │   ├── home-josh.nix           #   re-imports ../methyl/home-josh.nix
+│   │   └── hardware-configuration.nix
+│   └── propyl/                     # NixOS host (MacBookPro16,2 / T2 POC — reuses methyl/)
+│       ├── default.nix             #   methyl facts + narrowed features (+ nixos-kait2en)
+│       ├── base.nix                #   loader/ssh/oomd, authored on top of the hw-config
+│       ├── nixos.nix               #   host wrapper: hw-config + base
+│       ├── home-josh.nix           #   stub: its own env, methyl's niri/dms options are absent
+│       └── hardware-configuration.nix  # placeholder in generated-file shape
+├── features/                       # 40 composable units, auto-discovered
 │   ├── hm-only    (14)             #   home.nix only
-│   ├── nixos-only (17)             #   nixos.nix only
+│   ├── nixos-only (18)             #   nixos.nix only
 │   ├── hybrid      (8)             #   home.nix + nixos.nix: hm-syncthing, nixos-dmemcg, nixos-dms, nixos-flatpak, nixos-kde, nixos-lsfg, nixos-niri, nixos-oom
 │   ├── _overlays.nix               #   optional: {inputs, ...}: [ … ] per feature
 │   └── extras                      #   _package.nix / _*.nix / bin/ / *.sh imported by the feature itself
@@ -231,6 +237,7 @@ graph LR
 | Decision                                     | Rationale                                                                                                                                                                                                                                                                                    |
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lib/` directory (was single `lib.nix`)      | Split by concern: `host-options`, `features`, `hosts`, `builders`; `default.nix` is the composition root re-exporting the public surface                                                                                                                                                     |
+| `hardware-configuration.nix` stays generated | The barrel imports it first and `base.nix` authors loader/ssh/services on top, so `nixos-generate-config` can overwrite the disk description with no config edits (methyl, methyl-nixos, propyl)                                                                                          |
 | `isNixOS` bool                               | Explicit host classification; `false` default keeps HM-only hosts terse                                                                                                                                                                                                                      |
 | `system` in host file                        | Single source of truth for `pkgs` system                                                                                                                                                                                                                                                     |
 | Flat `hosts/<name>.nix` + directory hosts    | Simple hosts stay one file; complex hosts auto-discover `nixos.nix`/`home-*.nix`                                                                                                                                                                                                             |
