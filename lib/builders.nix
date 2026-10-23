@@ -49,7 +49,7 @@
     home.homeDirectory = lib.mkDefault "/home/${user}";
   };
 
-  # ── helper: special args for host modules (three features build module paths from inputs) ──
+  # ── helper: special args for host modules (four features build module paths from inputs) ──
   inputArgs = {inherit inputs;};
 
   # ── helper: Home Manager wiring for NixOS hosts ──
