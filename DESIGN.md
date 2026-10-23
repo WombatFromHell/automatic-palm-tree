@@ -39,7 +39,9 @@ flakeroot/
 │   └── extras                      #   _package.nix / _*.nix / bin/ / *.sh imported by the feature itself
 ├── modules/
 │   ├── bootstrap.nix               # swapfile+zswap for /etc/nixos/swap-prepare.nix (bootstrap.sh)
-│   ├── nix-settings.nix            # substituters, trusted keys, nix.package
+│   ├── cache-registry.nix          # cache urls/keys + a ready-made NIX_CONFIG fragment
+│   ├── caches.nix                  # registry → nix.settings urls/keys + flakeCache gate + warnings
+│   ├── nix-settings.nix            # nix.package, GC, auto-optimise, extraOptions (fallback)
 │   ├── defaults/
 │   │   ├── home-manager.nix        # stateVersion, manual off, nixGL wrapMesa default
 │   │   └── nixos.nix               # stateVersion, fish, kernel + genAttrs osUsernames → users.users (+ extraGroups)
@@ -71,7 +73,8 @@ graph TB
     hostsLib -. "readDir hosts/\nfilter .nix / default.nix" .-> hosts["hosts/*.nix\nhosts/*/default.nix\n{system,isNixOS,users,features,\n nixosModules,homeModules}"]
     featLib -. "readDir features/\nknown={nixos,home,overlays}" .-> features["features/*/home.nix\nfeatures/*/nixos.nix\nfeatures/*/_overlays.nix (optional)\n+ _package.nix/bin/*.sh (feature-internal)"]
 
-    builders -- "consumed at build time" --> nixSettings["modules/nix-settings.nix\nsubstituters + nix.package"]
+    builders -- "consumed at build time" --> caches["modules/caches.nix\nregistry → nix.settings urls/keys\nflakeCache.ready"]
+    builders -- "consumed at build time" --> nixSettings["modules/nix-settings.nix\nnix.package + fallback"]
     builders -- "consumed at build time" --> defaults["modules/defaults/home-manager.nix\nmodules/defaults/nixos.nix (merged)"]
     libDefault -- "exposes" --> flakeOut["flake.nixosConfigurations\nflake.homeConfigurations"]
     flake -. "devShells.x86_64-linux.default" .-> devShell["pkgs.mkShell git pkgconf cmake"]
@@ -138,7 +141,7 @@ flowchart TD
     style H fill:#fff9c4
 ```
 
-`isQemuVM` and `bootstrap` (declared in `hostOptions`, `lib/host-options.nix`) are orthogonal — they don't affect host classification, only feature/overlay gating downstream.
+`isQemuVM` (declared in `hostOptions`, `lib/host-options.nix`) is orthogonal — it doesn't affect host classification, only feature/overlay gating downstream. Cache gating is not a host fact: it lives in `modules/caches.nix` (`flakeCache.enable` / `flakeCache.required`), because what a host substitutes from is a property of the registry, not of the machine.
 
 ---
 
@@ -180,7 +183,7 @@ A single walker owns discovery: `discoveredFeatures` is the one `readDir`, and `
 flowchart LR
     subgraph Mods ["nixosSystem modules — flattened"]
         feat["1 feature aggregator\n imports = resolveFeaturePaths 'nixos'\n + modules/feature-options.nix"]
-        nixSet["2 nix-settings\nsubstituters + nix.package"]
+        nixSet["2 caches + nix-settings\nurls/keys from flakeCache registry\nnix.package + fallback"]
         defNixos["3 defaults/nixos.nix\nstateVersion + fish + kernel\n+ genAttrs osUsernames → users.users\n  (+ extraGroups for isAdmin)"]
         hostMods["4 host.nixosModules\n auto nixos.nix + cfg.nixosModules"]
         hmMod["5 home-manager.nixosModules.home-manager"]
@@ -204,7 +207,7 @@ flowchart LR
         pkgsNode["pkgs = nixpkgs + baseOverlay + host overlays\nmembers: pinMeta, flakePackages, unstable"]
     end
     subgraph Mods2 ["homeManagerConfiguration modules"]
-        nixSet2["nix-settings.nix"]
+        nixSet2["caches.nix + nix-settings.nix"]
         userMod["mkUserHomeModule\n resolve 'home' + host.homeModules.<user>\n + modules/feature-options.nix\n + defaults/home-manager.nix"]
         generic["targets.genericLinux.enable\n = lib.mkDefault true"]
         nixSet2 --> userMod --> generic --> merged2["homeManagerConfiguration"]
@@ -251,7 +254,9 @@ graph LR
 | `specialArgs = {inherit inputs;}` | Only the flake inputs stay injected: three features build module paths from them at import time (`inputs.agenix.homeManagerModules.default` is evaluated before the module system runs). Package sets and host facts are module values instead (`nixpkgs.pkgs`, its `unstable` member, `config.flakeHost`) |
 | `hostsWithPkgs` in `lib/default.nix`         | Overlays resolved once, `pkgs` shared by both builders and reachable as `nixosConfigurations.<host>.pkgs` / `homeConfigurations.<user>@<host>.pkgs`; the loader keeps it internal because `nix flake check` warns on non-standard outputs and a public copy would drift from the configs                          |
 | `modules/defaults/*` collapsed (2 files)     | `home-manager.nix` (stateVersion, manual off, the nixGL `wrapMesa` wrapper) + merged `nixos.nix` (stateVersion/shell/kernel + `users.users` + `extraGroups` for `isAdmin`); always-on, so consumers call `config.lib.nixGL.wrapMesa` without a fallback |
-| `bootstrap` flag                             | Gates cache-dependent options during first deploy (`bootstrap.sh`)                                                                                                                                                                                                                           |
+| Cache gating from a registry, not a flag (`modules/caches.nix`) | One `flakeCache` module writes every cache's url/key into `nix.settings`, derives `flakeCache.ready` (required ⊆ enable), and warns by name when a feature needs a cache the host does not substitute from; `nix.extraOptions = "fallback = true"` makes it "substitute if served, build only if not", so a cache outage costs a local build instead of breaking the switch. Replaces the hand-flipped `flakeHost.bootstrap` flag, which broke eval whenever a cache was listed but not yet live (`flakeCache.strict = true` opts into that failure at switch time) |
+| `flakeCache.enable` defaults to every registry name | Declaring a cache is cheap (an eval-only url+key in `/etc/nix/nix.conf`); the gate is *required* ⊆ *enable*, so a feature opts itself out by not listing it — methyl keeps cachyos off, propyl gets `nixos-kait2en` on |
+| `nix run .#cache-check -- <host>` | Eval-only pre-flight: lists the paths a switch needs and HEADs `<hash>.narinfo` on the host's own substituters, so "what will build locally" is answerable before a switch on a RAM-constrained laptop |
 | `hmEnabled` per user                         | NixOS user exists without HM when `false`                                                                                                                                                                                                                                                    |
 | `extraGroups` aggregation                    | Features declare groups as a **by-key attrset** (`extraGroups = { foo = ["grp"]; }`); the single consumer (`defaults/nixos.nix`) flattens `attrValues` for `isAdmin` users — no last-wins collision, no `lib.mkAppend` (absent in nixpkgs). Warns if non-empty and `users.users` unavailable |
 | Plain `flake.nix` outputs (no `flake-parts`) | Single `x86_64-linux` system, `devShells.x86_64-linux.default` inline; removed framework tax (1 input, ~30 lock lines)                                                                                                                                                                       |

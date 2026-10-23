@@ -72,6 +72,8 @@
       _name: host:
         inputs.nixpkgs.lib.nixosSystem {
           modules = lib.flatten [
+            # Substitution first: caches.nix owns every url/key the feature modules below gate on.
+            (self + /modules/caches.nix)
             # Feature modules for the NixOS platform
             {
               imports =
@@ -109,6 +111,7 @@
         inputs.home-manager.lib.homeManagerConfiguration {
           inherit (host) pkgs;
           modules = [
+            (self + /modules/caches.nix)
             (self + /modules/nix-settings.nix)
             (mkUserHomeModule {inherit user host;})
             {targets.genericLinux.enable = lib.mkDefault true;}

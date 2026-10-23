@@ -12,11 +12,6 @@
 # config.flakeHost is typed with.
 let
   hostFacts = {
-    bootstrap = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Disable cache-dependent options during initial deployment.";
-    };
     system = lib.mkOption {
       type = lib.types.str;
       description = "System architecture (e.g., x86_64-linux).";

@@ -1,4 +1,5 @@
 # modules/nix-settings.nix
+# Daemon settings only. Substituters and public keys belong to modules/caches.nix (the registry).
 {
   lib,
   pkgs,
@@ -6,18 +7,6 @@
 }: {
   nix.settings = {
     experimental-features = ["nix-command" "flakes"];
-    bash-prompt-prefix = "(nix:$name) ";
-
-    extra-substituters = [
-      "https://nix-community.cachix.org/"
-      "https://xilo.nanogoblin.duckdns.org/c/default/xilopkgs"
-    ];
-    extra-trusted-public-keys = [
-      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
-      "xilopkgs:t7bPM4c3zgmTCtV7XYCDTGiShoplykV8ZhQnEbukaFU="
-    ];
-    trusted-users = ["@wheel"];
-
     connect-timeout = 5;
     stalled-download-timeout = 10;
     download-attempts = 2;

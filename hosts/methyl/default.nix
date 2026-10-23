@@ -1,5 +1,4 @@
 _: {
-  bootstrap = true; # set to false once flake is initialized (for caching)
   system = "x86_64-linux";
   isNixOS = true;
   isQemuVM = false;
@@ -20,6 +19,7 @@ _: {
     "hm-brave"
     #
     "hm-tmux"
+    "hm-njust"
     #
     "nixos-base"
     "nixos-audio"
@@ -29,7 +29,6 @@ _: {
     "nixos-print"
     "nixos-gaming"
     "nixos-scx"
-    "nixos-justnh"
     "nixos-udev"
     "nixos-flatpak"
     "nixos-podman"

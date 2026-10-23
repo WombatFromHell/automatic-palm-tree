@@ -24,6 +24,12 @@
   kait2enPkgs = inputs.kait2en.inputs.nixpkgs.legacyPackages.x86_64-linux;
   kait2enLib = inputs.kait2en.lib.x86_64-linux;
   inherit (kait2enLib) kait2enKernel;
+  # The brcm firmware needs the same locked nixpkgs (so outPath matches what their cache serves)
+  # and an unfree allowance scoped to that one package, instead of the host-wide `allowUnfree`.
+  kait2enUnfreePkgs = import inputs.kait2en.inputs.nixpkgs {
+    system = "x86_64-linux";
+    config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) ["brcm-firmware"];
+  };
 in {
   # The model-agnostic baseline (boot params, cdc_mbim blacklist, redistributable firmware,
   # PipeWire + rtkit). `nixosProfiles.macbookpro16-2` does not exist upstream yet — profiles
@@ -42,20 +48,35 @@ in {
       default = "16_2";
       description = "Model key for services.t2bce-audio-dsp.model (e.g. 16_2, 16_1, 9_1).";
     };
+    firmwareVersion = lib.mkOption {
+      type = lib.types.enum ["monterey" "ventura" "sonoma"];
+      default = "sonoma";
+      description = "macOS recovery image the brcm blobs are extracted from (upstream's enum).";
+    };
   };
 
   config = lib.mkMerge [
-    # Gate 1: the cache is deployed while `flakeHost.bootstrap` is true, so /etc/nix/nix.conf
-    # carries it before the switch that flips bootstrap = false picks up the patched kernel.
+    # Gate 1: name the cache this feature pulls from. modules/caches.nix writes the url and key
+    # into /etc/nix/nix.conf, and `flakeCache.ready` is what the gate below reads. bootstrap.sh
+    # hands the same urls+keys to the build daemon through NIX_CONFIG, so the first deploy
+    # substitutes instead of compiling the kernel locally.
     (lib.mkIf cfg.enable {
-      nix.settings.extra-substituters = ["https://nix.channings.me"];
-      nix.settings.extra-trusted-public-keys = ["garage:JZet/fsItH8cJ6SKLci1+BuMIQGDfZSa/8GxGpKcxss="];
+      flakeCache.required.kait2en = true;
     })
-    # Gate 2: the patched kernel and the T2 services only once bootstrap is off.
-    (lib.mkIf (cfg.enable && !config.flakeHost.bootstrap) {
+    # Gate 2: the patched kernel, its modules and the T2 services only once the cache is declared.
+    # The switch that ships the key builds locally (`fallback = true`); the next one substitutes.
+    (lib.mkIf (cfg.enable && config.flakeCache.ready) {
       hardware.kait2en = {
         enable = true;
-        firmware.enable = true;
+        firmware = {
+          enable = true;
+          version = cfg.firmwareVersion;
+          # Built with KaiT2en's own nixpkgs so outPath is the one their CI pushed to the cache;
+          # our chilled rev would produce an uncached hash and build it in a VM instead.
+          package = kait2enUnfreePkgs.callPackage "${inputs.kait2en.outPath}/nix/pkgs/brcm-firmware" {
+            version = cfg.firmwareVersion;
+          };
+        };
         # Generic installer branch (scripts/fedora/install-kernel-args.sh): amdgpu.aspm=1,
         # pcie_aspm=force. 16,1's ASPM-off is a Navi 14 quirk; 16,2 has no AMD GPU.
         amdgpuAspm = true;

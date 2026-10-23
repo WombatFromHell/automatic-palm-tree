@@ -28,6 +28,26 @@ ANSIBLE_ROOT="$HOME/.ansible-root"
 #
 NH_FLAKE_ROOT="$HOME/.config/flakeroot"
 NH_SPEC="github:NixOS/nixpkgs/nixos-26.05#nh"
+
+# Cache flags for every command this script runs: urls + keys come from
+# modules/cache-registry.nix, so the registry stays the only place a cache is written. Without them
+# a first switch builds cache-fed paths locally (kernel compile, firmware VM) on a machine with no
+# swap yet. argv beats env: `--option` survives sudo's env_reset and applies whether or not the
+# invoking user is a trusted user. Eval only - no builds.
+cache_flags=()
+cache_flags_init() {
+    local file="$SCRIPT_DIR/modules/cache-registry.nix"
+    local urls keys
+    urls="$(nix eval --impure --raw --file "$file" substituters)" || {
+        echo "ERROR: cannot eval cache urls from '$file'." >&2
+        return 1
+    }
+    keys="$(nix eval --impure --raw --file "$file" trustedPublicKeys)" || {
+        echo "ERROR: cannot eval cache keys from '$file'." >&2
+        return 1
+    }
+    cache_flags=(--option extra-substituters "$urls" --option extra-trusted-public-keys "$keys")
+}
 DOTFILES_DIR="$HOME/.config/dotfiles"
 
 first_stage() {
@@ -140,7 +160,7 @@ cmd_prepare_swap() {
     fi
 
     echo "Building swapfile + zswap config to avoid OOM during subsequent rebuild..."
-    if ! $maybe_sudo env NIX_CONFIG="$NIX_CONFIG" nixos-rebuild switch; then
+    if ! $maybe_sudo nixos-rebuild switch "${cache_flags[@]}"; then
         echo "WARN: swap preparation failed - continuing anyway." >&2
     else
         echo "============================================"
@@ -158,7 +178,9 @@ cmd_init() {
     local use_nh="${2:-false}"
     local flake="${NH_FLAKE_ROOT:-$SCRIPT_DIR}"
 
-    export NIX_CONFIG="extra-experimental-features = nix-command flakes"
+    if ! cache_flags_init; then
+        return 1
+    fi
 
     local mode
     local flake_ref="$flake"
@@ -214,18 +236,18 @@ cmd_init() {
 
         if [ "$mode" = "os" ]; then
             echo "Running 'nh os switch'..."
-            "${nh_cmd[@]}" os switch "$flake_ref" -- -L
+            "${nh_cmd[@]}" os switch "$flake_ref" -- "${cache_flags[@]}" -L
         else
             echo "Running 'nh home switch'..."
-            "${nh_cmd[@]}" home switch "$flake_ref" -- -L
+            "${nh_cmd[@]}" home switch "$flake_ref" -- "${cache_flags[@]}" -L
         fi
     else
         local cmd=(nix develop "$flake" -c)
 
         if [ "$mode" = "os" ]; then
-            cmd+=(sudo nixos-rebuild switch --flake "$flake_ref" -L)
+            cmd+=(sudo nixos-rebuild switch --flake "$flake_ref" "${cache_flags[@]}" -L)
         else
-            cmd+=(home-manager switch -L --flake "$flake_ref")
+            cmd+=(home-manager switch --flake "$flake_ref" "${cache_flags[@]}" -L)
         fi
 
         echo "Running inside flake dev shell..."
@@ -241,7 +263,7 @@ cmd_bootstrap() {
 cmd_clean() {
     echo "Running 'nh clean all'..."
     local cmd=(
-        env NIX_CONFIG="extra-experimental-features = nix-command flakes" "NH_FLAKE_ROOT=$NH_FLAKE_ROOT"
+        env "NH_FLAKE_ROOT=$NH_FLAKE_ROOT"
         nix run "$NH_SPEC" --
         clean all
     )
@@ -287,11 +309,10 @@ cmd_push() {
 
 cmd_shell() {
     echo "Opening dev shell for flake..."
-    local cmd=(
-        env NIX_CONFIG="extra-experimental-features = nix-command flakes"
-        nix develop
-    )
-    "${cmd[@]}"
+    if ! cache_flags_init; then
+        return 1
+    fi
+    nix develop "${cache_flags[@]}"
 }
 
 cmd_tuckr() {

@@ -38,6 +38,13 @@
   in {
     inherit (cfg) nixosConfigurations homeConfigurations;
 
+    # Pre-flight for a switch: eval-only path list + narinfo HEADs, no builds.
+    #   nix run .#cache-check -- propyl
+    apps.x86_64-linux.cache-check = {
+      type = "app";
+      program = "${self}/scripts/cache-check.sh";
+    };
+
     devShells.x86_64-linux.default = let
       pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
     in

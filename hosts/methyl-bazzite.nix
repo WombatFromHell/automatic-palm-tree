@@ -19,10 +19,10 @@ in {
     "hm-dev"
     "hm-gpg"
     "hm-media"
-    "hm-nh"
     "hm-xilo"
     "hm-herdr"
     "hm-agenix"
+    "hm-njust"
     #
     "hm-nixgl"
     #

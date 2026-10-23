@@ -29,9 +29,6 @@
       ty
       uv
       zellij
-      #
-      lixPackageSets.latest.nix-fast-build
-      lixPackageSets.latest.nix-eval-jobs
     ]
     # only add nerd-fonts if we're on NixOS
     ++ (lib.optionals config.flakeHost.isNixOS [

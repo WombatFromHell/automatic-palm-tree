@@ -6,10 +6,22 @@ Flake-driven, host-discovering config system for NixOS and Home Manager.
 
 ```bash
 export NH_FLAKE="$HOME/.config/flakeroot"
-nh os switch          # NixOS system + Home Manager
-nh home switch        # Home Manager only
-nix flake show        # List all discovered configs
+./bootstrap.sh init                   # day zero: NixOS system or Home Manager
+./bootstrap.sh init propyl            # explicit host
+./bootstrap.sh init josh@methyl       # explicit home config
+nh os switch                          # day 2+: NixOS system + Home Manager
+nh home switch                        # day 2+: Home Manager only
+nix flake show                        # List all discovered configs
 ```
+
+`bootstrap.sh init` passes the registry's cache urls and keys as
+`--option extra-substituters` / `--option extra-trusted-public-keys`, so a host whose `nix.conf`
+does not carry them yet fetches instead of compiling (a kernel build and a firmware VM on a
+RAM-constrained laptop). `--option` beats `NIX_CONFIG` because `sudo` wipes the environment and the
+flag needs no trusted user. After a NixOS switch, `/etc/nix/nix.conf` carries the caches from
+`flakeCache.enable`, so plain `nh os switch` is enough from then on.
+
+To opt a host out of cache substitution entirely, set `flakeCache.enable = []`.
 
 ## Single-File Host (HM-only)
 
@@ -17,7 +29,6 @@ nix flake show        # List all discovered configs
 
 ```nix
 _: {
-  bootstrap = true; # set to false after first build for caching
   system = "x86_64-linux";
   isNixOS = false;
   features = [ "hm-base" ];
@@ -33,7 +44,6 @@ _: {
 
 ```nix
 _: {
-  bootstrap = true;
   system   = "x86_64-linux";
   isNixOS  = true;
   users.someuser.isAdmin = true;
