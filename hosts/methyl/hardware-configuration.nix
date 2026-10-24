@@ -4,6 +4,7 @@
 {
   lib,
   modulesPath,
+  fsLib,
   ...
 }: {
   imports = [
@@ -17,18 +18,25 @@
     extraModulePackages = [];
   };
 
-  fileSystems = {
-    "/" = {
+  # The ext4 root is the only mount that takes the defaults; `/boot` is a
+  # self-contained EFI mount merged in after mkMounts so it inherits nothing.
+  # An empty entry means "defaults verbatim" — mkMounts omits `options` when the
+  # list is empty, which is what lets NixOS add `x-initrd.mount` to `/` itself.
+  fileSystems =
+    fsLib.mkMounts {
       device = "/dev/disk/by-uuid/5ac29929-ffb1-4c2d-b1b8-d6eb7f37496b";
       fsType = "ext4";
+    }
+    {
+      "/" = {};
+    }
+    // {
+      "/boot" = {
+        device = "/dev/disk/by-uuid/687A-4FCB";
+        fsType = "vfat";
+        options = ["fmask=0077" "dmask=0077"];
+      };
     };
-
-    "/boot" = {
-      device = "/dev/disk/by-uuid/687A-4FCB";
-      fsType = "vfat";
-      options = ["fmask=0077" "dmask=0077"];
-    };
-  };
 
   swapDevices = [];
 

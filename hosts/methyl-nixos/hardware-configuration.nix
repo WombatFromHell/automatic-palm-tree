@@ -3,11 +3,10 @@
 # to /etc/nixos/configuration.nix instead.
 {
   lib,
+  fsLib,
   modulesPath,
   ...
-}: let
-  btrfsOpts = ["noatime" "compress=zstd"];
-in {
+}: {
   imports = [
     (modulesPath + "/profiles/qemu-guest.nix")
   ];
@@ -19,56 +18,51 @@ in {
     extraModulePackages = [];
   };
 
-  fileSystems = {
-    "/" = {
+  # Subvols on the shared btrfs root; anything else (EFI, ext4, …) is a
+  # self-contained mount merged in after mkMounts so it inherits nothing.
+  fileSystems =
+    fsLib.mkMounts {
       device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
       fsType = "btrfs";
-      options = btrfsOpts ++ ["subvol=@"];
-    };
+      options = ["noatime" "compress=zstd"];
+    }
+    {
+      "/" = {
+        subvol = "@";
+      };
 
-    "/boot" = {
-      device = "/dev/disk/by-uuid/77D3-1E44";
-      fsType = "vfat";
-      options = ["fmask=0077" "dmask=0077"];
-    };
+      "/home" = {
+        subvol = "@home";
+      };
 
-    "/home" = {
-      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
-      fsType = "btrfs";
-      options = btrfsOpts ++ ["subvol=@home"];
-    };
+      "/nix" = {
+        subvol = "@nix";
+      };
 
-    "/nix" = {
-      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
-      fsType = "btrfs";
-      options = btrfsOpts ++ ["subvol=@nix"];
-    };
+      "/var/log" = {
+        neededForBoot = true;
+        subvol = "@log";
+      };
 
-    "/var/log" = {
-      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
-      fsType = "btrfs";
-      neededForBoot = true;
-      options = btrfsOpts ++ ["subvol=@log"];
-    };
+      "/var/cache" = {
+        subvol = "@cache";
+      };
 
-    "/var/cache" = {
-      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
-      fsType = "btrfs";
-      options = btrfsOpts ++ ["subvol=@cache"];
-    };
+      "/.snapshots" = {
+        subvol = "@snapshots/root";
+      };
 
-    "/.snapshots" = {
-      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
-      fsType = "btrfs";
-      options = btrfsOpts ++ ["subvol=@snapshots/root"];
+      "/home/.snapshots" = {
+        subvol = "@snapshots/home";
+      };
+    }
+    // {
+      "/boot" = {
+        device = "/dev/disk/by-uuid/77D3-1E44";
+        fsType = "vfat";
+        options = ["fmask=0077" "dmask=0077"];
+      };
     };
-
-    "/home/.snapshots" = {
-      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
-      fsType = "btrfs";
-      options = btrfsOpts ++ ["subvol=@snapshots/home"];
-    };
-  };
 
   swapDevices = [];
 

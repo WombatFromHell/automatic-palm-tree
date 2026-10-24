@@ -1,6 +1,6 @@
 {...}: {
   imports = [
-    ../methyl/base.nix
+    ../methyl-base/base.nix
     ./hardware-configuration.nix
   ];
 }

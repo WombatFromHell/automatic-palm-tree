@@ -50,7 +50,12 @@
   };
 
   # ── helper: special args for host modules (four features build module paths from inputs) ──
-  inputArgs = {inherit inputs;};
+  # fsLib reaches every module via specialArgs: nixosSystem (:103), HM integration (:60)
+  # and standalone HM configs (:~122), including generated hardware-configuration.nix.
+  inputArgs = {
+    inherit inputs;
+    fsLib = import (self + /lib/filesystems.nix) {inherit lib;};
+  };
 
   # ── helper: Home Manager wiring for NixOS hosts ──
   mkHomeManagerModule = host: {

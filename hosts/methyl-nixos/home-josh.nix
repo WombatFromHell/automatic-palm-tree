@@ -1,3 +1,10 @@
-{...}: {
-  imports = [../methyl/home-josh.nix];
+{pkgs, ...}: {
+  home.packages = with pkgs.unstable; [
+    trash-cli
+  ];
+
+  features = {
+    oomd.notify = true;
+    tmux-git.enable = true;
+  };
 }

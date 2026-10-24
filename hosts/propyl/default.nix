@@ -1,5 +1,5 @@
 _: let
-  base = import ../methyl/default.nix {};
+  base = import ../methyl-base/manifest.nix {};
 in
   base
   // {

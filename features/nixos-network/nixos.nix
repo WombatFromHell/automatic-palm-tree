@@ -8,8 +8,6 @@
       options cfg80211 ieee80211_regdom="US"
     '';
     kernel.sysctl = {
-      "net.ipv6.conf.all.use_tempaddr" = 2;
-      "net.ipv6.conf.default.use_tempaddr" = 2;
       "net.core.default_qdisc" = "fq_codel";
       "net.ipv4.tcp_congestion_control" = "bbr";
       "net.ipv6.tcp_congestion_control" = "bbr";
