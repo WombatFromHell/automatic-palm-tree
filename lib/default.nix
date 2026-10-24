@@ -21,9 +21,12 @@
   builders = import ./builders.nix {inherit lib self inputs features flakeHostOptions;};
   inherit (builders) buildNixosConfigurations buildHomeConfigurations;
 
+  # ── host helpers (lib/host-lib.nix) ──
+  hostLib = import ./host-lib.nix {inherit lib;};
+
   # ── host pipeline (lib/hosts.nix) ──
   hosts = import ./hosts.nix {
-    inherit lib self;
+    inherit lib self hostLib;
     inherit hostOptions;
   };
   inherit (hosts) discoveredHosts;

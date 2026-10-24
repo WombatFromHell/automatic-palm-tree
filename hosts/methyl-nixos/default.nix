@@ -1,7 +1,4 @@
-_: let
-  base = import ../methyl/default.nix {};
-in
-  base
-  // {
-    isQemuVM = true;
-  }
+{hostLib, ...}:
+hostLib.mergeModules (import ../methyl/default.nix {}) {
+  # DO OVERRIDES HERE
+}

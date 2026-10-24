@@ -1,6 +1,7 @@
 {
   lib,
   self,
+  hostLib,
   hostOptions,
 }: let
   # ── host discovery ──
@@ -37,7 +38,7 @@
     lib.evalModules {
       modules = [
         hostOptions
-        (import path {inherit self lib;})
+        (import path {inherit self lib hostLib;})
         ({config, ...}: {
           users = lib.genAttrs (autoUsers ++ lib.attrNames config.homeModules) (_: {});
         })
