@@ -58,40 +58,31 @@ in {
       };
     };
 
-    # ── Define the notify daemon globally if enabled ────────────────────────────
-    environment.etc = lib.mkIf cfg.notify {
-      "systemd/user/oomd-notify.service" = {
-        text = let
-          oomd-notify-daemon = pkgs.writeShellApplication {
-            name = "oomd-notify-daemon";
-            runtimeInputs = with pkgs; [systemd coreutils libnotify];
-            text = ''
-              journalctl -u systemd-oomd -f --output=cat | while read -r line; do
-                if echo "$line" | grep -q "Killed process"; then
-                  proc=$(echo "$line" | grep -oP '(?<=Killed process ).*?(?= \()' || echo "Unknown Process")
-                  notify-send -u critical "OOM Killer Active" "Process killed: $proc\nRAM/Swap pressure was too high."
-                elif echo "$line" | grep -q "Pressures"; then
-                  notify-send -u normal "Memory Pressure" "System is experiencing high memory pressure."
-                fi
-              done
-            '';
-          };
-        in ''
-          [Unit]
-          Description=OOM Killer Desktop Notification Daemon
-          BindsTo=graphical-session.target
-          After=graphical-session.target
-          PartOf=graphical-session.target
-
-          [Service]
-          Type=simple
-          ExecStart=${oomd-notify-daemon}/bin/oomd-notify-daemon
-          Restart=on-failure
-          RestartSec=5
-
-          [Install]
-          WantedBy=graphical-session.target
-        '';
+    # ── Notify daemon (user unit) ───────────────────────────────────────────────
+    systemd.user.services.oomd-notify = lib.mkIf cfg.notify {
+      description = "OOM Killer Desktop Notification Daemon";
+      wantedBy = ["graphical-session.target"];
+      partOf = ["graphical-session.target"];
+      after = ["graphical-session.target"];
+      serviceConfig = {
+        Restart = "on-failure";
+        RestartSec = 5;
+        ExecStart = lib.getExe (pkgs.writeShellApplication {
+          name = "oomd-notify-daemon";
+          runtimeInputs = with pkgs; [systemd coreutils gnugrep libnotify];
+          text = ''
+            journalctl -u systemd-oomd -f -n0 --output=cat | while read -r line; do
+              case "$line" in
+                Killed\ *)
+                  notify-send -u critical "OOM Killer Active" "$line"
+                  ;;
+                *[Pp]ressure*)
+                  notify-send -u normal "Memory Pressure" "High memory pressure detected."
+                  ;;
+              esac
+            done
+          '';
+        });
       };
     };
   };

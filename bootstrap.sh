@@ -124,53 +124,38 @@ second_stage() {
 }
 
 cmd_prepare_swap() {
-    # Skip if swapfile already exists (from a previous preparation or manual setup)
-    if [ -f /var/lib/swapfile ]; then
-        echo "Swapfile at /var/lib/swapfile already exists - skipping swap preparation."
-        return 0
-    fi
-
-    local swap_module="/etc/nixos/swap-prepare.nix"
-    local config_file="/etc/nixos/configuration.nix"
-    local source_module="$SCRIPT_DIR/modules/bootstrap.nix"
-
+    # Swap for the rebuild itself. The persistent swapfile is created by a systemd
+    # unit that only runs at boot of the *new* system, so the first rebuild has no
+    # swap at all and OOMs. zram needs no disk and no filesystem (a btrfs swapfile
+    # cannot be compressed or snapshotted), so make one here and keep going.
     local maybe_sudo=""
     if [ "$(id -u)" -ne 0 ]; then
         maybe_sudo="sudo"
     fi
 
-    if [ ! -d /etc/nixos ]; then
-        echo "WARN: /etc/nixos does not exist - cannot prepare swapfile." >&2
+    # Any active swap (zram or a swapfile) already covers the rebuild.
+    if [ "$(tail -n +2 /proc/swaps | wc -l)" -gt 0 ]; then
+        echo "Swap already active - skipping swap preparation."
         return 0
     fi
 
-    if [ ! -f "$source_module" ]; then
-        echo "WARN: source module '$source_module' not found - cannot prepare swapfile." >&2
+    echo "Creating zram swap to avoid OOM during the rebuild..."
+    if ! $maybe_sudo bash -c '
+        modprobe zram
+        ram_kb=$(awk "/MemTotal/ {print \$2}" /proc/meminfo)
+        size=$((ram_kb / 2 * 1024)) # half of RAM, in bytes; zram is compressed, so it costs less than it swaps
+        target=/sys/block/zram0/reset
+        [ -w "$target" ] || target=/sys/block/zram0/disksize
+        [ -w /sys/block/zram0/compression ] && echo zstd > /sys/block/zram0/compression
+        echo "$size" > "$target"
+        mkswap /dev/zram0 >/dev/null
+        swapon -p 5 /dev/zram0
+    '; then
+        echo "WARN: zram swap setup failed - continuing anyway." >&2
         return 0
     fi
 
-    # Copy the bootstrap swap + zswap module from the flake (uses boot.kernelParams
-    # instead of boot.zswap.* so it works on any NixOS release)
-    $maybe_sudo cp -f "$source_module" "$swap_module"
-
-    # Inject into imports list if not already present.
-    # Handles both inline (imports = [) and split-line (imports =\n  [) formats.
-    if ! grep -q "swap-prepare" "$config_file" 2>/dev/null; then
-        sed -i '/imports\s*=/{:a;/\[/!{N;ba};s/\[/[\n    .\/swap-prepare.nix/}' "$config_file"
-    fi
-
-    echo "Building swapfile + zswap config to avoid OOM during subsequent rebuild..."
-    if ! $maybe_sudo nixos-rebuild switch "${cache_flags[@]}"; then
-        echo "WARN: swap preparation failed - continuing anyway." >&2
-    else
-        echo "============================================"
-        echo "  Swapfile and zswap are now configured."
-        echo "  REBOOT your machine, then run:"
-        echo "    ./bootstrap.sh init"
-        echo "  to perform the real rebuild."
-        echo "============================================"
-        exit 0
-    fi
+    echo "zram swap active: $(swapon --show)"
 }
 
 cmd_init() {
@@ -226,6 +211,40 @@ cmd_init() {
     # Ensure a swapfile exists before running a full system rebuild
     if [ "$mode" = "os" ]; then
         cmd_prepare_swap
+    fi
+
+    # Two-stage bootstrap (opt-in): a machine with too little memory + swap for the full build
+    # switches the light `<host>-boot` config first — that one carries the swap feature and
+    # nothing else — then the full config. A host without `bootFeatures` has no `-boot`
+    # attribute, so it stays single-stage; `FLAKEROOT_STAGED=0` keeps the old path regardless
+    # of memory, `FLAKEROOT_STAGED=1` forces staging, and `FLAKEROOT_BOOT_MEM_MIN` (KiB) moves
+    # the threshold.
+    local staged="false"
+    local avail=0
+    local swap_free=0
+
+    if [ "$mode" = "os" ] && [ "${FLAKEROOT_STAGED:-}" != "0" ]; then
+        avail=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+        swap_free=$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)
+        if [ "${FLAKEROOT_STAGED:-}" = "1" ] ||
+            [ $((avail + swap_free)) -lt "${FLAKEROOT_BOOT_MEM_MIN:-6291456}" ]; then
+            staged="true"
+        fi
+    fi
+
+    if [ "$staged" = "true" ]; then
+        local host="${target:-$(hostname)}"
+        echo "Low memory (${avail} KiB RAM + ${swap_free} KiB swap) - staging '$host'..."
+
+        if nix develop "$flake" -c sudo nixos-rebuild switch --flake "${flake}#${host}-boot" "${cache_flags[@]}" -L; then
+            # No remote builder here, so throttle local builds instead. Stage 1 already sets
+            # `nix.settings.max-jobs = 1` for the daemon; NIX_CONFIG covers daemon-less builds.
+            echo "Stage 2: full '$host' config, one build job at a time..."
+            NIX_CONFIG="max-jobs = 1 cores = 1" nix develop "$flake" -c sudo nixos-rebuild switch --flake "$flake_ref" "${cache_flags[@]}" -L
+            return 0
+        fi
+
+        echo "WARN: stage 1 failed ('${host}-boot' may not be declared) - switching the full config." >&2
     fi
 
     if [ "$use_nh" = "true" ]; then

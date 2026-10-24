@@ -11,7 +11,8 @@ flakeroot/
 │   ├── features.nix                #   feature discovery + _overlays.nix resolution
 │   ├── pin-meta.nix                #   metadata.json pin contract (releaseAsset/gitSource/pinnedSystems, one `pinMeta` member)
 │   ├── hosts.nix                   #   host discovery + validation + enrichment
-│   ├── builders.nix                #   nixosSystem / homeManagerConfiguration builders
+│   ├── builders.nix                #   nixosSystem / homeManagerConfiguration builders (+ `<host>-boot` variants)
+│   ├── stages.nix                  #   two-stage bootstrap: bootFeatures narrowing + build throttling module
 │   └── updater.sh                  #   generic pin updater (features/*/update.sh = copy or symlink)
 ├── hosts/                          # per-host declarations (auto-discovered)
 │   ├── methyl-bazzite.nix          # HM-only flat host
@@ -39,7 +40,6 @@ flakeroot/
 │   ├── _overlays.nix               #   optional: {inputs, ...}: [ … ] per feature
 │   └── extras                      #   _package.nix / _*.nix / bin/ / *.sh / nix.just, pulled in by the feature itself
 ├── modules/
-│   ├── bootstrap.nix               # swapfile+zswap for /etc/nixos/swap-prepare.nix (bootstrap.sh)
 │   ├── cache-registry.nix          # cache urls/keys + a ready-made NIX_CONFIG fragment
 │   ├── caches.nix                  # registry → nix.settings urls/keys + flakeCache gate + warnings
 │   ├── feature-options.nix         # shared feature option namespace + internal extraGroups (by-key attrset)
