@@ -5,7 +5,9 @@
   lib,
   modulesPath,
   ...
-}: {
+}: let
+  btrfsOpts = ["noatime" "compress=zstd"];
+in {
   imports = [
     (modulesPath + "/profiles/qemu-guest.nix")
   ];
@@ -17,15 +19,55 @@
     extraModulePackages = [];
   };
 
-  fileSystems."/" = {
-    device = "/dev/disk/by-uuid/77d66a62-b14e-40a5-953c-b7988b0b6663";
-    fsType = "ext4";
-  };
+  fileSystems = {
+    "/" = {
+      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
+      fsType = "btrfs";
+      options = btrfsOpts ++ ["subvol=@"];
+    };
 
-  fileSystems."/boot" = {
-    device = "/dev/disk/by-uuid/19FE-D34D";
-    fsType = "vfat";
-    options = ["fmask=0077" "dmask=0077"];
+    "/boot" = {
+      device = "/dev/disk/by-uuid/77D3-1E44";
+      fsType = "vfat";
+      options = ["fmask=0077" "dmask=0077"];
+    };
+
+    "/home" = {
+      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
+      fsType = "btrfs";
+      options = btrfsOpts ++ ["subvol=@home"];
+    };
+
+    "/nix" = {
+      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
+      fsType = "btrfs";
+      options = btrfsOpts ++ ["subvol=@nix"];
+    };
+
+    "/var/log" = {
+      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
+      fsType = "btrfs";
+      neededForBoot = true;
+      options = btrfsOpts ++ ["subvol=@log"];
+    };
+
+    "/var/cache" = {
+      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
+      fsType = "btrfs";
+      options = btrfsOpts ++ ["subvol=@cache"];
+    };
+
+    "/.snapshots" = {
+      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
+      fsType = "btrfs";
+      options = btrfsOpts ++ ["subvol=@snapshots/root"];
+    };
+
+    "/home/.snapshots" = {
+      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
+      fsType = "btrfs";
+      options = btrfsOpts ++ ["subvol=@snapshots/home"];
+    };
   };
 
   swapDevices = [];

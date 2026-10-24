@@ -1,4 +1,8 @@
-{lib, ...}: {
+{
+  lib,
+  pkgs,
+  ...
+}: {
   boot = {
     loader = {
       systemd-boot.enable = true;
@@ -9,6 +13,9 @@
       "kvm.ignore_msrs=1"
       "kvm.report_ignored_msrs=0"
     ];
+  };
+  networking = {
+    networkmanager.enable = true;
   };
   services = {
     openssh.enable = true;

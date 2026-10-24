@@ -1,4 +1,7 @@
 {hostLib, ...}:
 hostLib.mergeModules (import ../methyl/default.nix {}) {
-  # DO OVERRIDES HERE
+  features = [
+    "nixos-btrfs"
+    "nixos-gnome"
+  ];
 }
