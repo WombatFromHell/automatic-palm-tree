@@ -7,6 +7,11 @@
 # env_reset and applies whether or not the invoking user is a trusted user. Eval only, no builds.
 let
   registry = {
+    cachyosKernels = {
+      url = "https://cache.lantian.pub/lantian";
+      publicKey = "lantian:WVGO7vsRMSEN+h7Lp7kv6SAmrkEXgUGbbXm7jMDjBuQ=";
+      note = "xddxdd's CachyOS kernel for Nix";
+    };
     kait2en = {
       url = "https://nix.channings.me";
       publicKey = "garage:JZet/fsItH8cJ6SKLci1+BuMIQGDfZSa/8GxGpKcxss=";

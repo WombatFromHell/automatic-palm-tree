@@ -11,6 +11,9 @@
 
     nixpkgs-unstable.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1";
     kait2en.url = "github:LukeChannings/KaiT2en-NixOS";
+    nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
+    xilo.url = "github:stubbedev/xilo?rev=4528483a1a261f5ed6578606d30526c6a908d1b4"; # v1.2.2
+
     dms = {
       url = "git+https://github.com/AvengeMedia/DankMaterialShell.git";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
@@ -23,7 +26,6 @@
       url = "github:nix-community/nixGL";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
-    xilo.url = "github:stubbedev/xilo?rev=4528483a1a261f5ed6578606d30526c6a908d1b4"; # v1.2.2
     agenix = {
       url = "github:ryantm/agenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -37,28 +39,5 @@
     };
   in {
     inherit (cfg) nixosConfigurations homeConfigurations;
-
-    # Pre-flight for a switch: eval-only path list + narinfo HEADs, no builds.
-    #   nix run .#cache-check -- propyl
-    apps.x86_64-linux.cache-check = {
-      type = "app";
-      program = "${self}/scripts/cache-check.sh";
-    };
-
-    devShells.x86_64-linux.default = let
-      pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
-    in
-      pkgs.mkShell {
-        # our './bootstrap.sh init' flow requires some dependencies
-        packages = with pkgs; [
-          git
-          pkgconf
-          cmake
-        ];
-
-        shellHook = ''
-          export FUSE_USE_VERSION=31
-        '';
-      };
   };
 }
