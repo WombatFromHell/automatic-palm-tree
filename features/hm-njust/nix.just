@@ -5,13 +5,14 @@
 #
 # Flags, accepted by every recipe and in any order: --dry-run = evaluate only,
 # never build/copy/ssh; --plain = plain nix instead of nix-fast-build; --sudo =
-# run the nix client as root; --switch/--boot/--test = activation action. A bare
-# argument is the target (user@host for home recipes, host for system recipes) and
-# may appear anywhere; omit it to use the local host, which for system recipes may
-# not be a NixOS host at all -- `njust info` lists them and the build says so. Anything else is forwarded
-# verbatim to the client, so `--option name value` works everywhere. ponytail:
-# option values must be one token (a multi-word value gets split and the client
-# rejects it loudly); `--with-xilo` from nix.fish is not ported.
+# run the nix client as root; --switch/--boot/--test = activation action (not for
+# the build-only recipes). A bare argument is the target (user@host for home
+# recipes, host for system recipes) and may appear anywhere; omit it to use the
+# local host, which for system recipes may not be a NixOS host at all -- `njust
+# info` lists them and the build says so. Anything else is forwarded verbatim to
+# the client, so `--option name value` works everywhere. ponytail: option values
+# must be one token (a multi-word value gets split and the client rejects it
+# loudly); `--with-xilo` from nix.fish is not ported.
 #
 # Reached through `njust`, a wrapper pinned to this file, so plain `just`
 # still finds your project justfiles.
@@ -43,8 +44,8 @@ nas_flake := env_var_or_default("NAS_ROOT", env_var("HOME") + "/Projects/nasty-c
 nas_cache := "--option extra-substituters https://nasty.cachix.org --option extra-trusted-public-keys nasty.cachix.org-1:s+X88yw6+asphCNphTId/RQZHfmDF4fQ0uyzEz5SxLc="
 
 # Local defaults, so recipe signatures stay short enough for `just --list` to align.
-me := `whoami` + "@" + `hostname`
 hn := `hostname`
+me := `whoami` + "@" + hn
 
 # `njust` with no recipe lists the recipes (old /etc/Justfile `default`).
 default:
@@ -54,10 +55,10 @@ default:
 info:
     nh os info {{ flake }}
 
-# Garbage collect / clean generations and gcroots with nh. A bare token is the
-# scope (`user`, `all` or `profile`, default `all`); --sudo elevates; --ask confirms
-# unless you dry-run; --dry-run prints actions without performing them; `-k 3 -K 6h`
-# is applied unless you pass your own `-k`/`-K`.
+# --- clean -------------------------------------------------------------------
+# A bare token is the scope (`user`, `all` or `profile`, default `all`); --sudo
+# elevates; --ask confirms unless you dry-run; --dry-run prints actions without
+# performing them; `-k 3 -K 6h` is applied unless you pass your own `-k`/`-K`.
 
 # Clean generations and gcroots (nix.fish: nh_clean).
 clean *args:
@@ -68,30 +69,30 @@ clean *args:
     sudo=()
     flags=()
     dry=false
-    ask=true
     keep=false
     for ((i = 0; i < ${#arr[@]}; i++)); do
         a="${arr[i]}"
         case "$a" in
         --sudo) sudo=(sudo -i) ;;
-        --dry-run|--dry|-n) dry=true; flags+=("--dry") ;;
-        --ask|-a) ask=true ;;
+        --dry-run|--dry|-n) dry=true; flags+=(--dry) ;;
+        --ask|-a) ;; # already the default
         --no-gc|--no-gcroots|--no-direnv|--optimise|--keep-one|--cross-filesystems|-q|-v|-x)
             flags+=("$a") ;;
-        -k|--keep|-K|--keep-since|--max|-e|--elevation-strategy)
+        -k|--keep|-K|--keep-since)
             flags+=("$a" "${arr[i + 1]:-}"); keep=true; i=$((i + 1)) ;;
+        --max|-e|--elevation-strategy)
+            flags+=("$a" "${arr[i + 1]:-}"); i=$((i + 1)) ;;
         *) scope="$a" ;;
         esac
     done
     [[ "$keep" == false ]] && flags+=(-k 3 -K 6h)
-    [[ "$dry" == true ]] && ask=false
-    [[ "$ask" == true ]] && flags+=(--ask)
+    [[ "$dry" == false ]] && flags+=(--ask)
     echo "${sudo[*]} nh clean $scope ${flags[*]}"
     "${sudo[@]}" nh clean "$scope" "${flags[@]}"
 
-# Soft / optimised clean shortcuts, composed on top of `clean`. Soft means
-# generations only (`--no-gcroots --no-direnv`) and `-k 3`; the `c?u`/`c?a` pair adds
-# `--optimise`. All four confirm with `--ask` unless you pass `--dry-run`.
+# Shortcuts composed on top of `clean`, all keeping 3 generations. c?u = this
+# user, c?a = every profile. Plain c = generations only (no gcroots/direnv);
+# cc = also `--optimise` the store; the cc?f forms leave off `--keep-one`.
 
 # Clean this user's generations, keeping 3 (nix.fish: nhcu).
 cu *args: (clean "user" "--no-gcroots" "--no-direnv" "-k" "3" args)
@@ -102,13 +103,16 @@ ca *args: (clean "all" "--no-gcroots" "--no-direnv" "-k" "3" args)
 # cu + optimise the store (nix.fish: nhcuo).
 ccu *args: (clean "user" "-k" "3" "--optimise" "--keep-one" args)
 
+# ccu without --keep-one.
 ccuf *args: (clean "user" "-k" "3" "--optimise" args)
 
 # ca + optimise the store (nix.fish: nhcao).
 cca *args: (clean "all" "-k" "3" "--optimise" "--keep-one" args)
 
+# cca without --keep-one.
 ccaf *args: (clean "all" "-k" "3" "--optimise" args)
 
+# --- build -------------------------------------------------------------------
 # nix.fish: _nfb + nix_build + nix_eval + _nix_dry_run, merged so the option set
 # and the eval call exist once. `--sudo` is stripped and prefix-wrapped.
 # ponytail: nix-fast-build 1.4 has no --dry-run/-n, so fast evaluation goes
@@ -131,31 +135,33 @@ build attr out_link="nix-result" *args:
         esac
     done
     if [[ "$dry" == true ]]; then
+        export GC_INITIAL_HEAP_SIZE=2G
         if [[ "$plain" == true ]]; then
             echo "Evaluating {{ attr }} with nix build --dry-run..."
-            GC_INITIAL_HEAP_SIZE=2G "${sudo[@]}" nix build {{ nix_opts }} --no-link --dry-run {{ attr }} "${args[@]}"
+            cmd=(nix build {{ nix_opts }} --no-link --dry-run {{ attr }})
         else
             echo "Evaluating {{ attr }} via nix-eval-jobs..."
-            GC_INITIAL_HEAP_SIZE=2G "${sudo[@]}" nix-eval-jobs {{ nfb_opts }} --flake {{ attr }} "${args[@]}"
+            cmd=(nix-eval-jobs {{ nfb_opts }} --flake {{ attr }})
         fi
     elif [[ "$plain" == true ]]; then
-        "${sudo[@]}" nix build {{ nix_opts }} {{ attr }} --out-link {{ out_link }} "${args[@]}"
+        cmd=(nix build {{ nix_opts }} {{ attr }} --out-link {{ out_link }})
     else
-        "${sudo[@]}" nix-fast-build {{ nfb_opts }} --flake {{ attr }} --out-link {{ out_link }} "${args[@]}"
+        cmd=(nix-fast-build {{ nfb_opts }} --flake {{ attr }} --out-link {{ out_link }})
     fi
+    "${sudo[@]}" "${cmd[@]}" "${args[@]}"
 
 # Evaluate a flake attribute: fast by default, --plain for plain nix (nix.fish: nix_eval).
 eval attr *args: (build attr "/tmp/nix-eval-result" "--dry-run" args)
 
+# --- activate / deploy -------------------------------------------------------
 # nix.fish: _nix_switch_bin + _nix_remote_deploy.
 
 # Activate a built closure locally or over ssh. The action argument belongs to
 # switch-to-configuration (system, needs root); home-manager's activate takes none
-# and runs as the user. --dry-run returns here, before any ssh or nix copy.
-_activate out_link action="switch" remote="" *args:
+# and runs as the user. --dry-run never gets here: _deploy stops first.
+_activate out_link action="switch" remote="":
     #!/usr/bin/env bash
     set -uo pipefail
-    for a in {{ args }}; do [[ "$a" == --dry-run ]] && exit 0; done
     link="{{ out_link }}-"
     closure=$(realpath -e "$link/result" "$link/toplevel" "$link" 2>/dev/null | head -n 1)
     bin=$(realpath -e "$closure/bin/switch-to-configuration" "$closure/bin/activate" "$closure/activate" 2>/dev/null | head -n 1)
@@ -205,25 +211,29 @@ _deploy kind="hm" *args:
         *) tgt="$a" ;;
         esac
     done
+    host="${tgt:-{{ hn }}}"
+    hm_closure="{{ hm_root }}${tgt:-{{ me }}}{{ hm_attr }}"
+    os_closure="{{ os_root }}$host{{ os_attr }}"
     remote=""
     case "{{ kind }}" in
-    hm) attr="{{ hm_root }}${tgt:-{{ me }}}{{ hm_attr }}"; link="{{ hm_link }}"; action=activate ;;
-    hm-build) attr="{{ hm_root }}${tgt:-{{ me }}}{{ hm_attr }}"; link="{{ hm_link }}"; action="" ;;
-    os-switch) attr="{{ os_root }}${tgt:-{{ hn }}}{{ os_attr }}"; link="{{ os_link }}"; action=switch ;;
-    os-build) attr="{{ os_root }}${tgt:-{{ hn }}}{{ os_attr }}"; link="{{ os_link }}"; action="" ;;
-    os-deploy) attr="{{ os_root }}${tgt:-{{ hn }}}{{ os_attr }}"; link="{{ deploy_link }}"; action=boot; remote="deployer@${tgt:-{{ hn }}}" ;;
-    os-deploy-nas) attr="{{ nas_flake }}#nixosConfigurations.nasty{{ os_attr }}"; link="{{ deploy_link }}"; action=boot; remote=homenas-deployer; flags=("${flags[@]}" {{ nas_cache }}) ;;
-    rebuild) attr="{{ flake }}#${tgt:-{{ hn }}}"; link=""; action="" ;;
+    hm)            attr="$hm_closure"; link="{{ hm_link }}"; action=activate ;;
+    hm-build)      attr="$hm_closure"; link="{{ hm_link }}"; action="" ;;
+    os-switch)     attr="$os_closure"; link="{{ os_link }}"; action=switch ;;
+    os-boot)       attr="$os_closure"; link="{{ os_link }}"; action=boot ;;
+    os-build)      attr="$os_closure"; link="{{ os_link }}"; action="" ;;
+    os-deploy)     attr="$os_closure"; link="{{ deploy_link }}"; action=boot; remote="deployer@$host" ;;
+    os-deploy-nas) attr="{{ nas_flake }}#nixosConfigurations.nasty{{ os_attr }}"; link="{{ deploy_link }}"; action=boot; remote=homenas-deployer; flags+=({{ nas_cache }}) ;;
+    rebuild)       attr="{{ flake }}#$host"; link=""; action="" ;;
     *) echo "Error: unknown deploy kind '{{ kind }}'" >&2; exit 1 ;;
     esac
-    # boot/switch/test are switch-to-configuration actions; they must not retarget
-    # an hm activation, which takes no action.
-    [[ -n "$act" && "$action" != activate ]] && action="$act"
     if [[ "{{ kind }}" == rebuild ]]; then
         [[ -n "$act" ]] && flags+=("$act")
         sudo nixos-rebuild --flake "$attr" {{ nix_opts }} "${flags[@]}"
         exit 0
     fi
+    # --switch/--boot/--test retarget switch-to-configuration only: never a build-only
+    # kind (action empty), and never an hm activation, which takes no action.
+    [[ -n "$act" && -n "$action" && "$action" != activate ]] && action="$act"
     if ! just --justfile "{{ justfile() }}" build "$attr" "$link" "${flags[@]}"; then
         [[ "{{ kind }}" == os-* && -z "$tgt" ]] && echo "hint: default target '{{ hn }}' is not a nixosConfigurations host; \`njust info\` lists them, or pass one explicitly" >&2
         exit 1
@@ -232,7 +242,9 @@ _deploy kind="hm" *args:
     [[ "$dry" == true ]] && { echo "would activate: $link via $action${remote:+ on $remote}"; exit 0; }
     # No `@` prefix: shebang recipes go to bash as one script, so just's per-line
     # prefixes are not processed here (`@just` would be a command named "@just").
-    just --justfile "{{ justfile() }}" _activate "$link" "$action" "$remote" "${flags[@]}"
+    just --justfile "{{ justfile() }}" _activate "$link" "$action" "$remote"
+
+# --- home-manager ------------------------------------------------------------
 
 # Home-manager closure for a user@host, built then activated (nix.fish: hm_fswitch).
 hm *args: (_deploy "hm" args)
@@ -248,13 +260,6 @@ hm-rollback:
 list-hm:
     home-manager generations
 
-# NixOS generations (nix.fish: nhdls); needs root, takes a profile to list another.
-list-os profile=sys_profile:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    [[ -e "{{ profile }}" ]] || { echo "{{ profile }}: no system profile on this host"; exit 0; }
-    sudo nix-env --list-generations --profile "{{ profile }}"
-
 # Generation specs are nix-env's: ids, `old`, `+2M`, `1y`. Destructive, so an
 # empty spec is refused rather than deleting whatever `old` would match.
 
@@ -266,17 +271,13 @@ rm-hm *args:
     [[ ${#arr[@]} == 0 ]] && { echo "usage: njust rm-hm <id|old|+2M|1y>"; exit 1; }
     home-manager remove-generations "${arr[@]}"
 
-# Delete NixOS generations (nix.fish: nhdrm); the system profile is root-owned.
-rm-os profile=sys_profile *args:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    arr=({{ args }})
-    [[ -e "{{ profile }}" ]] || { echo "{{ profile }}: no system profile on this host"; exit 0; }
-    [[ ${#arr[@]} == 0 ]] && { echo "usage: njust rm-os <id|old|+2M|1y> [profile]"; exit 1; }
-    sudo nix-env --profile "{{ profile }}" --delete-generations "${arr[@]}"
+# --- nixos -------------------------------------------------------------------
 
 # NixOS closure for a host, built then switched locally (nix.fish: nixos_fswitch).
 os-switch *args: (_deploy "os-switch" args)
+
+# NixOS closure, built then set as the next boot entry — not activated until reboot.
+os-boot *args: (_deploy "os-boot" args)
 
 # NixOS closure, built only — nothing is activated.
 os-build *args: (_deploy "os-build" args)
@@ -292,6 +293,22 @@ os-deploy-nas *args: (_deploy "os-deploy-nas" args)
 
 # Plain nixos-rebuild, no nix-fast-build (nixos-justnh / drs); its flags pass through.
 rebuild *args: (_deploy "rebuild" args)
+
+# NixOS generations (nix.fish: nhdls); needs root, takes a profile to list another.
+list-os profile=sys_profile:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    [[ -e "{{ profile }}" ]] || { echo "{{ profile }}: no system profile on this host"; exit 0; }
+    sudo nix-env --list-generations --profile "{{ profile }}"
+
+# Delete NixOS generations (nix.fish: nhdrm); the system profile is root-owned (specs as rm-hm).
+rm-os *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    arr=({{ args }})
+    [[ -e "{{ sys_profile }}" ]] || { echo "{{ sys_profile }}: no system profile on this host"; exit 0; }
+    [[ ${#arr[@]} == 0 ]] && { echo "usage: njust rm-os <id|old|+2M|1y>"; exit 1; }
+    sudo nix-env --profile "{{ sys_profile }}" --delete-generations "${arr[@]}"
 
 # One runnable check for the closure/binary resolution above: it drives
 # `_activate` itself, so it tests behaviour instead of re-spelling the candidates.
@@ -316,15 +333,15 @@ _check:
     # A missing closure must fail, not activate nothing.
     rc=0; ${j[@]} _activate "$d-absent" activate >/dev/null 2>&1 || rc=$?
     [[ "${rc:-0}" == 1 ]] || { echo "missing closure must exit 1"; exit 1; }
-    # --dry-run must stop before ssh/copy, even when a remote target is set.
-    out=$(${j[@]} _activate /tmp/njust-absent switch homenas-deployer --dry-run 2>&1); rc=$?
-    [[ "$rc" == 0 && "$out" != *Activating* && "$out" != *ssh* ]] || { echo "--dry-run reached ssh: $out"; exit 1; }
-    # Flags may come first: --dry-run must not be read as a target.
+    # --dry-run must stop before ssh/copy, even for a remote kind, and flags may
+    # come first without being read as the target.
     out=$(${j[@]} _deploy os-deploy --dry-run nosuchhost 2>&1)
-    [[ "$out" == *nosuchhost* && "$out" != *ssh://* ]] || { echo "flag-first deploy leaked: $out"; exit 1; }
-    # Build-only kinds must never activate.
-    out=$(${j[@]} _deploy os-build --dry-run nosuchhost 2>&1)
-    [[ "$out" == *nosuchhost* && "$out" != *Activating* ]] || { echo "os-build activated: $out"; exit 1; }
+    [[ "$out" == *nosuchhost* && "$out" != *ssh://* && "$out" != *Activating* ]] || { echo "flag-first deploy leaked: $out"; exit 1; }
+    # --dry-run never activates, for build-only and activating kinds alike.
+    for k in os-build os-boot; do
+        out=$(${j[@]} _deploy $k --dry-run nosuchhost 2>&1)
+        [[ "$out" == *nosuchhost* && "$out" != *Activating* ]] || { echo "$k activated: $out"; exit 1; }
+    done
     # A flag's value must not be read as a target.
     out=$(${j[@]} _deploy os-build nosuchhost --option gc-auto 1000 --dry-run 2>&1)
     [[ "$out" == *nixosConfigurations.nosuchhost* && "$out" != *configurations.gc-auto* ]] || { echo "option value became the target: $out"; exit 1; }
