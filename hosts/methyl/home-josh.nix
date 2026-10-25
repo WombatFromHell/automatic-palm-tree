@@ -6,9 +6,8 @@
   ];
 
   features = {
-    dms.niriCompat = true;
     niri = {
-      niri-watcher.enable = true;
+      wl-watcher.enable = true;
     };
     oomd.notify = true;
     tmux-git.enable = true;

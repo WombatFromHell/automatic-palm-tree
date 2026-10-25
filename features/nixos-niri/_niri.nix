@@ -5,27 +5,9 @@
   ...
 }: let
   cfg = config.features.niri;
-
-  niri-tools = pkgs.stdenvNoCC.mkDerivation {
-    pname = "niri-tools";
-    version = "0.1.0";
-    src = ./bin;
-    shell = pkgs.bash;
-    installPhase = ''
-      set -euo pipefail
-      mkdir -p "$out/bin"
-      files=(
-        "brave-wrapper.sh"
-        "spawn-browser.sh"
-        "chromium-flags.sh"
-        "hyprpicker.sh"
-      )
-      for file in "''${files[@]}"; do
-        cp "$file" "$out/bin/$file"
-        chmod 0755 "$out/bin/$file"
-      done
-    '';
-  };
+  desktop = import ./_desktop.nix {inherit config;};
+  isKde = desktop == "kde";
+  niri-session = import ./_niri-session.nix {inherit pkgs lib config;};
 in {
   options.features.niri = {
     enable = lib.mkEnableOption "Niri compositor configuration" // {default = true;};
@@ -36,20 +18,15 @@ in {
       "d /etc/niri 0755 root root - -"
     ];
 
-    environment = {
-      systemPackages = [niri-tools];
-      etc."niri/config.kdl".source =
-        pkgs.writeText "config.kdl" (builtins.readFile ./config.kdl);
-      etc."niri/services.kdl".text = ''
-        // Auto-generated: startup services with correct Nix paths.
-        spawn-at-startup "${pkgs.kdePackages.polkit-kde-agent-1}/libexec/polkit-kde-authentication-agent-1"
-        spawn-at-startup "${pkgs.kdePackages.kwallet-pam}/libexec/pam_kwallet_init"
-      '';
-    };
+    # Upstream session config: symlink the kdl straight from the repo, no
+    # writeText(readFile) copy.
+    environment.etc."niri/config.kdl".source = ./config.kdl;
 
-    # use a workaround to fix brokenness in KDE menus
-    environment.etc."xdg/menus/applications.menu".source = "${pkgs.kdePackages.plasma-workspace}/etc/xdg/menus/plasma-applications.menu";
-    system.activationScripts.kbuildsycoca6 = {
+    # KDE menu workaround: only meaningful when Plasma is the installed desktop.
+    environment.etc."xdg/menus/applications.menu" = lib.mkIf isKde {
+      source = "${pkgs.kdePackages.plasma-workspace}/etc/xdg/menus/plasma-applications.menu";
+    };
+    system.activationScripts.kbuildsycoca6 = lib.mkIf isKde {
       # post activation rebuild via kbuildsycoca6 to fix menus
       text = ''
         echo "Rebuilding KDE service cache..."
@@ -60,11 +37,38 @@ in {
       deps = ["specialfs"];
     };
 
-    programs.uwsm.waylandCompositors.niri = {
-      prettyName = "niri-uwsm";
-      comment = "Niri (UWSM)";
-      binPath = "/run/current-system/sw/bin/niri";
-      extraArgs = ["--session"];
+    # KDE helper agents, scoped to the niri uwsm session target: they never
+    # start in a Plasma session (Plasma starts its own) or a GNOME session.
+    systemd.user.services = lib.mkIf isKde {
+      polkit-kde-agent-uwsm = {
+        description = "KDE polkit authentication agent (niri session)";
+        unitConfig = {
+          PartOf = ["wayland-session@niri.desktop.target"];
+          After = ["wayland-session@niri.desktop.target"];
+        };
+        wantedBy = ["wayland-session@niri.desktop.target"];
+        serviceConfig = {
+          ExecStart = "${pkgs.kdePackages.polkit-kde-agent-1}/libexec/polkit-kde-authentication-agent-1";
+          Restart = "on-failure";
+        };
+      };
+      kwallet-pam-init-uwsm = {
+        description = "KWallet PAM initialization (niri session)";
+        unitConfig = {
+          PartOf = ["wayland-session@niri.desktop.target"];
+          After = ["wayland-session@niri.desktop.target"];
+        };
+        wantedBy = ["wayland-session@niri.desktop.target"];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = "${pkgs.kdePackages.kwallet-pam}/libexec/pam_kwallet_init";
+        };
+      };
     };
+
+    # Session entry delegates to upstream niri.desktop, so niri runs inside
+    # wayland-wm@niri.desktop.service and gets XDG_CURRENT_DESKTOP=niri.
+    services.displayManager.sessionPackages = [niri-session];
   };
 }

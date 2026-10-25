@@ -306,7 +306,8 @@ clip-to-geometry true
 environment {
 
 }
-include "/etc/niri/services.kdl"
+// Session services are systemd user units scoped to
+// wayland-session@niri.desktop.target (see features/nixos-niri/_niri.nix).
 // Add lines like this to spawn processes at startup.
 // Note that running niri as a session supports xdg-desktop-autostart,
 // which may be more convenient to use.
@@ -318,8 +319,11 @@ include "/etc/niri/services.kdl"
 // spawn-at-startup "/usr/libexec/kf6/polkit-kde-authentication-agent-1"
 // only uncomment below if using 'kdewallet' with blank password
 //
-spawn-sh-at-startup "/run/current-system/sw/bin/dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORMTHEME QT_QPA_PLATFORM QT_WAYLAND_DISABLE_WINDOWDECORATION QML2_IMPORT_PATH QT_PLUGIN_PATH"
-spawn-sh-at-startup "/run/current-system/sw/bin/systemctl --user restart xdg-desktop-portal.service xdg-desktop-portal-gtk.service xdg-desktop-portal-kde.service 2>/dev/null"
+// UWSM already exports the session environment (wayland-session-waitenv +
+// `uwsm finalize`), so no dbus-update-activation-environment here: pushing a
+// fixed var list into the user manager would leak niri values into other sessions.
+// Restarting the portal gateway re-reads /etc/xdg-desktop-portal/niri-portals.conf.
+spawn-sh-at-startup "/run/current-system/sw/bin/systemctl --user restart xdg-desktop-portal.service 2>/dev/null"
 //
 // spawn-sh-at-startup "qdbus org.kde.kwalletd6 /modules/kwalletd6 org.kde.KWallet.open kdewallet 0 login"
 // spawn-at-startup "/usr/bin/dms" "run"
@@ -349,7 +353,7 @@ binds {
         spawn "/run/current-system/sw/bin/ghostty"
     }
     Mod+Alt+B hotkey-overlay-title="Open Browser" {
-        spawn "/run/current-system/sw/bin/spawn-browser.sh"
+        spawn "/run/current-system/sw/bin/spawn-browser"
     }
     // Mod+Alt+D hotkey-overlay-title="Open DSearch" { spawn "dsearch"; }
     Mod+Alt+F hotkey-overlay-title="Open Dolphin" {
@@ -367,7 +371,7 @@ binds {
     }
     //
     Mod+Ctrl+Shift+P hotkey-overlay-title="Hyprpicker" {
-        spawn "/run/current-system/sw/bin/hyprpicker.sh"
+        spawn-sh "hyprpicker | wl-copy"
     }
     //
     Mod+Shift+L hotkey-overlay-title="Lock Screen" {
