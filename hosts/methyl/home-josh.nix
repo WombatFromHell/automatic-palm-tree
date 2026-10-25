@@ -6,10 +6,7 @@
   ];
 
   features = {
-    niri = {
-      wl-watcher.enable = true;
-    };
+    niri.wl-watcher.enable = true;
     oomd.notify = true;
-    tmux-git.enable = true;
   };
 }

@@ -78,10 +78,17 @@
         modules = lib.flatten [
           # Substitution first: caches.nix owns every url/key the feature modules below gate on.
           (self + /modules/caches.nix)
-          # Feature modules for the NixOS platform
+          # Feature modules for the NixOS platform, plus the `_overlays.nix` modules:
+          # they set `nixpkgs.overlays`, which nixpkgs appends to the pinned set
+          # (`nixpkgs.pkgs` above), so an overlay can be gated on a feature option.
+          # Home Manager is deliberately left out: `useGlobalPkgs` shares this pkgs
+          # (so gated overlays reach HM users anyway) and forbids `nixpkgs.overlays`
+          # there. ponytail: a standalone (non-NixOS) host gets eager host.pkgs only —
+          # gate an overlay there by setting `nixpkgs.pkgs` per config.
           {
             imports =
               resolveFeaturePaths host.features "nixos"
+              ++ resolveFeaturePaths host.features "overlays"
               ++ [featureOptionsModule];
           }
           # Host facts (config.flakeHost)

@@ -27,6 +27,11 @@ let
       publicKey = "xilopkgs:t7bPM4c3zgmTCtV7XYCDTGiShoplykV8ZhQnEbukaFU=";
       note = "Chilled nixpkgs rebuilt through our overlay.";
     };
+    wombatfromhell = {
+      url = "https://wombatfromhell.cachix.org";
+      publicKey = "wombatfromhell.cachix.org-1:pyIVJJkoLxkjH/MKK1ylrrdJKPpm+aXLeD2zAqVk9lA=";
+      note = "build cache for niri-spicy";
+    };
   };
 in {
   inherit registry;

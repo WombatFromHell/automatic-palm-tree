@@ -1,1 +1,3 @@
-{inputs, ...}: [inputs.nix-cachyos-kernel.overlays.default]
+{inputs, ...}: {
+  config.nixpkgs.overlays = [inputs.nix-cachyos-kernel.overlays.default];
+}

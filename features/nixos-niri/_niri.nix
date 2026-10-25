@@ -11,6 +11,9 @@
 in {
   options.features.niri = {
     enable = lib.mkEnableOption "Niri compositor configuration" // {default = true;};
+    niriSpicy = {
+      enable = lib.mkEnableOption "spicy niri fork + xwayland-satellite from the niri-spicy overlay";
+    };
   };
 
   config = lib.mkIf cfg.enable {

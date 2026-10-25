@@ -1,5 +1,6 @@
 {
   lib,
+  pkgs,
   config,
   ...
 }: let
@@ -17,5 +18,7 @@ in {
       desktopManager.gnome.enable = true;
       gnome.gnome-keyring.enable = true;
     };
+    programs.dconf.enable = true;
+    environment.systemPackages = with pkgs; [gnome-tweaks];
   };
 }

@@ -5,6 +5,5 @@
 
   features = {
     oomd.notify = true;
-    tmux-git.enable = true;
   };
 }

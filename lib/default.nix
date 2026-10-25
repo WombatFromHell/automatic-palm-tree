@@ -1,6 +1,5 @@
-# Composition root: pulls in every loader concern below, resolves overlays and
-# per-host package sets once, and returns the flake outputs. flake.nix imports this
-# file directly.
+# Composition root: pulls in every loader concern below, resolves per-host package
+# sets once, and returns the flake outputs. flake.nix imports this file directly.
 {
   lib,
   self,
@@ -11,8 +10,8 @@
   inherit (import ./host-options.nix {inherit lib;}) hostOptions flakeHostOptions;
 
   # ── feature machinery (lib/features.nix) ──
-  features = import ./features.nix {inherit lib self inputs;};
-  inherit (features) discoveredFeatures resolveHostOverlays;
+  features = import ./features.nix {inherit lib self;};
+  inherit (features) discoveredFeatures;
 
   # ── pin metadata contract (lib/pin-meta.nix) ──
   pinMeta = import ./pin-meta.nix {inherit lib;};
@@ -55,9 +54,11 @@
       config.allowUnfree = true;
     };
 
-  # ── resolve overlays and pre-compute overlay-resolved pkgs for each host ──
+  # ── pre-compute one package set per host ──
   # This runs once here so both config builders share one pkgs, which carries the
-  # unstable set as a member rather than as a second argument to thread.
+  # unstable set as a member rather than as a second argument to thread. Feature
+  # overlays are *not* applied here: they are modules that set `nixpkgs.overlays`,
+  # which nixpkgs appends to this set at eval time so they can be gated on options.
   hostsWithPkgs =
     lib.mapAttrs (
       _name: host:
@@ -65,9 +66,7 @@
         // {
           pkgs = import inputs.nixpkgs {
             inherit (host) system;
-            overlays =
-              [baseOverlay (_: _: {unstable = mkUnstablePkgs host.system;})]
-              ++ resolveHostOverlays host;
+            overlays = [baseOverlay (_: _: {unstable = mkUnstablePkgs host.system;})];
             config.allowUnfree = true;
           };
         }

@@ -1,21 +1,20 @@
-# Feature machinery — discovery, path resolution, overlay resolution.
+# Feature machinery — discovery and path resolution.
 #
-# The lowest layer of the loader: it only needs `lib`, `self` (to find
-# features/), and `inputs` (to import feature files for overlay extraction).
-# The config builders (lib/builders.nix) consume this. Feature *options* live in
+# The lowest layer of the loader: it only needs `lib` and `self` (to find
+# features/). The config builders (lib/builders.nix) consume this. Feature *options* live in
 # modules/feature-options.nix, beside every other module.
 {
   lib,
   self,
-  inputs,
   ...
 }: let
   # ── feature discovery ──
   featuresDir = self + /features;
   featureDirs = lib.filterAttrs (_: t: t == "directory") (builtins.readDir featuresDir);
 
-  # Feature file names: the module files are named after the platform, the
-  # overlay list is `_overlays.nix`.
+  # Feature file names: the module files are named after the platform, and
+  # `_overlays.nix` is a module too — it contributes `nixpkgs.overlays`, so an
+  # overlay can be gated on a feature option instead of frozen at build time.
   knownFiles = {
     nixos = "nixos";
     home = "home";
@@ -49,16 +48,6 @@
         lib.optional (feature ? ${platform}) feature."${platform}"
     )
     featureList;
-
-  # ── overlay resolution (reads the discovered `_overlays.nix`, no re-probe) ──
-  resolveHostOverlays = host:
-    lib.unique (lib.concatMap (
-        f: let
-          feature = lookupFeature f;
-        in
-          lib.optionals (feature ? overlays) (import feature.overlays {inherit inputs;})
-      )
-      host.features);
 in {
-  inherit discoveredFeatures resolveFeaturePaths resolveHostOverlays;
+  inherit discoveredFeatures resolveFeaturePaths;
 }

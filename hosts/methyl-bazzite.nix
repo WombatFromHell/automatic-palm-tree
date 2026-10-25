@@ -1,14 +1,11 @@
 {hostLib, ...}: let
   myHome = {pkgs, ...}: {
     home.packages = with pkgs; [
+      cachix
       pkgs.unstable.yt-dlp
       pkgs.unstable.herdr
       trash-cli
     ];
-
-    features = {
-      tmux-git.enable = true;
-    };
   };
 in
   hostLib.mergeHome (
