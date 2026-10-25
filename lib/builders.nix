@@ -16,9 +16,6 @@
   # Options every feature module may read, applied to both namespaces below.
   featureOptionsModule = import (self + /modules/feature-options.nix);
 
-  # Stage narrowing for the two-stage bootstrap (see lib/stages.nix).
-  stages = import (self + /lib/stages.nix) {};
-
   # Host facts are declared once here and set per host, so consumers read
   # config.flakeHost instead of an untyped injected record. The value is the host
   # record narrowed to flakeHostOptions: a fact the schema declares but the record
@@ -106,15 +103,8 @@
         ];
         specialArgs = inputArgs;
       };
-
-    # Stage 1 of the two-stage bootstrap: `<host>-boot` for hosts that declare bootFeatures.
-    # Lazy (mapAttrs'), so an unstaged host costs nothing and `nixos-rebuild --flake .#host-boot`
-    # is a normal derivation the low-memory machine can build.
-    mkBootConfig = name: host: lib.nameValuePair "${name}-boot" (mkConfig (stages.mkBootHost host));
   in
-    lib.mergeAttrs
-    (lib.mapAttrs' (name: host: lib.nameValuePair name (mkConfig host)) nixosHosts)
-    (lib.mapAttrs' mkBootConfig (lib.filterAttrs (_: h: h.bootFeatures != []) nixosHosts));
+    lib.mapAttrs (_: mkConfig) nixosHosts;
 
   # ── Home Manager configuration builder ──
   buildHomeConfigurations = hostsWithPkgs: let

@@ -28,7 +28,6 @@
       statix
       ty
       uv
-      zellij
     ]
     # only add nerd-fonts if we're on NixOS
     ++ (lib.optionals config.flakeHost.isNixOS [

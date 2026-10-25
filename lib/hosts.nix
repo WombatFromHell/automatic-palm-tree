@@ -34,16 +34,33 @@
 
   # A `home-<user>.nix` file implies that user, so its entry is authored here as
   # empty and the user submodule fills enabled/isAdmin/hmEnabled defaults.
-  validateHost = path: autoUsers:
-    lib.evalModules {
+  #
+  # Returns the evaluated *config* (not the evalModules result). The error context
+  # is attached to forcing that config, which is where the module system reports a
+  # rejected attribute (e.g. a stray `boot`), so the failing host file is named
+  # instead of `<unknown-file>`.
+  validateHost = path: autoUsers: let
+    evaluated = lib.evalModules {
       modules = [
         hostOptions
-        (import path {inherit self lib hostLib;})
+        {
+          # Name the source file in "option does not exist" errors.
+          _file = toString path;
+          imports = [(import path {inherit self lib hostLib;})];
+        }
         ({config, ...}: {
           users = lib.genAttrs (autoUsers ++ lib.attrNames config.homeModules) (_: {});
         })
       ];
     };
+  in
+    builtins.addErrorContext
+    ''
+      while validating host file ${toString path} against lib/host-options.nix.
+      A host file is a host record (system, isNixOS, users, features, nixosModules, homeModules),
+      not a NixOS module. Pass NixOS config via `hostLib.nixosModule ./path/to/module.nix`
+      or `hosts/<name>/nixos.nix` instead of listing it as a profile.''
+    evaluated.config;
 
   autoDiscoverModules = isDir: hostDir:
     if !isDir
@@ -90,8 +107,7 @@
   buildHost = entry: let
     inherit (entry) isDir name path hostDir;
     autoModules = autoDiscoverModules isDir hostDir;
-    evaluatedConfig =
-      (validateHost path (builtins.attrNames autoModules.homeModules)).config;
+    evaluatedConfig = validateHost path (builtins.attrNames autoModules.homeModules);
     enrichedHost = enrichHost evaluatedConfig autoModules;
   in
     evaluatedConfig

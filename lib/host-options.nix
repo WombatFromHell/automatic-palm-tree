@@ -54,15 +54,6 @@ let
       default = [];
       description = "Features to enable for this host.";
     };
-    bootFeatures = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [];
-      description = ''
-        Subset of `features` for the first (light) bootstrap stage — the config a
-        low-memory machine builds before it can build the full one. Empty means the
-        host is not staged: `bootstrap.sh` switches straight to `features`.
-      '';
-    };
     nixosModules = lib.mkOption {
       type = lib.types.listOf lib.types.unspecified;
       default = [];

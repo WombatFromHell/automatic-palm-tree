@@ -1,7 +1,5 @@
 {hostLib, ...}:
-hostLib.mergeModules (import ../methyl-base/manifest.nix {}) {
-  features = [
-    "nixos-btrfs"
-    "nixos-gnome"
-  ];
-}
+hostLib.mergeModules (
+  hostLib.profiles ../methyl-base/profiles ["methyl-ws"]
+  ++ [{features = ["nixos-btrfs"];}]
+)

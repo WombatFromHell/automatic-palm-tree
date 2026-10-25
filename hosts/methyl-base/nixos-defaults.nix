@@ -1,0 +1,23 @@
+_: {
+  boot = {
+    loader = {
+      systemd-boot.enable = true;
+      efi.canTouchEfiVariables = true;
+      timeout = 1;
+    };
+    kernelParams = [
+      "kvm.ignore_msrs=1"
+      "kvm.report_ignored_msrs=0"
+    ];
+  };
+  networking = {
+    networkmanager.enable = true;
+  };
+  services = {
+    openssh.enable = true;
+  };
+
+  features = {
+    oomd.notify = true;
+  };
+}
