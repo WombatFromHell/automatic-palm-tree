@@ -1,5 +1,5 @@
 {hostLib, ...}:
 hostLib.mergeModules (
   hostLib.profiles ../methyl-base/profiles ["methyl-ws"]
-  ++ [{features = ["nixos-btrfs"];}]
+  ++ [{features = ["nixos-btrfs" "nixos-qemu"];}]
 )

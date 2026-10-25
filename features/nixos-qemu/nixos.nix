@@ -13,8 +13,8 @@ in {
     };
   };
 
-  config = mkMerge [
-    (mkIf config.features.qemu.enable {
+  config = lib.mkMerge [
+    (lib.mkIf cfg.enable {
       virtualisation.libvirtd = {
         enable = true;
         qemu = {
@@ -39,9 +39,11 @@ in {
       boot.extraModprobeConfig = "options kvm_intel kvm_amd nested=1";
     })
 
-    (mkIf config.features.qemu.spiceAgent.enable {
-      services.spice-vdagentd.enable = true;
-      qemuGuest.enable = true;
+    (lib.mkIf cfg.spiceAgent.enable {
+      services = {
+        spice-vdagentd.enable = true;
+        qemuGuest.enable = true;
+      };
     })
   ];
 }

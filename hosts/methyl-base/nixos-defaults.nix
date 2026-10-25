@@ -1,9 +1,9 @@
-_: {
+{lib, ...}: {
   boot = {
     loader = {
-      systemd-boot.enable = true;
-      efi.canTouchEfiVariables = true;
-      timeout = 1;
+      systemd-boot.enable = lib.mkDefault true;
+      efi.canTouchEfiVariables = lib.mkDefault true;
+      timeout = lib.mkDefault 1;
     };
     kernelParams = [
       "kvm.ignore_msrs=1"
@@ -12,12 +12,5 @@ _: {
   };
   networking = {
     networkmanager.enable = true;
-  };
-  services = {
-    openssh.enable = true;
-  };
-
-  features = {
-    oomd.notify = true;
   };
 }
