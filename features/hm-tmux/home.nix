@@ -5,12 +5,12 @@
   ...
 }: let
   cfg = config.features.tmux-git;
-  tmux-git = pkgs.unstable.callPackage ./_package.nix {};
+  # tmux-git = pkgs.unstable.callPackage ./_package.nix {};
 in {
   options.features.tmux-git.enable =
     lib.mkEnableOption "tmux terminal multiplexer (built from git)" // {default = true;};
 
   config = lib.mkIf cfg.enable {
-    home.packages = [tmux-git];
+    home.packages = [pkgs.unstable.tmux];
   };
 }
