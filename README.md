@@ -6,12 +6,13 @@ Flake-driven, host-discovering config system for NixOS and Home Manager.
 
 ```bash
 export NH_FLAKE="$HOME/.config/flakeroot"
-./bootstrap.sh init                   # day zero: NixOS system or Home Manager
-./bootstrap.sh init propyl            # explicit host
-./bootstrap.sh init josh@methyl       # explicit home config
-nh os switch                          # day 2+: NixOS system + Home Manager
-nh home switch                        # day 2+: Home Manager only
-nix flake show                        # List all discovered configs
+./bootstrap.sh init                     # day zero: NixOS system or Home Manager
+./bootstrap.sh init propyl              # explicit host
+./bootstrap.sh init josh@methyl-bazzite # explicit home config
+./bootstrap.sh init propyl --dry-run    # report what would be fetched vs built, then stop
+nh os switch                            # day 2+: NixOS system + Home Manager
+nh home switch                          # day 2+: Home Manager only
+nix flake show                          # List all discovered configs
 ```
 
 `bootstrap.sh init` passes the registry's cache urls and keys as
@@ -19,7 +20,9 @@ nix flake show                        # List all discovered configs
 does not carry them yet fetches instead of compiling (a kernel build and a firmware VM on a
 RAM-constrained laptop). `--option` beats `NIX_CONFIG` because `sudo` wipes the environment and the
 flag needs no trusted user. After a NixOS switch, `/etc/nix/nix.conf` carries the caches from
-`flakeCache.enable`, so plain `nh os switch` is enough from then on.
+`flakeCache.enable`, so plain `nh os switch` is enough from then on. It also creates zram swap
+first: the persistent swapfile is activated by a systemd unit that only runs on the new system's
+boot, so the first switch would otherwise have no swap.
 
 To opt a host out of cache substitution entirely, set `flakeCache.enable = []`.
 

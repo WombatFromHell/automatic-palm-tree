@@ -50,7 +50,7 @@ flakeroot/
 │   │   └── nixos.nix               # stateVersion, fish, kernel, fallback + genAttrs osUsernames → users.users (+ extraGroups)
 │   └── packages/
 │       └── pyz-wrapper.nix         # generic .pyz fetcher (gamemode, etc.)
-├── bootstrap.sh                    # first-boot installer: cache fragment → nix.conf → switch
+├── bootstrap.sh                    # day-zero switch: registry caches staged via --option, zram swap, then switch
 ├── scripts/
 │   └── cache-check.sh              # pre-flight for a switch: eval-only path list + narinfo HEADs
 ├── update-all.sh                   # runs every feature updater, then bumps the flake inputs
