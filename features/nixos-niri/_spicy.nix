@@ -4,5 +4,9 @@
 # (modules/caches.nix writes the url/key into /etc/nix/nix.conf from it).
 # Both ./_overlays.nix and ./nixos.nix ask this, so the overlay and the package list
 # can never disagree.
-{config, lib, ...}:
+{
+  config,
+  lib,
+  ...
+}:
 config.features.niri.niriSpicy.enable && lib.elem "wombatfromhell" config.flakeCache.enable

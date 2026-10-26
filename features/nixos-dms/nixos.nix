@@ -35,13 +35,17 @@ in {
 
     systemd.user.services.dms = {
       description = "Dank Material Shell (DMS)";
+      path = [quickshellPkg pkgs.coreutils pkgs.procps];
       unitConfig = {
         PartOf = ["wayland-session@niri.desktop.target"];
-        After = ["wayland-session@niri.desktop.target"];
+        After = [
+          "wayland-session@niri.desktop.target"
+          "wayland-wm@niri.desktop.service"
+        ];
+        BindsTo = ["wayland-wm@niri.desktop.service"];
       };
       wantedBy = ["wayland-session@niri.desktop.target"];
       serviceConfig = {
-        # Upstream unit semantics: quickshell is Type=notify, not dbus/notifications.
         Type = "notify";
         NotifyAccess = "main";
         Environment = ["QS_DISABLE_CRASH_HANDLER=1"];
@@ -49,6 +53,7 @@ in {
         ExecReload = "${pkgs.procps}/bin/pkill -USR1 -x dms";
         Restart = "on-failure";
         RestartSec = "1.23";
+        TimeoutStartSec = "90s";
         TimeoutStopSec = 10;
       };
     };

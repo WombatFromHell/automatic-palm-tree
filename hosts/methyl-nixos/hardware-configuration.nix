@@ -22,7 +22,7 @@
   # self-contained mount merged in after mkMounts so it inherits nothing.
   fileSystems =
     fsLib.mkMounts {
-      device = "/dev/disk/by-uuid/63fc94bc-6a83-44a4-bf45-0a2a4314f953";
+      device = "/dev/disk/by-uuid/99b85b95-7223-4990-8476-9c357bb357ce";
       fsType = "btrfs";
       options = ["noatime" "compress=zstd"];
     }
@@ -48,17 +48,17 @@
         subvol = "@cache";
       };
 
-      "/.snapshots" = {
-        subvol = "@snapshots/root";
+      "/var/lib/swap" = {
+        subvol = "@swap";
       };
 
-      "/home/.snapshots" = {
-        subvol = "@snapshots/home";
+      "/.snapshots" = {
+        subvol = "@snapshots";
       };
     }
     // {
       "/boot" = {
-        device = "/dev/disk/by-uuid/C47C-2A79";
+        device = "/dev/disk/by-uuid/3746-CB40";
         fsType = "vfat";
         options = ["fmask=0077" "dmask=0077"];
       };

@@ -13,10 +13,7 @@
   onBtrfs = btrfsFs != {};
 
   swapMiB = 4096;
-  swapDevice =
-    if onBtrfs
-    then "/var/lib/swap/swapfile"
-    else "/var/lib/swapfile";
+  swapDevice = "/var/lib/swap/swapfile";
   swapDir = dirOf swapDevice;
 
   swapUnit = utils.escapeSystemdPath swapDevice;
@@ -33,30 +30,26 @@
 
       swap_active() { awk -v f="$file" 'NR>1 && $1==f {found=1} END{exit !found}' /proc/swaps; }
 
-      # Never touch a swapfile that is in use: swapoff would page everything
-      # back into RAM, which is the thing a small machine cannot afford.
       if swap_active; then
         echo "swapfile $file is active; leaving it alone"
         exit 0
       fi
 
+      # Btrfs-specific subvolume management for /var/lib/swap
       ${lib.optionalString onBtrfs ''
-        # Must be a real subvolume (so it is skipped by snapshots of the parent),
-        # not a plain directory.
         if ! btrfs subvolume show "$dir" >/dev/null 2>&1; then
           if [ -e "$dir" ]; then
             echo "$dir exists but is not a subvolume; replacing it"
             rm -f "$file"
-            rmdir "$dir"   # fails loudly if something else lives there
+            rmdir "$dir"
           fi
           btrfs subvolume create "$dir"
         fi
       ''}
 
+      # Ensures the directory exists on non-Btrfs filesystems as well
       mkdir -p "$dir"
 
-      # Delete anything nixpkgs' mkswap unit would silently accept but swapon
-      # would mishandle; it recreates the file in the right form.
       if [ -e "$file" ]; then
         size=$(stat -c %s "$file")
         alloc=$(( $(stat -c %b "$file") * 512 ))
@@ -110,7 +103,7 @@ in {
       # means no default dependencies.
       unitConfig = {
         DefaultDependencies = false;
-        RequiresMountsFor = ["/var/lib"];
+        RequiresMountsFor = ["/var/lib/swap"];
       };
       serviceConfig = {
         Type = "oneshot";

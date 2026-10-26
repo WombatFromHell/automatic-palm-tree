@@ -13,6 +13,7 @@ nix_opts=(--option extra-experimental-features "nix-command flakes")
 urls="$(nix "${nix_opts[@]}" eval --impure --raw --file "$f" substituters)"
 keys="$(nix "${nix_opts[@]}" eval --impure --raw --file "$f" trustedPublicKeys)"
 
-exec sudo nixos-rebuild boot --flake "$PWD#$host" -L -v "${nix_opts[@]}" \
+exec env NIXOS_INSTALL_BOOTLOADER=1 \
+  sudo nixos-rebuild boot --flake "$PWD#$host" -L -v "${nix_opts[@]}" \
   --option extra-substituters "$urls" \
   --option extra-trusted-public-keys "$keys"

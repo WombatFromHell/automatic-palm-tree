@@ -23,11 +23,11 @@
     };
     #
     dms = {
-      url = "git+https://github.com/AvengeMedia/DankMaterialShell.git";
+      url = "github:duxlabs-dev/dux-shell";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
     dcal = {
-      url = "git+https://github.com/AvengeMedia/dankcalendar.git";
+      url = "github:duxlabs-dev/dux-calendar";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
     nixgl = {
