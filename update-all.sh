@@ -21,8 +21,8 @@ FLAKE_UPDATE=false
 args=()
 for a in "$@"; do
   case "$a" in
-    --flake) FLAKE_UPDATE=true ;;
-    *) args+=("$a") ;;
+  --flake) FLAKE_UPDATE=true ;;
+  *) args+=("$a") ;;
   esac
 done
 

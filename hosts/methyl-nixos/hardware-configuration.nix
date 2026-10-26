@@ -22,7 +22,7 @@
   # self-contained mount merged in after mkMounts so it inherits nothing.
   fileSystems =
     fsLib.mkMounts {
-      device = "/dev/disk/by-uuid/c4f88ec5-ab32-4281-aa37-35eee076dfa9";
+      device = "/dev/disk/by-uuid/63fc94bc-6a83-44a4-bf45-0a2a4314f953";
       fsType = "btrfs";
       options = ["noatime" "compress=zstd"];
     }
@@ -58,7 +58,7 @@
     }
     // {
       "/boot" = {
-        device = "/dev/disk/by-uuid/77D3-1E44";
+        device = "/dev/disk/by-uuid/C47C-2A79";
         fsType = "vfat";
         options = ["fmask=0077" "dmask=0077"];
       };
