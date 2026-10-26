@@ -9,12 +9,13 @@
   # so it belongs only in a KDE session.
   isKde = (import ./_desktop.nix {inherit config;}) == "kde";
 
-  # `niri` + `xwayland-satellite`: ./_overlays.nix swaps both names in the package set
-  # when `features.niri.niriSpicy.enable` is set (nixpkgs appends `nixpkgs.overlays` to the
-  # pinned `nixpkgs.pkgs`), so the enabled branch reads them by plain name. Off: unstable
-  # niri, nixpkgs xwayland-satellite.
+  # `niri` + `xwayland-satellite`: ./_overlays.nix swaps both names in the package set when
+  # ./_spicy.nix says yes (option on *and* the wombatfromhell cache in this host's
+  # substituters), so the spicy branch reads them by plain name. Otherwise: unstable niri,
+  # nixpkgs xwayland-satellite.
+  spicy = import ./_spicy.nix {inherit config lib;};
   niriPackages =
-    if cfg.niriSpicy.enable
+    if spicy
     then [pkgs.niri pkgs.xwayland-satellite]
     else [pkgs.unstable.niri pkgs.xwayland-satellite];
 in {
@@ -24,6 +25,10 @@ in {
   ];
 
   config = lib.mkIf cfg.enable {
+    # Names the cache so modules/caches.nix warns — or fails under `flakeCache.strict` —
+    # when spicy is asked for but this host does not substitute from it.
+    flakeCache.required.wombatfromhell = cfg.niriSpicy.enable;
+
     environment.systemPackages = with pkgs;
       niriPackages
       ++ lib.optionals isKde [kdePackages.qt6ct]
