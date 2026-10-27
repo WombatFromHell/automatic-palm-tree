@@ -19,6 +19,9 @@
 #                          # exit 1 if an update is available or the pin moved
 #   ./update.sh <ref>      # pin an explicit version/ref
 #
+# Scaffolding is not a feature command — it runs on this file directly:
+#   ./lib/updater.sh --install features/<name>   # symlink update.sh + empty metadata.json
+#
 # Dependencies: curl, jq, nix (nix-prefetch-url / nix store prefetch-file)
 
 # Single-quoted jq filters below are intentional: the $vars are jq
@@ -36,6 +39,27 @@ die() {
 }
 
 j() { jq -r "$1" "$META"; }
+
+# --install <dir> scaffolds a new metadata-backed feature, handled before META is read
+# because metadata.json does not exist yet. update.sh must be a symlink to this file
+# (update-all.sh refuses a copy), so it is created here instead of hand-copied.
+install_feature() {
+  local dir="${1:-}"
+  [[ -n $dir ]] || die "usage: lib/updater.sh --install features/<name>"
+  dir="${dir#./}"
+  dir="${dir%/}"
+  [[ $(dirname "$dir") == features ]] || die "--install expects features/<name>, got '$dir'"
+  [[ -d $dir ]] || die "no feature directory '$dir' — create it first"
+  [[ ! -e $dir/update.sh ]] || die "'$dir/update.sh' already exists"
+  [[ ! -e $dir/metadata.json ]] || die "'$dir/metadata.json' already exists; --install scaffolds, it does not rewrite"
+  ln -s ../../lib/updater.sh "$dir/update.sh"
+  jq -n '{repo: "", kind: "sri", strategy: "latest",
+          url: "https://github.com/{repo}/releases/download/v{version}/CHANGE-ME.tar.gz",
+          version: "", hashes: {}}' >"$dir/metadata.json"
+  echo "==> Scaffolded $dir — fill in metadata.json and add the feature files." >&2
+}
+
+if [[ "${1:-}" == "--install" ]]; then install_feature "${2:-}"; exit 0; fi
 
 REPO=$(j .repo)
 KIND=$(j .kind)

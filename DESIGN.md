@@ -125,7 +125,7 @@ flowchart LR
 
 Three features are metadata-backed today (`hm-brave`, `hm-tmux`, `hm-zed`); each carries a
 `metadata.json` and a symlink to `lib/updater.sh` as its own `update.sh`
-(`update-all.sh` refuses a copy). The template is expanded twice — once in Nix
+(`update-all.sh` refuses a copy; `lib/updater.sh --install features/<name>` creates both). The template is expanded twice — once in Nix
 (`lib/pin-meta.nix releaseAsset`, at eval) and once in bash (`render_url`, at fetch) —
 and `tests/run.sh` diffs the two byte-for-byte for every pin and pinned system.
 
