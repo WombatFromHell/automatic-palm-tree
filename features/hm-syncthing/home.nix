@@ -2,10 +2,10 @@
   lib,
   config,
   ...
-}: {
+}: let
+  cfg = config.features.syncthing;
+in {
   options.features.syncthing.enable = lib.mkEnableOption "User-level Syncthing service" // {default = true;};
 
-  config.services.syncthing = lib.mkIf config.features.syncthing.enable {
-    enable = true;
-  };
+  config.services.syncthing.enable = cfg.enable;
 }

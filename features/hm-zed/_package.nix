@@ -23,10 +23,8 @@
 
   inherit (pin) version;
 
-  system = stdenv.hostPlatform.system;
-
   # Release asset URL + hash come from the shared pin contract
-  asset = pinMeta.releaseAsset pin system;
+  asset = pinMeta.releaseAsset pin stdenv.hostPlatform.system;
 
   executableName = "zed";
 
@@ -72,7 +70,7 @@ in
       vulkan-loader
     ];
 
-    src = fetchurl {inherit (asset) url sha256;};
+    src = fetchurl asset;
 
     phases = ["unpackPhase" "installPhase"];
 
@@ -92,24 +90,13 @@ in
       cp "$appdir/libexec/zed-editor" $out/libexec/
       cp -R "$appdir/share"/* $out/share/
 
-      # Patch main binary
-      patchelf \
-        --set-interpreter "$(cat $NIX_CC/nix-support/dynamic-linker)" \
-        --set-rpath "${lib.makeLibraryPath ([stdenv.cc.cc] ++ finalAttrs.buildInputs)}" \
-        "$out/bin/zed"
-
-      # Patch helper binary
-      patchelf \
-        --set-interpreter "$(cat $NIX_CC/nix-support/dynamic-linker)" \
-        --set-rpath "${lib.makeLibraryPath ([stdenv.cc.cc] ++ finalAttrs.buildInputs)}" \
-        "$out/libexec/zed-editor"
-
-      # Wrap with LD_LIBRARY_PATH for safety
-      wrapProgram $out/bin/zed \
-        --prefix LD_LIBRARY_PATH ":" ${lib.makeLibraryPath finalAttrs.buildInputs}
-
-      wrapProgram $out/libexec/zed-editor \
-        --prefix LD_LIBRARY_PATH ":" ${lib.makeLibraryPath finalAttrs.buildInputs}
+      # Patch both binaries and wrap them with LD_LIBRARY_PATH, identically
+      rpath="${lib.makeLibraryPath ([stdenv.cc.cc] ++ finalAttrs.buildInputs)}"
+      linker="$(cat $NIX_CC/nix-support/dynamic-linker)"
+      for f in "$out/bin/zed" "$out/libexec/zed-editor"; do
+        patchelf --set-interpreter "$linker" --set-rpath "$rpath" "$f"
+        wrapProgram "$f" --prefix LD_LIBRARY_PATH ":" "$rpath"
+      done
     '';
 
     passthru = {

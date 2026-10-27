@@ -12,10 +12,7 @@ in {
   };
 
   config = {
-    # Ensure the package is installed
-    home.packages = [
-      dcalPkg
-    ];
+    home.packages = [dcalPkg];
 
     xdg.desktopEntries."com.danklinux.dankcalendar" = {
       name = "Dank Calendar";
@@ -45,7 +42,7 @@ in {
 
       Service = {
         Type = "simple";
-        ExecCondition = "${pkgs.unstable.bash}/bin/sh -c '[ \"$XDG_CURRENT_DESKTOP\" = \"niri\" ]'";
+        ExecCondition = "${pkgs.bash}/bin/sh -c '[ \"$XDG_CURRENT_DESKTOP\" = \"niri\" ]'";
 
         # Points directly to the binary inside the flake package
         ExecStart = "${dcalPkg}/bin/dcal";

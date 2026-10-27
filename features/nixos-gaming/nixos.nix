@@ -3,13 +3,9 @@
   protonfetcher = pkgs.callPackage ./_protonfetcher_pkg.nix {};
 in {
   boot.kernelParams = [
+    "clearcpuid=514"
     "split_lock_detect=off"
-    "amdgpu.ppfeaturemask=0xfffd7fff"
-    "amdgpu.dcdebugmask=0x410"
-    "amdgpu.lockup_timeout=100000"
-    "amdgpu.runpm=0"
-    "amdgpu.aspm=0"
-    "amdgpu.gpu_recovery=1"
+    "amdgpu.ppfeaturemask=0xfff7ffff"
   ];
 
   environment.systemPackages = with pkgs; [

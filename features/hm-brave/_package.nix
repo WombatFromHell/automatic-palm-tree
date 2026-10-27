@@ -5,7 +5,6 @@
   makeWrapper,
   lib,
   pinMeta,
-  commandLineArgs ? "",
   alsa-lib,
   at-spi2-atk,
   at-spi2-core,
@@ -49,15 +48,8 @@
 
   inherit (pin) version;
 
-  system = stdenv.hostPlatform.system;
-
   # Release asset URL + hash come from the shared pin contract
-  asset = pinMeta.releaseAsset pin system;
-
-  executableName = "brave";
-
-  # programs.chromium.commandLineArgs arrives as one string; the desktop files call this launcher.
-  desktopArgs = lib.optionalString (commandLineArgs != "") (" " + commandLineArgs);
+  asset = pinMeta.releaseAsset pin stdenv.hostPlatform.system;
 in
   stdenv.mkDerivation (finalAttrs: {
     pname = "brave-bin";
@@ -104,7 +96,7 @@ in
       wayland
     ];
 
-    src = fetchurl {inherit (asset) url sha256;};
+    src = fetchurl asset;
 
     phases = ["unpackPhase" "installPhase"];
 
@@ -130,7 +122,7 @@ in
         patchelf --set-rpath "$rpath" "$f" || true
       done
 
-      sed -i "s|^Exec=/usr/bin/brave-browser-stable|Exec=brave-browser${desktopArgs}|" \
+      sed -i "s|^Exec=/usr/bin/brave-browser-stable|Exec=brave-browser|" \
         "$out/share/applications/com.brave.Browser.desktop" \
         "$out/share/applications/brave-browser.desktop"
 
@@ -145,7 +137,7 @@ in
       description = "Privacy-oriented browser for Desktop and Laptop, built on Chromium";
       homepage = "https://brave.com/";
       changelog = "https://github.com/brave/brave-browser/blob/master/CHANGELOG_DESKTOP.md";
-      mainProgram = executableName;
+      mainProgram = "brave";
       license = licenses.mpl20;
       platforms = pinMeta.pinnedSystems pin;
     };

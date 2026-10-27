@@ -15,7 +15,6 @@
       gh
       oras
       rustup
-      # gcc
       pkgs.unstable.lazygit
       pkgs.unstable.lazydocker
       nil
@@ -36,14 +35,12 @@
       nerd-fonts.iosevka
     ]);
 
-  programs = {
-    direnv = {
-      enable = true;
-      nix-direnv.enable = true;
-      config = {
-        global = {
-          log_format = "";
-        };
+  programs.direnv = {
+    enable = true;
+    nix-direnv.enable = true;
+    config = {
+      global = {
+        log_format = "";
       };
     };
   };
