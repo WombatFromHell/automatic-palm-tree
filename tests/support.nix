@@ -24,6 +24,11 @@ in {
   inherit lib flake features hostLib hostsAt;
   hosts = hostsAt root;
 
+  # Whether a config carries a package by name. The name lives on the derivation
+  # (`pname`, falling back to `name`); `set ? name` only accepts a literal path.
+  # An attrset key is not in scope inside the attrset, so this is one binding.
+  hasPkg = ps: name: lib.elem name (map (p: p.pname or p.name) ps);
+
   # A check is {name, ok}. A false `ok` is collected and reported together;
   # an expression that throws fails the suite loudly, which is the point.
   ck = name: cond: {

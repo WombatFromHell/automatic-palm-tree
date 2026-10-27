@@ -13,6 +13,12 @@ let
     ((map (h: "nixos-${h}") (lib.attrNames out.nixosConfigurations))
       ++ (map (k: "home-${k}") (lib.attrNames out.homeConfigurations)));
 
+  # Derived from the records, mirroring builders.nix: only a standalone host
+  # (isNixOS = false) produces homeConfigurations, keyed user@host.
+  expectedHomeKeys =
+    lib.sort (a: b: a < b)
+    (lib.concatLists (map (h: map (u: "${u}@${h.name}") h.hmUsernames) (lib.filter (h: !h.isNixOS) (lib.attrValues hosts))));
+
   checks = [
     (ck "the flake exposes only nixosConfigurations, homeConfigurations and checks"
       (lib.attrNames out == ["checks" "homeConfigurations" "nixosConfigurations"]))
@@ -22,7 +28,7 @@ let
     (ck "nixosConfigurations covers exactly the isNixOS hosts"
       (lib.attrNames out.nixosConfigurations == (lib.filter (h: hosts.${h}.isNixOS) (lib.attrNames hosts))))
     (ck "homeConfigurations are keyed user@host"
-      (lib.attrNames out.homeConfigurations == ["josh@methyl-bazzite"]))
+      (lib.attrNames out.homeConfigurations == expectedHomeKeys))
     (ck "a nixos check is the system toplevel derivation"
       (lib.all (h: lib.isDerivation out.checks.x86_64-linux."nixos-${h}") (lib.attrNames out.nixosConfigurations)))
     (ck "a home check is the activation package derivation"

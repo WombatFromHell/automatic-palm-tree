@@ -2,7 +2,7 @@
 # Eval only — the generated unit files are not built (see TEST_DESIGN.md).
 let
   s = import ./support.nix;
-  inherit (s) lib;
+  inherit (s) lib ck suite;
 
   # Hosts come from the records, not from hard-coded names. Hosts without a
   # nixosConfigurations entry (e.g. methyl-bazzite, a Bazzite host) are skipped.
@@ -22,15 +22,15 @@ let
   cifsMounts = h: lib.filter (m: (m.type or null) == "cifs") (cfg h).systemd.mounts;
   # `->` binds tighter than `or`, so every optional-attr test below is parenthesized.
 in
-  s.suite "mounts" [
-    (s.ck "only the hosts enabling the feature have automounts"
+  suite "mounts" [
+    (ck "only the hosts enabling the feature have automounts"
       (lib.all (h: enabled h == builtins.length (cfg h).systemd.automounts > 0) hosts
         && featureHosts != []))
 
-    (s.ck "every automount has a mount at the same where"
+    (ck "every automount has a mount at the same where"
       (lib.all (h: lib.all (a: mountAt h a != null) (cfg h).systemd.automounts) featureHosts))
 
-    (s.ck "that mount requires and after the automount unit"
+    (ck "that mount requires and after the automount unit"
       (lib.all (h:
         lib.all (a: let
           m = mountAt h a;
@@ -41,16 +41,16 @@ in
       featureHosts))
 
     # The boot-cycle guard, on real units: the automount is a lazy trigger.
-    (s.ck "automounts carry no requires, after or wants"
+    (ck "automounts carry no requires, after or wants"
       (lib.all (h:
         lib.all (a: (a.requires or []) == [] && (a.after or []) == [] && (a.wants or []) == [])
         (cfg h).systemd.automounts)
       featureHosts))
 
-    (s.ck "automounts are wanted by multi-user.target"
+    (ck "automounts are wanted by multi-user.target"
       (lib.all (h: lib.all (a: a.wantedBy == ["multi-user.target"]) (cfg h).systemd.automounts) featureHosts))
 
-    (s.ck "automounts carry no what, type, options or mountConfig"
+    (ck "automounts carry no what, type, options or mountConfig"
       (lib.all (h:
         lib.all (a:
           ! builtins.hasAttr "what" a
@@ -60,7 +60,7 @@ in
         (cfg h).systemd.automounts)
       featureHosts))
 
-    (s.ck "mounts set TimeoutSec 5 and share their automount's ConditionPathExists"
+    (ck "mounts set TimeoutSec 5 and share their automount's ConditionPathExists"
       (lib.all (h:
         lib.all (a: let
           m = mountAt h a;
@@ -71,7 +71,7 @@ in
         (cfg h).systemd.automounts)
       featureHosts))
 
-    (s.ck "cifs mounts use the credentials file and condition on it"
+    (ck "cifs mounts use the credentials file and condition on it"
       (lib.all (h:
         lib.all (m:
           lib.strings.hasInfix "credentials=${cred}" (m.options or "")

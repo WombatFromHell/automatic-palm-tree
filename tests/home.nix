@@ -7,8 +7,7 @@ let
   hm = s.flake.outputs.homeConfigurations."josh@methyl-bazzite";
   cfg = hm.config;
 
-  pkgNames = map (p: p.pname or p.name) cfg.home.packages;
-  hasPkg = name: lib.elem name pkgNames;
+  homePkg = name: s.hasPkg cfg.home.packages name;
 
   # Home Manager's own module set cannot be evaluated standalone (its
   # modules/default.nix needs the builder's `configuration` argument), and every
@@ -26,8 +25,8 @@ let
     (ck "home features reach the configuration"
       (lib.all (f: builtins.hasAttr f cfg.features) ["brave-browser" "tmux-git" "zed-editor"]))
     (ck "host-authored home modules reach the configuration"
-      (lib.all hasPkg ["cachix" "yt-dlp" "herdr" "trash-cli"]))
-    (ck "profile features reach the configuration" (lib.all hasPkg ["fish" "tmux" "agenix"]))
+      (lib.all homePkg ["cachix" "yt-dlp" "herdr" "trash-cli"]))
+    (ck "profile features reach the configuration" (lib.all homePkg ["fish" "tmux" "agenix"]))
     (ck "hm-nixgl installs its wrappers"
       ((cfg.lib.nixGL ? wrappers) && (lib.attrNames cfg.lib.nixGL.wrappers == ["mesa" "mesaPrime" "nvidia" "nvidiaPrime"])))
     (ck "the standalone host produces no warnings" (cfg.warnings == []))
@@ -35,7 +34,7 @@ let
     # hm-base ships packages, not program flags; that contract shows up in the
     # host's own package list, which is what the profile actually promises.
     (ck "hm-base's CLI packages land in home.packages"
-      (lib.all hasPkg ["fish" "starship" "ripgrep" "atuin"]))
+      (lib.all homePkg ["fish" "starship" "ripgrep" "atuin"]))
 
     # Must-throw guards for this suite live in tests/red/home-config-is-not-nixos.nix.
   ];

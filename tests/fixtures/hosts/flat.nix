@@ -11,11 +11,12 @@
       enabled = false;
     };
   };
-  # Both users have a home module, so only alice should reach hmUsernames
+  # Both users have a home module key, so only alice should reach hmUsernames
   # (bob is gated off by hmEnabled, carol by enabled). alice is the only admin:
-  # bob is enabled but not an admin, carol is not enabled at all.
+  # bob is enabled but not an admin, carol is not enabled at all. The lists stay
+  # empty: the loader derives usernames from the keys and never evaluates them.
   homeModules = {
-    alice = [./home-user.nix];
-    bob = [./home-user.nix];
+    alice = [];
+    bob = [];
   };
 }

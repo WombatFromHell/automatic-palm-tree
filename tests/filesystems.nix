@@ -1,7 +1,7 @@
 # Green suite: lib/filesystems.nix. Pure — only the lib is evaluated, no host config forced.
 let
   s = import ./support.nix;
-  inherit (s) lib;
+  inherit (s) lib ck suite;
   fs = import ../lib/filesystems.nix {inherit lib;};
 
   mk = defaults: entry: (fs.mkMounts defaults {"/m" = entry;})."/m";
@@ -10,9 +10,9 @@ let
   auto1 = u: builtins.head u.automounts;
   has = k: m: builtins.hasAttr k m;
 in
-  s.suite "filesystems" [
+  suite "filesystems" [
     # mkMounts -> `fileSystems` attrsets
-    (s.ck "entry keys win over defaults"
+    (ck "entry keys win over defaults"
       (mk {
           device = "/dev/a";
           fsType = "ext4";
@@ -26,19 +26,19 @@ in
         }))
 
     # `options` is NixOS semantics: an entry replaces the defaults, it does not extend them.
-    (s.ck "entry options replace defaults"
+    (ck "entry options replace defaults"
       (mk {options = ["noatime"];} {options = ["nodev"];} == {options = ["nodev"];}))
-    (s.ck "defaults options survive an empty entry"
+    (ck "defaults options survive an empty entry"
       (mk {options = ["noatime"];} {} == {options = ["noatime"];}))
-    (s.ck "subvol is appended last"
+    (ck "subvol is appended last"
       (mk {options = ["noatime"];} {subvol = "@";} == {options = ["noatime" "subvol=@"];}))
-    (s.ck "subvol null adds nothing"
+    (ck "subvol null adds nothing"
       (mk {options = ["noatime"];} {subvol = null;} == {options = ["noatime"];}))
-    (s.ck "empty option list is dropped so NixOS defaults apply"
+    (ck "empty option list is dropped so NixOS defaults apply"
       (mk {} {} == {}))
 
     # mkUnitMounts -> { mounts, automounts }, both LISTS
-    (s.ck "string shorthand sets what and keeps defaults"
+    (ck "string shorthand sets what and keeps defaults"
       (mount1 (unit {type = "btrfs";} {"/mnt/x" = "/dev/x";})
         == {
           what = "/dev/x";
@@ -48,13 +48,13 @@ in
           options = "";
         }))
 
-    (s.ck "automount defaults to false"
+    (ck "automount defaults to false"
       (let
         u = unit {} {"/mnt/x" = {};};
       in
         u.automounts == [] && ! has "requires" (mount1 u) && ! has "after" (mount1 u)))
 
-    (s.ck "automount adds <unit>.automount to the mount's requires and after"
+    (ck "automount adds <unit>.automount to the mount's requires and after"
       (let
         u = unit {} {
           "/mnt/x" = {
@@ -67,7 +67,7 @@ in
         m.requires == ["mnt-x.automount"] && m.after == ["mnt-x.automount"]))
 
     # The cycle guard: the automount is a lazy trigger, never a dependent.
-    (s.ck "automount is whitelisted: no deps, options, what or type"
+    (ck "automount is whitelisted: no deps, options, what or type"
       (builtins.attrNames
         (auto1 (unit {} {
           "/mnt/x" = {
@@ -81,7 +81,7 @@ in
         }))
         == ["description" "wantedBy" "where"]))
 
-    (s.ck "unitConfig and mountConfig pass by value; mountConfig stays on the mount"
+    (ck "unitConfig and mountConfig pass by value; mountConfig stays on the mount"
       (let
         u = unit {} {
           "/mnt/x" = {
@@ -100,12 +100,12 @@ in
         && a.unitConfig == {ConditionPathExists = "/dev/x";}
         && ! has "mountConfig" a))
 
-    (s.ck "options become a comma string"
+    (ck "options become a comma string"
       (let u = unit {} {"/mnt/x" = {options = ["noatime" "nodev"];};}; in (mount1 u).options == "noatime,nodev"))
-    (s.ck "empty options become an empty string"
+    (ck "empty options become an empty string"
       (let u = unit {} {"/mnt/x" = {};}; in (mount1 u).options == ""))
 
-    (s.ck "skipIfMissing sets ConditionPathExists on both units and drops the sugar key"
+    (ck "skipIfMissing sets ConditionPathExists on both units and drops the sugar key"
       (let
         u = unit {} {
           "/mnt/x" = {
@@ -123,7 +123,7 @@ in
         && ! has "skipIfMissing" m
         && ! has "skipIfMissing" a))
 
-    (s.ck "wantedBy and descriptions default, entries win"
+    (ck "wantedBy and descriptions default, entries win"
       (let
         u = unit {} {
           "/mnt/x" = {
@@ -142,7 +142,7 @@ in
         && a.description == "Data disk"
         && (auto1 (unit {} {"/mnt/x" = {automount = true;};})).wantedBy == ["multi-user.target"]))
 
-    (s.ck "joinUnitMounts merges groups in order and yields {} on no groups"
+    (ck "joinUnitMounts merges groups in order and yields {} on no groups"
       (let
         a = unit {} {
           "/a" = {

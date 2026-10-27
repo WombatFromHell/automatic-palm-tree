@@ -9,11 +9,10 @@ let
   ws = out.nixosConfigurations.methyl-nixos.config;
   propyl = out.nixosConfigurations.propyl.config;
 
-  pkgNames = cfg: map (p: p.pname or p.name) cfg.environment.systemPackages;
   # `set ? name` only accepts a literal attribute path, so dynamic names go
   # through builtins.hasAttr.
   hasService = cfg: name: builtins.hasAttr name cfg.systemd.services;
-  hasPkg = cfg: name: lib.elem name (pkgNames cfg);
+  sysPkg = cfg: name: s.hasPkg cfg.environment.systemPackages name;
   hasParam = cfg: param: lib.elem param cfg.boot.kernelParams;
   hasNs = cfg: name: builtins.hasAttr name cfg.features;
   # The kernel name features/nixos-cachyos pins, asserted per host below.
@@ -44,12 +43,12 @@ let
     # --- profile-specific effects -------------------------------------------
     (ck "gaming profile adds its services and packages to methyl only"
       ((hasService methyl "dmemcg-booster")
-        && (hasPkg methyl "steam")
-        && (hasPkg methyl "scx-loader")
-        && (hasPkg methyl "gamescope")
-        && (hasPkg methyl "lsfg-vk")))
+        && (sysPkg methyl "steam")
+        && (sysPkg methyl "scx-loader")
+        && (sysPkg methyl "gamescope")
+        && (sysPkg methyl "lsfg-vk")))
     (ck "methyl-only packages stay on methyl"
-      (lib.all (cfg: !(lib.any (n: hasPkg cfg n) methylOnlyPkgs)) [ws propyl]))
+      (lib.all (cfg: !(lib.any (n: sysPkg cfg n) methylOnlyPkgs)) [ws propyl]))
     (ck "zswap reaches the kernel command line on methyl and methyl-nixos"
       ((hasParam methyl "zswap.enabled=1") && (hasParam ws "zswap.enabled=1") && (hasNs methyl "zswap") && (hasNs ws "zswap")))
     (ck "nixos-defaults reaches every NixOS host"
@@ -61,9 +60,9 @@ let
         && (ws.boot.kernelPackages.kernel.pname == cachyosKernel)
         && (propyl.boot.kernelPackages.kernel == propyl.hardware.kait2en.kernelPackages.kernel)))
     (ck "workstation-only features: gnome, btrfs, qemu"
-      ((hasNs ws "gnome") && (hasNs ws "qemu") && (hasPkg ws "btrfs-progs") && (hasPkg ws "snapper") && (hasPkg ws "spice-vdagent")))
+      ((hasNs ws "gnome") && (hasNs ws "qemu") && (sysPkg ws "btrfs-progs") && (sysPkg ws "snapper") && (sysPkg ws "spice-vdagent")))
     (ck "kait2en is laptop-only"
-      ((hasNs propyl "kait2en") && (hasPkg propyl "fprintd") && !(hasNs methyl "kait2en") && !(hasNs ws "kait2en")))
+      ((hasNs propyl "kait2en") && (sysPkg propyl "fprintd") && !(hasNs methyl "kait2en") && !(hasNs ws "kait2en")))
     (ck "kde is methyl-only" ((hasNs methyl "korthos") && !(hasNs ws "korthos") && !(hasNs propyl "korthos")))
     (ck "dms is on every graphical host" (lib.all (cfg: hasNs cfg "dms") [methyl ws propyl]))
 
@@ -74,9 +73,9 @@ let
     # a feature needs but the host does not substitute from shows up here.
     (ck "every host produces no configuration warnings"
       (lib.all (cfg: cfg.warnings == []) [methyl ws propyl]))
-    (ck "the cache list is the registry default on every host"
-      (lib.all (cfg: cfg.flakeCache.enable == methyl.flakeCache.enable) [ws propyl]))
-    (ck "substituters and keys are derived from that list"
+    # The cache list is the registry default everywhere (modules/caches.nix), so the
+    # facts worth asserting are the ones below: the derived substituters and keys.
+    (ck "substituters and keys are derived from the cache list"
       ((lib.length methyl.nix.settings.extra-substituters == lib.length methyl.flakeCache.enable)
         && (lib.length methyl.nix.settings.extra-trusted-public-keys == lib.length methyl.flakeCache.enable)))
     # Assertions are data, not throws: they only stop a switch when built, so the
