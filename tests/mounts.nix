@@ -13,9 +13,8 @@ let
   cfg = h: s.flake.outputs.nixosConfigurations.${h.name}.config;
   featureHosts = lib.filter enabled hosts;
 
-  # ponytail: mirrors lib/filesystems.nix `unitName`; export it from the lib if a
-  # second suite needs it.
-  unitName = where: lib.replaceStrings ["/"] ["-"] (lib.removePrefix "/" where);
+  # Unit names come from lib/filesystems.nix, the same source the feature module uses.
+  fs = import ../lib/filesystems.nix {inherit lib;};
   cred = "/etc/.smb-credentials";
 
   mountAt = h: a: lib.findFirst (m: m.where == a.where) null (cfg h).systemd.mounts;
@@ -34,7 +33,7 @@ in
       (lib.all (h:
         lib.all (a: let
           m = mountAt h a;
-          d = "${unitName a.where}.automount";
+          d = "${fs.unitName a.where}.automount";
         in
           lib.elem d (m.requires or []) && lib.elem d (m.after or []))
         (cfg h).systemd.automounts)

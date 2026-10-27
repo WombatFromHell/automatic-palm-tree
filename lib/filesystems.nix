@@ -97,4 +97,7 @@ in {
 
   # [ mkUnitMounts result ] -> `{ mounts, automounts }`, ready to assign to `systemd`.
   joinUnitMounts = zipAttrsWith (_: concatLists);
+
+  # Exported so a consumer names a unit exactly the way mkUnitMounts does.
+  inherit unitName;
 }
