@@ -56,4 +56,16 @@ in
     # bash's `jq '.arches[$s] // ""'` would silently render an empty token instead.
     (ck "arches is absent or a set"
       (lib.all (f: lib.isAttrs ((pin f).arches or {})) pinned))
+
+    # features/<name>/update.sh is a symlink to lib/updater.sh. update-all.sh refuses a copy at
+    # update time, but nothing gated the invariant, so a hand-copied script drifted silently until
+    # its pin did. Absent (a feature with no pin) is fine; lib/updater.sh --install links it.
+    # The key is quoted: `.update.sh` would walk `update` then `sh` and find nothing.
+    (ck "every update.sh is the shared symlink, not a copy"
+      (lib.all
+        (f: let
+          t = (builtins.readDir ../features/${f})."update.sh" or null;
+        in
+          t == null || t == "symlink")
+        features))
   ]
