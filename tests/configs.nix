@@ -16,6 +16,8 @@ let
   hasPkg = cfg: name: lib.elem name (pkgNames cfg);
   hasParam = cfg: param: lib.elem param cfg.boot.kernelParams;
   hasNs = cfg: name: builtins.hasAttr name cfg.features;
+  # The kernel name features/nixos-cachyos pins, asserted per host below.
+  cachyosKernel = "linux-cachyos-latest-lto-x86_64-v3";
 
   # users.users.josh.shell is a derivation whose store path is hashed, so match
   # the name inside outPath rather than a prefix of the basename.
@@ -52,6 +54,12 @@ let
       ((hasParam methyl "zswap.enabled=1") && (hasParam ws "zswap.enabled=1") && (hasNs methyl "zswap") && (hasNs ws "zswap")))
     (ck "nixos-defaults reaches every NixOS host"
       (lib.all (cfg: hasParam cfg "kvm.ignore_msrs=1") [methyl ws propyl]))
+    # Which kernel a host boots is a host-level choice: lib/features.nix allows exactly one
+    # kernel-pinning feature per host, so propyl's boot kernel must be KaiT2en's own derivation.
+    (ck "each host boots the kernel its feature pins"
+      ((methyl.boot.kernelPackages.kernel.pname == cachyosKernel)
+        && (ws.boot.kernelPackages.kernel.pname == cachyosKernel)
+        && (propyl.boot.kernelPackages.kernel == propyl.hardware.kait2en.kernelPackages.kernel)))
     (ck "workstation-only features: gnome, btrfs, qemu"
       ((hasNs ws "gnome") && (hasNs ws "qemu") && (hasPkg ws "btrfs-progs") && (hasPkg ws "snapper") && (hasPkg ws "spice-vdagent")))
     (ck "kait2en is laptop-only"

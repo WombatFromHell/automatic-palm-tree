@@ -37,17 +37,31 @@
   lookupFeature = f:
     discoveredFeatures.${f} or (throw "Unknown feature '${f}'. Available: ${availableFeatures}");
 
+  # Exactly one kernel-pinning feature per host. Both write `boot.kernelPackages` at
+  # `mkDefault`, so a host listing two is an authoring error; the module system only
+  # reports it as "defined multiple times" with two store paths and no host name, so it
+  # is rejected here, at the point the feature list becomes module paths.
+  # ponytail: reads the host's feature list only — a kernel module imported through a
+  # host-local `nixosModules` file bypasses this. No host does that today
+  # (hardware-configuration.nix sets kernelModules, never kernelPackages).
+  kernelFeatures = ["nixos-cachyos" "nixos-kait2en"];
+
   # Resolves a host's feature list to file paths for one platform, reading the
   # single source of truth (discoveredFeatures) rather than re-walking features/.
   # A feature present without a module for this platform (hybrid) resolves to [].
-  resolveFeaturePaths = featureList: platform:
-    lib.concatMap (
-      f: let
-        feature = lookupFeature f;
-      in
-        lib.optional (feature ? ${platform}) feature."${platform}"
-    )
-    featureList;
+  resolveFeaturePaths = featureList: platform: let
+    kernels = lib.filter (f: lib.elem f kernelFeatures) featureList;
+  in
+    if lib.length kernels > 1
+    then throw "Only one kernel feature per host, not ${lib.concatStringsSep ", " kernels}: both write boot.kernelPackages. Pick one in the host's features list."
+    else
+      lib.concatMap (
+        f: let
+          feature = lookupFeature f;
+        in
+          lib.optional (feature ? ${platform}) feature."${platform}"
+      )
+      featureList;
 in {
   inherit discoveredFeatures resolveFeaturePaths;
 }

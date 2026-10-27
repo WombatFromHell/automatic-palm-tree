@@ -4,6 +4,7 @@ hostLib.mergeModules (
   ++ [
     {
       features = [
+        "nixos-cachyos"
         "nixos-btrfs"
         "nixos-qemu"
         # "nixos-niri"

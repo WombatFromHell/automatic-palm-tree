@@ -110,7 +110,10 @@ flowchart TD
 ```
 
 Deliberately skipped: per-feature coverage of all 39 modules. Feature modules are exercised
-through the hosts that enable them — 36 of 39 are enabled by at least one host, so they evaluate
-and their effects are asserted. The three no host enables (`hm-dcal`, `nixos-cachyos`,
-`nixos-zram`) have no test: a feature no host asks for is not a shipping contract. If one of them
-becomes load-bearing, cover it by enabling it on a fixture host, not by isolating the module.
+through the hosts that enable them — 37 of 39 are enabled by at least one host, so they evaluate
+and their effects are asserted. The two no host enables (`hm-dcal`, `nixos-zram`) have no test: a
+feature no host asks for is not a shipping contract. If one of them becomes load-bearing, cover it
+by enabling it on a fixture host, not by isolating the module. Kernel choice is the exception:
+`nixos-cachyos` and `nixos-kait2en` both write `boot.kernelPackages`, so listing both on one host
+is an authoring error — `lib/features.nix` throws on it (`tests/red/kernel-feature-collision.nix`)
+and `tests/configs.nix` asserts which kernel each host boots.
