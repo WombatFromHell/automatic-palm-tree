@@ -13,18 +13,21 @@ flowchart TD
   G --> G2["exit 1 → FAIL + error tail"]
   R --> D["red guards<br/>tests/red/*.nix"]
   D --> D1["must exit non-zero<br/>stderr must contain line-1 expect substring"]
+  R --> P["expander parity<br/>one nix eval lists every features/*/metadata.json x pinned system;<br/>bash expands the same list through render_url and diffs byte-for-byte"]
   G1 --> X["exit 0 = repo is green"]
   D1 --> X
+  P --> X
 ```
 
 ```mermaid
 flowchart LR
-  S["tests/support.nix<br/>lib, flake outputs, features, hosts, hostLib,<br/>hostsAt(dir), args, ck, suite"] --> L["tests/loader.nix"]
+  S["tests/support.nix<br/>lib, flake outputs, features, hosts, hostLib,<br/>hostsAt(dir), hasPkg, ck, suite"] --> L["tests/loader.nix"]
   S --> C["tests/configs.nix"]
   S --> H["tests/home.nix"]
   S --> O["tests/outputs.nix"]
   S --> F["tests/filesystems.nix"]
   S --> M["tests/mounts.nix"]
+  S --> PI["tests/pins.nix"]
   S --> RD["tests/red/*.nix"]
   FX["tests/fixtures/<dir>/hosts/*.nix<br/>shapes no real host uses"] --> L
 ```
@@ -72,6 +75,11 @@ flowchart TD
     M2["that mount requires and after <unit>.automount;<br/>automounts carry no requires/after/wants and no mountConfig"]
     M3["mounts: mountConfig.TimeoutSec 5, ConditionPathExists shared with the<br/>automount; cifs options carry credentials=/etc/.smb-credentials"]
   end
+  subgraph pins["pins.nix — pin metadata contract, ~0.1s"]
+    PN1["metadata-backed features discovered; templates use only<br/>the tokens both expanders know ({repo} {version} {arch})"]
+    PN2["every pin expands to a resolved url for every pinned system;<br/>a declared arches set covers exactly the hashed systems and is a set, never null"]
+    PN3["features/<name>/update.sh is absent or a symlink to lib/updater.sh<br/>the key is quoted — .update.sh would walk update then sh"]
+  end
 ```
 
 ```mermaid
@@ -88,6 +96,7 @@ flowchart LR
     R9["mkMounts entry is a string, not an attrset"]
     R10["mkUnitMounts entry is a number, not an attrset"]
     R11["skipIfMissing without what (ConditionPathExists needs the device)"]
+    R12["two kernel-pinning features on one host<br/>(boot.kernelPackages would be defined twice)"]
   end
 ```
 
