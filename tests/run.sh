@@ -31,24 +31,39 @@ done
 # lib/updater.sh render_url (bash, at fetch time) and lib/pin-meta.nix releaseAsset
 # (Nix, at eval time). Both must produce the same URL for every pin and system, or a
 # pin update drifts silently and only shows up as a build-time hash mismatch.
+# One eval lists every pin and system; the bash side expands the same list. Per-pin
+# evals cost ~2.9s each (nixpkgs re-imported), which was most of the gate's runtime.
 par=0
-for script in features/*/update.sh; do
-  meta="$PWD/$(dirname "$script")/metadata.json"
-  [ -e "$meta" ] || continue
-  ver=$(jq -r .version "$meta")
-  for sys in $(jq -r '.hashes | keys[]' "$meta"); do
-    want=$(nix eval --impure --raw --expr \
-      "let lib = (builtins.getFlake \"nixpkgs\").lib; m = import ./lib/pin-meta.nix {inherit lib;};
-       in (m.releaseAsset (builtins.fromJSON (builtins.readFile (builtins.toPath \"$meta\"))) \"$sys\").url")
-    got=$(. "$script"; render_url "$sys" "$ver")
-    if [ "$want" != "$got" ]; then
-      echo "FAIL parity $meta $sys"
-      echo "  nix:  $want"
-      echo "  bash: $got"
-      par=1
-    fi
-  done
-done
+pins=$(nix eval --impure --raw --expr '
+  let lib = (builtins.getFlake "nixpkgs").lib;
+      pinMeta = import ./lib/pin-meta.nix {inherit lib;};
+      dirs = builtins.attrNames (builtins.filterAttrs (_: t: t == "directory") (builtins.readDir ./features));
+      line = f: let
+        pin = builtins.fromJSON (builtins.readFile ./features/${f}/metadata.json);
+      in
+        lib.concatMapStringsSep "\n"
+          (s: "${f}:${s}:${pin.version}:${(pinMeta.releaseAsset pin s).url}")
+          (pinMeta.pinnedSystems pin);
+  in
+    lib.concatMapStringsSep "\n" line
+      (lib.filter (f: builtins.pathExists ./features/${f}/metadata.json) dirs)
+') || {
+  echo "FAIL parity (nix eval)"
+  par=1
+}
+while IFS=: read -r feature sys ver want; do
+  [ -n "$feature" ] || continue
+  got=$(
+    . "features/$feature/update.sh"
+    render_url "$sys" "$ver"
+  )
+  if [ "$want" != "$got" ]; then
+    echo "FAIL parity features/$feature $sys"
+    echo "  nix:  $want"
+    echo "  bash: $got"
+    par=1
+  fi
+done <<<"$pins"
 if [ "$par" = 0 ]; then
   echo "ok   expander parity"
 else
