@@ -1,273 +1,159 @@
-# DESIGN — Architecture & Dependencies
+# DESIGN — Architecture
 
-## File Layout
+Plain flake (no flake-parts). Everything the flake exposes is produced by `./lib`, which is
+split by concern: discovery, validation, package sets, and config builders. Hosts and features
+are data; the loader is the only place that knows how they combine.
+
+## Layout
 
 ```
-flakeroot/
-├── flake.nix                       # plain outputs (no flake-parts), imports ./lib
-├── lib/                            # pure lib, split by concern
-│   ├── default.nix                 #   composition root — re-exports all concern files
-│   ├── host-options.nix            #   hostOptions schema
-│   ├── features.nix                #   feature discovery + _overlays.nix resolution
-│   ├── pin-meta.nix                #   metadata.json pin contract (releaseAsset/gitSource/pinnedSystems, one `pinMeta` member)
-│   ├── hosts.nix                   #   host discovery + validation + enrichment
-│   ├── builders.nix                #   nixosSystem / homeManagerConfiguration builders (+ `<host>-boot` variants)
-│   ├── stages.nix                  #   two-stage bootstrap: bootFeatures narrowing + build throttling module
-│   └── updater.sh                  #   generic pin updater (features/*/update.sh = copy or symlink)
-├── hosts/                          # per-host declarations (auto-discovered)
-│   ├── methyl-bazzite.nix          # HM-only flat host
-│   ├── methyl/                     # NixOS host (bare metal)
-│   │   ├── default.nix             #   {system,isNixOS,users,features}
-│   │   ├── base.nix                #   shared NixOS config (no hw import)
-│   │   ├── nixos.nix               #   host wrapper: hw-config + base
-│   │   ├── home-josh.nix           #   per-user HM module
-│   │   └── hardware-configuration.nix
-│   ├── methyl-nixos/               # NixOS host (QEMU VM — reuses methyl/)
-│   │   ├── default.nix
-│   │   ├── nixos.nix
-│   │   ├── home-josh.nix           #   re-imports ../methyl/home-josh.nix
-│   │   └── hardware-configuration.nix
-│   └── propyl/                     # NixOS host (MacBookPro16,2 / T2 POC — reuses methyl/)
-│       ├── default.nix             #   methyl facts + narrowed features (+ nixos-kait2en)
-│       ├── base.nix                #   loader/ssh/oomd, authored on top of the hw-config
-│       ├── nixos.nix               #   host wrapper: hw-config + base
-│       ├── home-josh.nix           #   stub: its own env, methyl's niri/dms options are absent
-│       └── hardware-configuration.nix  # placeholder in generated-file shape
-├── features/                       # 40 composable units, auto-discovered
-│   ├── hm-only    (14)             #   home.nix only
-│   ├── nixos-only (18)             #   nixos.nix only
-│   ├── hybrid      (8)             #   home.nix + nixos.nix: hm-syncthing, nixos-dmemcg, nixos-dms, nixos-flatpak, nixos-kde, nixos-lsfg, nixos-niri, nixos-oom
-│   ├── _overlays.nix               #   optional: {inputs, ...}: [ … ] per feature
-│   └── extras                      #   _package.nix / _*.nix / bin/ / *.sh / nix.just, pulled in by the feature itself
-├── modules/
-│   ├── cache-registry.nix          # cache urls/keys + a ready-made NIX_CONFIG fragment
-│   ├── caches.nix                  # registry → nix.settings urls/keys + flakeCache gate + warnings
-│   ├── feature-options.nix         # shared feature option namespace + internal extraGroups (by-key attrset)
-│   ├── host-facts.nix              # typed config.flakeHost (flakeHostOptions) + isAdmin-on-HM warning
-│   ├── nix-settings.nix            # nix.package, experimental-features, download timeouts
-│   ├── defaults/
-│   │   ├── home-manager.nix        # stateVersion, manual off, nixGL wrapMesa default
-│   │   └── nixos.nix               # stateVersion, fish, kernel, fallback + genAttrs osUsernames → users.users (+ extraGroups)
-│   └── packages/
-│       └── pyz-wrapper.nix         # generic .pyz fetcher (gamemode, etc.)
-├── bootstrap.sh                    # day-zero switch: registry caches staged via --option, zram swap, then switch
-├── scripts/
-│   └── cache-check.sh              # pre-flight for a switch: eval-only path list + narinfo HEADs
-├── update-all.sh                   # runs every feature updater, then bumps the flake inputs
-├── flake.lock                      # input pins (flake.nix is listed above)
-└── DESIGN.md / README.md
+flake.nix          # outputs only: nixosConfigurations, homeConfigurations, checks
+lib/               # pure loader, one concern per file
+  default.nix      #   composition root: wires the files below, builds one pkgs per host
+  host-options.nix #   host record schema (facts / authoring / derived, split by ownership)
+  hosts.nix        #   discovery + validation + enrichment
+  host-lib.nix     #   host-facing composition: mergeModules, mergeHome, profiles
+  features.nix     #   feature discovery + resolveFeaturePaths (unknown feature = throw)
+  builders.nix     #   nixosSystem / homeManagerConfiguration, module order
+  filesystems.nix  #   mkMounts / mkUnitMounts (subvolume → mount + automount units)
+  pin-meta.nix     #   metadata.json contract: pinnedSystems, assetHash, releaseAsset, gitSource
+  updater.sh       #   generic pin updater; features symlink it to their own update.sh
+modules/           # NixOS/HM modules the loader always imports
+  cache-registry.nix caches.nix feature-options.nix host-facts.nix nix-settings.nix
+  defaults/{nixos,home-manager}.nix packages/pyz-wrapper.nix
+features/<name>/   # nixos.nix, home.nix, optional _overlays.nix; private helpers are _*.nix
+hosts/             # host records: <name>.nix or <name>/ (nixos.nix + home-<user>.nix)
+tests/             # eval-only suite (see TEST_DESIGN.md)
+bootstrap.sh       # day-zero switch: cache urls/keys via --option, then switch
+update-all.sh      # feature updaters, then flake input bumps
 ```
 
-Feature file convention: `home.nix` → HM platform, `nixos.nix` → NixOS platform. Extras (`_package.nix`, `_*.nix`, `bin/`, `*.sh`, `nix.just`) are imported or read by the feature's own entry point, not discovered.
+39 features: 12 home-only, 18 NixOS-only, 9 with both a `home.nix` and a `nixos.nix`;
+2 carry an `_overlays.nix` (`nixos-cachyos`, `nixos-niri`).
 
----
-
-## Module Dependency Graph
-
-Static `imports` vs. runtime `readDir`/`import`.
-
-```mermaid
-graph TB
-    flake["flake.nix\nplain outputs, no flake-parts\nimports ./lib as function"] --> libDefault["lib/default.nix\ncomposition root:\noverlays → pkgs → config outputs"]
-
-    libDefault --> hostOpts["lib/host-options.nix\nhostOptions schema"]
-    libDefault --> featLib["lib/features.nix\ndiscoveredFeatures\nresolveFeaturePaths\nresolveHostOverlays"]
-    builders -- "consumed at build time" --> featOpts["modules/feature-options.nix\ninternal extraGroups attrset\n(warns when users.users is absent)"]
-    libDefault --> hostsLib["lib/hosts.nix\nparseHostEntry, validateHost\nautoDiscoverModules\nenrichHost, buildHost\ndiscoveredHosts"]
-    libDefault --> builders["lib/builders.nix\nbuildNixosConfigurations\nbuildHomeConfigurations"]
-
-    hostsLib -. "readDir hosts/\nfilter .nix / default.nix" .-> hosts["hosts/*.nix\nhosts/*/default.nix\n{system,isNixOS,users,features,\n nixosModules,homeModules}"]
-    featLib -. "readDir features/\nknown={nixos,home,overlays}" .-> features["features/*/home.nix\nfeatures/*/nixos.nix\nfeatures/*/_overlays.nix (optional)\n+ _package.nix/bin/*.sh (feature-internal)"]
-
-    builders -- "consumed at build time" --> caches["modules/caches.nix\nregistry → nix.settings urls/keys\nflakeCache.ready / .enable / .required"]
-    builders -- "consumed at build time" --> hostFacts["modules/host-facts.nix\nconfig.flakeHost, typed by flakeHostOptions\nisAdmin-on-HM warning"]
-    builders -- "consumed at build time" --> nixSettings["modules/nix-settings.nix\nnix.package, experimental-features,\ndownload timeouts"]
-    builders -- "consumed at build time" --> defaults["modules/defaults/home-manager.nix\nmodules/defaults/nixos.nix (merged)\nfallback + kernel + users.users"]
-    libDefault -- "exposes" --> flakeOut["flake.nixosConfigurations\nflake.homeConfigurations"]
-    flake -. "devShells.x86_64-linux.default" .-> devShell["pkgs.mkShell git pkgconf cmake"]
-    flake -. "apps.x86_64-linux.cache-check" .-> cacheCheck["scripts/cache-check.sh\npaths from eval + narinfo HEADs"]
-
-    style libDefault fill:#e8f5e9
-    style featLib fill:#e8f5e9
-    style hostsLib fill:#e8f5e9
-    style builders fill:#e8f5e9
-    style hostOpts fill:#e8f5e9
-    style hosts fill:#fff9c4
-    style features fill:#fff3e0
-```
-
-`lib/` files have no `options`/`config` at top level — pure functions. `lib/default.nix` is the sole impure wiring layer (`readDir`, `import`, `evalModules` for host validation only). `caches.nix`, `host-facts.nix`, `feature-options.nix`, `nix-settings.nix` and `defaults/*` are not statically imported by `lib/default.nix`; they are injected by the `buildNixosConfigurations`/`buildHomeConfigurations` builders in `lib/builders.nix`.
-
----
-
-## Build Pipeline
-
-Evaluation order in `lib/default.nix` → concern files.
-
-```mermaid
-flowchart LR
-    subgraph Disc ["Discovery — lib/hosts.nix"]
-        scan["readDir hosts/\nfilter regular .nix\nor dir/default.nix"] --> parse["parseHostEntry\n{isDir,name,path,hostDir}"]
-        parse --> validate["validateHost\nevalModules [hostOptions,\n import path,\n implied-user module]"]
-        validate --> auto["autoDiscoverModules\nif isDir: nixos.nix?\n+ home-*.nix → homeModules"]
-        auto --> enrich["enrichHost\ncfg.users = implied + authored (typed defaults)\nenabled → osUsernames\n+ has home module → hmUsernames"]
-        enrich --> discovered["discoveredHosts\nmapAttrs buildHost"]
-    end
-    subgraph Pkgs ["Overlay & pkgs — lib/default.nix"]
-        overlays["resolveHostOverlays (lib/features.nix)\n reads _overlays.nix per feature\n (no module import, no pkgs=null)\n → unique concat list"]
-        mkPkgs["hostsWithPkgs\nmapAttrs host:\n pkgs = nixpkgs + baseOverlay + host overlays\n baseOverlay: pinMeta, flakePackages, unstable\n (unstable set = nixpkgs-unstable + baseOverlay)\n allowUnfree=true\n → builders: nixpkgs.pkgs = host.pkgs"]
-        overlays --> mkPkgs
-    end
-    subgraph Out ["Builders — lib/builders.nix"]
-        nixos["buildNixosConfigurations\nfilter isNixOS\n→ nixosSystem per host"]
-        hm["buildHomeConfigurations\nfilter !isNixOS\n→ homeManagerConfiguration\n per user@host"]
-    end
-    discovered --> overlays
-    mkPkgs --> nixos & hm
-
-    checkWarn["admin warning (modules/host-facts.nix)\nisNixOS=false + isAdmin → warning"] -.-> discovered
-```
-
-`hostsWithPkgs` computed once in `lib/default.nix` and shared by both builders — single overlay resolution per host.
-
----
-
-## Host Type Resolution
+## Loader pipeline
 
 ```mermaid
 flowchart TD
-    f["hosts/<name>.nix\nor hosts/<name>/default.nix"] --> v["validateHost (lib/hosts.nix)\n hostOptions.isNixOS default false"]
-    v --> q{"cfg.isNixOS?"}
-    q -->|true| N["NixOS host\nbuildNixosConfigurations filter isNixOS\n→ nixosConfigurations.<name>\n+ homeConfigurations.<user>@<name>\n(via home-manager.users)"]
-    q -->|false| H["HM-only host\nbuildHomeConfigurations filter !isNixOS\n→ homeConfigurations.<user>@<name>\n(homeManagerConfiguration)"]
-
-    N -.-> warnCheck{"admin warning (modules/host-facts.nix)\nisNixOS=false && isAdmin?"}
-    H -.-> warnCheck
-    warnCheck -->|admin on HM| warn["warning: isAdmin is no-op\non standalone HM"]
-
-    style N fill:#c8e6c9
-    style H fill:#fff9c4
+  I["inputs: nixpkgs, nixpkgs-unstable, home-manager, agenix + 9 tool inputs"] --> D["lib/default.nix"]
+  D --> HO["host-options.nix<br/>schema: facts + authoring + derived"]
+  D --> H["hosts.nix<br/>discover hosts/ → validate → enrich"]
+  H --> HD["host records<br/>name, system, isNixOS, users,<br/>features, nixosModules, homeModules<br/>+ derived osUsernames / hmUsernames"]
+  D --> F["features.nix<br/>discover features/ → discoveredFeatures"]
+  HD --> P["hostsWithPkgs<br/>pkgs + pkgs.unstable + flakePackages + pinMeta"]
+  F --> P
+  P --> B["builders.nix"]
+  B --> NC["nixosConfigurations.&lt;host&gt;"]
+  B --> HC["homeConfigurations.&lt;user&gt;@&lt;host&gt;"]
+  NC --> O["flake.nix outputs"]
+  HC --> O
+  O --> C["checks.&lt;system&gt;.nixos-&lt;host&gt; / home-&lt;user&gt;@&lt;host&gt;"]
 ```
 
-`isQemuVM` (declared in `hostOptions`, `lib/host-options.nix`) is orthogonal — it doesn't affect host classification, only feature/overlay gating downstream. Cache gating is not a host fact: it lives in `modules/caches.nix` (`flakeCache.enable` / `flakeCache.required`), because what a host substitutes from is a property of the registry, not of the machine.
+`supportedSystems` is derived from the configurations themselves
+(`config.pkgs.stdenv.hostPlatform.system`), so a host targeting a system we do not check cannot
+hide behind a missing check.
 
----
+## Host authoring ergonomics
 
-## Feature System
+Host files are records, not modules. They are validated against the schema, so an unsupported
+field is an error naming the option, and a derived field cannot be authored.
 
 ```mermaid
 flowchart LR
-    subgraph Discover ["Discovery — lib/features.nix"]
-        scan["readDir features/\nfilter directories"] --> map["discoveredFeatures\nmapAttrs featureDir\n knownFiles={nixos,home,overlays}\n→ {feature: {nixos?:path, home?:path, overlays?:path}}"]
-    end
-    subgraph Resolve ["Resolution — lib/features.nix"]
-        resolve["resolveFeaturePaths\nfor f in featureList:\n read discoveredFeatures.f (no re-walk)\n hasAttr platform → [path]\n else [] (hybrid skip)\n else throw 'Unknown … Available: …'"]
-        collect["resolveHostOverlays\n for each feature:\n feature.overlays present?\n → import {inputs} → list\n → unique concatLists"]
-        resolve --> collect
-    end
-    subgraph Consume ["Consumption"]
-        nixosUse["nixosSystem (lib/builders.nix)\nimports = resolve nixos + modules/feature-options.nix"]
-        hmUse["mkUserHomeModule (lib/builders.nix)\nimports = resolve home + modules/feature-options.nix\n+ defaults/home-manager.nix"]
-        pkgsUse["hostsWithPkgs (lib/default.nix)\npkgs members: pinMeta, flakePackages, unstable"]
-    end
-    map --> resolve
-    collect --> pkgsUse
-    resolve --> nixosUse & hmUse
-
-    featOpt["modules/feature-options.nix\ninternal extraGroups attrset (by-key; warns if\n non-empty and users.users missing)"] -. contributes .-> nixosUse
+  A["&lt;host&gt;.nix<br/>{system, isNixOS, users, features, modules}"] --> V["hostOptions validation"]
+  B["&lt;host&gt;/default.nix<br/>+ nixos.nix + home-&lt;user&gt;.nix"] --> V
+  V --> M["hostLib<br/>mergeModules: scalars last-wins, lists dedupe by first occurrence<br/>mergeHome: standalone shape, throws on nixos-* features<br/>profiles dir [names]: load and merge"]
+  M --> R["enriched host record"]
 ```
 
-A single walker owns discovery: `discoveredFeatures` is the one `readDir`, and `resolveFeaturePaths` resolves each listed feature against it (no second `pathExists` walk). Unknown feature throws with a sorted `Available:` list; a listed feature with no module for the requested platform resolves to `[]` (hybrid skip). Extras like `_package.nix`/`bin/*.pyz` are not discovered — the feature's own `home.nix`/`nixos.nix` imports them. `_overlays.nix` is part of the same discovery map (`knownFiles`), so `resolveHostOverlays` imports the discovered path — no second walk.
+Feature lists are the single source of truth: `features = ["nixos-niri" "hm-tmux"]` resolves to
+`features/nixos-niri/nixos.nix` and `features/hm-tmux/home.nix`. A name with no module for the
+platform contributes nothing; a name that does not exist throws at evaluation with the available
+list.
 
-**Listing a feature means it is enabled.** Every top-level `features.<name>.enable` defaults to `true` (`mkEnableOption … // {default = true;}`), so a host only lists the features it wants on; `enable = false` is the opt-out, and any per-feature attrs are knobs (e.g. `oomd.notify`, `dms.niriCompat`, `niri.niri-watcher.enable`). Sub-knobs that are opt-in (e.g. `niri.kanshi.enable`) stay default-false.
+## NixOS module composition (order matters)
 
----
+```mermaid
+flowchart TD
+  1["modules/caches.nix<br/>owns flakeCache: enable, required, ready"] --> 2["resolveFeaturePaths(features, nixos)<br/>+ resolveFeaturePaths(features, overlays)"]
+  2 --> 3["modules/feature-options.nix<br/>extraGroups namespace"]
+  3 --> 4["modules/host-facts.nix<br/>config.flakeHost"]
+  4 --> 5["modules/nix-settings.nix<br/>nix.settings + nix.package"]
+  5 --> 6["modules/defaults/nixos.nix<br/>hostName, kernel, users.users, extraGroups"]
+  6 --> 7["host.nixosModules<br/>host-local modules, incl. hardware-configuration.nix"]
+  7 --> 8["home-manager module<br/>useGlobalPkgs, useUserPackages, users.&lt;user&gt;"]
+  8 --> 9["nixpkgs.pkgs = host pkgs"]
+```
 
-## Configuration Composition
+Caches come first because feature modules gate on `config.flakeCache.enable` — e.g. `nixos-niri`
+swaps niri for the spicy build only when its cache is substituted from. Feature overlays are
+modules that set `nixpkgs.overlays`, so they are appended to the pinned set at eval time and can
+be gated on options; host `pkgs` is threaded in last so a host can pin its own package set.
 
-### NixOS Host — `buildNixosConfigurations` (`lib/builders.nix`)
+## Home Manager composition
 
 ```mermaid
 flowchart LR
-    subgraph Mods ["nixosSystem modules — flattened, in order"]
-        cachesMod["1 caches.nix\nurls/keys from the flakeCache registry\n(substitution first)"]
-        feat["2 feature aggregator\n imports = resolveFeaturePaths 'nixos'\n + modules/feature-options.nix"]
-        facts["3 mkHostFactsModule\n config.flakeHost"]
-        nixSet["4 nix-settings.nix\nnix.package + timeouts"]
-        defNixos["5 defaults/nixos.nix\nstateVersion + fish + kernel + fallback\n+ genAttrs osUsernames → users.users\n  (+ extraGroups for isAdmin)"]
-        hostMods["6 host.nixosModules\n auto nixos.nix + cfg.nixosModules"]
-        hmMod["7 home-manager.nixosModules.home-manager"]
-        inlinePkgs["8 inline\n nixpkgs.pkgs = host.pkgs"]
-        inlineHm["9 inline home-manager wiring\n useGlobalPkgs, extraSpecialArgs,\n users = genAttrs hmUsernames → mkUserHomeModule"]
-        cachesMod --> feat --> facts --> nixSet --> defNixos --> hostMods --> hmMod --> inlinePkgs --> inlineHm --> merged["nixosSystem"]
-    end
-    subgraph Args ["specialArgs"]
-        sa["inputs only"]
-    end
-    sa -.-> merged
+  subgraph NixOS["NixOS host"]
+    U["home-manager.users.&lt;user&gt;"] --> UM["hostModules + homeModules.&lt;user&gt;"]
+  end
+  subgraph Standalone["Standalone host"]
+    S["homeConfigurations.&lt;user&gt;@&lt;host&gt;"] --> SM["hostModules + targets.genericLinux.enable"]
+  end
+  UM --> HM["home-manager modules<br/>nixGL wrappers from defaults/home-manager.nix"]
+  SM --> HM
 ```
 
-`mkUserHomeModule` chain per user (`lib/builders.nix`): `resolve home` + `host.homeModules.<user>` + `modules/feature-options.nix` + `defaults/home-manager.nix` + `mkHostFactsModule host`. The builder sets `home.username` and `home.homeDirectory` (`mkDefault`). Nothing else is threaded: `pkgs` is a module value (`nixpkgs.pkgs`), and the host's unstable set is a member of it (`pkgs.unstable`).
+`useGlobalPkgs` means Home Manager shares the host package set, so gated overlays reach user
+packages too; Home Manager modules must not set `nixpkgs.overlays`.
 
-### HM-Only Host — `buildHomeConfigurations` (`lib/builders.nix`)
+## Cache chain
 
 ```mermaid
 flowchart LR
-    subgraph Pkgs ["pkgs — lib/default.nix pre-built"]
-        pkgsNode["pkgs = nixpkgs + baseOverlay + host overlays\nmembers: pinMeta, flakePackages, unstable"]
-    end
-    subgraph Mods2 ["homeManagerConfiguration modules"]
-        nixSet2["caches.nix + nix-settings.nix"]
-        userMod["mkUserHomeModule\n resolve 'home' + host.homeModules.<user>\n + modules/feature-options.nix\n + defaults/home-manager.nix\n + mkHostFactsModule"]
-        generic["targets.genericLinux.enable\n = lib.mkDefault true"]
-        nixSet2 --> userMod --> generic --> merged2["homeManagerConfiguration"]
-    end
-    pkgsNode --> merged2
+  R["modules/cache-registry.nix<br/>url + publicKey per cache"] --> C["modules/caches.nix"]
+  C --> S["nix.settings.extra-substituters<br/>extra-trusted-public-keys"]
+  C --> W["config.warnings when a required cache<br/>is not enabled"]
+  C --> A["assertion: unknown required cache name"]
+  R --> B["bootstrap.sh<br/>nix eval --raw → --option<br/>(pre-nixosInstall: root, no config yet)"]
 ```
 
----
+## Pin metadata
 
-## Data Flow Summary
+Three features are metadata-backed today (`hm-brave`, `hm-tmux`, `hm-zed`); each carries a
+`metadata.json` and a symlink to `lib/updater.sh` as its own `update.sh`
+(`update-all.sh` refuses a copy). The template is expanded twice — once in Nix
+(`lib/pin-meta.nix releaseAsset`, at eval) and once in bash (`render_url`, at fetch) —
+and `tests/run.sh` diffs the two byte-for-byte for every pin and pinned system.
 
 ```mermaid
-graph LR
-    hosts["hosts/"] -- readDir --> disc["lib/hosts.nix\ndiscoveredHosts"]
-    features["features/"] -- readDir --> featMap["lib/features.nix\ndiscoveredFeatures"]
-    featMap -- "_overlays.nix" --> hostsWithPkgs["hostsWithPkgs\nlib/default.nix\nresolveHostOverlays\n→ pkgs (pinMeta, flakePackages, unstable)"]
-    disc --> hostsWithPkgs
-    hostsWithPkgs --> nixosOut["nixosConfigurations\nlib/builders.nix"]
-    hostsWithPkgs --> hmOut["homeConfigurations\nlib/builders.nix"]
-
-    style disc fill:#e1f5fe
-    style featMap fill:#e8f5e9
-    style hostsWithPkgs fill:#c8e6c9
+flowchart LR
+  J["features/&lt;name&gt;/metadata.json<br/>repo, version, kind, url, arches, hashes"] --> P["lib/pin-meta.nix<br/>pinnedSystems / assetHash / releaseAsset / gitSource"]
+  P --> K["features/&lt;name&gt;/_package.nix<br/>fetchurl or fetchFromGitHub"]
+  U["lib/updater.sh"] --> J
+  U2["update-all.sh"] --> U
 ```
 
----
+`pinMeta` and `flakePackages` are injected into every package set by `lib/default.nix`, so a
+feature reads them like a build dependency rather than threading arguments.
 
-## Key Design Decisions
+## User-facing ergonomics
 
-| Decision                                                                               | Rationale                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/` directory (was single `lib.nix`)                                                | Split by concern: `host-options`, `features`, `hosts`, `builders`; `default.nix` is the composition root re-exporting the public surface                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `hardware-configuration.nix` stays generated                                           | The barrel imports it first and `base.nix` authors loader/ssh/services on top, so `nixos-generate-config` can overwrite the disk description with no config edits (methyl, methyl-nixos, propyl)                                                                                                                                                                                                                                                                                                                                                                    |
-| `isNixOS` bool                                                                         | Explicit host classification; `false` default keeps HM-only hosts terse                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `system` in host file                                                                  | Single source of truth for `pkgs` system                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Flat `hosts/<name>.nix` + directory hosts                                              | Simple hosts stay one file; complex hosts auto-discover `nixos.nix`/`home-*.nix`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Feature dirs auto-discovered                                                           | No registry; add `features/foo/{home,nixos}.nix` and list `"foo"` in host — **listing = enabled** (`enable` defaults to `true`; `false` is the opt-out, per-feature attrs are knobs)                                                                                                                                                                                                                                                                                                                                                                                |
-| `_overlays.nix` per feature                                                            | Features that need overlays ship `{inputs, ...}: [ … ]` in `_overlays.nix`; `resolveHostOverlays` imports it directly — no module eval, no `pkgs = null` sentinel                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `pinMeta` as one package-set member                                                    | `metadata.json` pins share one shape contract, so `lib/pin-meta.nix` owns the URL template, system lookup, and arches/hash shape check; the whole attrset is one member of `baseOverlay`, present in every package set, so `callPackage` hands it to `_package.nix` as a build dependency (`pinMeta.releaseAsset pin system`) (feature `_overlays.nix` reaches `pkgs` only)                                                                                                                                                                                         |
-| `baseOverlay` members: `pinMeta`, `flakePackages`, `unstable`                          | Flake inputs that publish `packages` land in the host set, so a flake package read in a feature module is a module value (`flakePackages.<name>.<system>.default`); `self` is excluded because a future `packages` output would point back at the host configs and cycle; the unstable set carries `baseOverlay` only, so `pkgs.unstable` never asks for itself                                                                                                                                                                                                     |
-| Hosts keyed by their own name (`lib/hosts.nix`)                                        | `hosts/<name>.nix` and `hosts/<name>/default.nix` yield one key — `<user>@<host>` in `homeConfigurations` and `nixosConfigurations.<host>` — so every public output names a host the same way; two definitions resolving to one name throw at discovery                                                                                                                                                                                                                                                                                                             |
-| `flakeHost` as one option (`modules/host-facts.nix`)                                   | Host facts reach modules through a single declared `config.flakeHost`, typed from the schema groups in `lib/host-options.nix` (`hostFacts`, `authoringOptions`, `derivedOptions` — no key list subtracted at runtime), so any host attribute the schema declares is a fact and an undeclared one is a type error instead of a silent default; `osUsernames`/`hmUsernames` derive from the typed `users` set, never written by a host                                                                                                                                |
-| `networking.hostName = mkDefault config.flakeHost.name` (`modules/defaults/nixos.nix`) | Discovery owns the name: `lib/hosts.nix` takes it from the `hosts/` directory or file name and re-injects it after the host config merges, so a host file cannot override it and a new host costs no `hostName` line                                                                                                                                                                                                                                                                                                                                                |
-| `specialArgs = {inherit inputs;}`                                                      | Only the flake inputs stay injected: four features build module paths from them at import time (`inputs.agenix.homeManagerModules.default` is evaluated before the module system runs). Package sets and host facts are module values instead (`nixpkgs.pkgs`, its `unstable` member, `config.flakeHost`)                                                                                                                                                                                                                                                           |
-| `hostsWithPkgs` in `lib/default.nix`                                                   | Overlays resolved once, `pkgs` shared by both builders and reachable as `nixosConfigurations.<host>.pkgs` / `homeConfigurations.<user>@<host>.pkgs`; the loader keeps it internal because `nix flake check` warns on non-standard outputs and a public copy would drift from the configs                                                                                                                                                                                                                                                                            |
-| `modules/defaults/*` collapsed (2 files)                                               | `home-manager.nix` (stateVersion, manual off, the nixGL `wrapMesa` wrapper) + merged `nixos.nix` (stateVersion/shell/kernel + `users.users` + `extraGroups` for `isAdmin`); always-on, so consumers call `config.lib.nixGL.wrapMesa` without a fallback                                                                                                                                                                                                                                                                                                             |
-| Cache gating from a registry, not a flag (`modules/caches.nix`)                        | One `flakeCache` module writes every cache's url/key into `nix.settings`, derives `flakeCache.ready` (required ⊆ enable), and warns by name when a feature needs a cache the host does not substitute from; `nix.extraOptions = "fallback = true"` makes it "substitute if served, build only if not", so a cache outage costs a local build instead of breaking the switch. Replaces the hand-flipped `flakeHost.bootstrap` flag, which broke eval whenever a cache was listed but not yet live (`flakeCache.strict = true` opts into that failure at switch time) |
-| `flakeCache.enable` defaults to every registry name                                    | Declaring a cache is cheap (an eval-only url+key in `/etc/nix/nix.conf`); the gate is _required_ ⊆ _enable_, so a feature opts itself out by not listing it — methyl lists no `nixos-cachyos` (which gates on the `nix-community` entry), propyl lists `nixos-kait2en` (which sets `flakeCache.required.kait2en`)                                                                                                                                                                                                                                                   |
-| `nix run .#cache-check -- <host>`                                                      | Eval-only pre-flight: lists the paths a switch needs and HEADs `<hash>.narinfo` on the host's own substituters, so "what will build locally" is answerable before a switch on a RAM-constrained laptop                                                                                                                                                                                                                                                                                                                                                              |
-| `hmEnabled` per user                                                                   | NixOS user exists without HM when `false`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `extraGroups` aggregation                                                              | Features declare groups as a **by-key attrset** (`extraGroups = { foo = ["grp"]; }`); the single consumer (`defaults/nixos.nix`) flattens `attrValues` for `isAdmin` users — no last-wins collision, no `lib.mkAppend` (absent in nixpkgs). Warns if non-empty and `users.users` unavailable                                                                                                                                                                                                                                                                        |
-| Plain `flake.nix` outputs (no `flake-parts`)                                           | Single `x86_64-linux` system, `devShells.x86_64-linux.default` inline; removed framework tax (1 input, ~30 lock lines)                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| Public outputs are the configs only                                                    | `nixosConfigurations` + `homeConfigurations` (+ `devShells`) are the only exports: `features` was a public copy of a value the loader already has, and a package-set output would duplicate `<config>.pkgs`, so `nix flake check` reports no unchecked outputs and inspection reads one path                                                                                                                                                                                                                                                                        |
+Currently exposed:
+
+```mermaid
+flowchart LR
+  E["nix flake check"] --> CK["checks.&lt;system&gt;.*"]
+  E2["nix build .#nixosConfigurations.&lt;host&gt;.config.system.build.toplevel"] --> NC["system derivation"]
+  E3["nix build .#homeConfigurations.&lt;user&gt;@&lt;host&gt;.activationPackage"] --> HC["HM activation derivation"]
+```
+
+Placeholders for ergonomics we do **not** implement yet (no `packages`, `devShell`, or `apps`
+output today):
+
+```mermaid
+flowchart LR
+  X["nix run .#apps.&lt;system&gt;.cache-check &lt;host&gt;<br/>(hypothetical: eval-only cache pre-flight)"] -.->|not implemented| Y["scripts/cache-check.sh"]
+  Z["nix devShell (hypothetical: toolchain for updaters)"] -.->|not implemented| W["lib/updater.sh"]
+```

@@ -1,10 +1,7 @@
 {...}: {
   imports = [./hardware-configuration.nix];
 
-  hardware = {
-    opengl.enable = true;
-    graphics.enable = true;
-  };
+  hardware.graphics.enable = true;
   services.openssh.enable = true;
   features = {
     qemu = {

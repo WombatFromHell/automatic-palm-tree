@@ -42,26 +42,28 @@
       inherit self inputs lib;
     };
 
-    supportedSystems = ["x86_64-linux"];
+    # The systems we check come from the configurations themselves, so a host that targets a
+    # system outside this list cannot hide behind a missing check.
+    supportedSystems = lib.unique (lib.mapAttrsToList
+      (_: config: config.pkgs.stdenv.hostPlatform.system)
+      (cfg.nixosConfigurations // cfg.homeConfigurations));
 
-    # Helper to map NixOS configurations to checks for a given system
-    nixosChecksFor = system:
+    # One check per configuration: the derivation `nix flake check` would build for it.
+    mkChecks = system: kind: build:
       lib.mapAttrs'
-      (name: config: lib.nameValuePair "nixos-${name}" config.config.system.build.toplevel)
-      (lib.filterAttrs (name: config: config.pkgs.system == system) cfg.nixosConfigurations);
+      (name: config: lib.nameValuePair "${kind}-${name}" (build config))
+      (lib.filterAttrs
+        (_: config: config.pkgs.stdenv.hostPlatform.system == system)
+        cfg."${kind}Configurations");
 
-    # Helper to map Home Manager configurations to checks for a given system
-    homeChecksFor = system:
-      lib.mapAttrs'
-      (name: config: lib.nameValuePair "home-${name}" config.activationPackage)
-      (lib.filterAttrs (name: config: config.pkgs.system == system) cfg.homeConfigurations);
   in {
     inherit (cfg) nixosConfigurations homeConfigurations;
 
     # Expose checks so nix-fast-build (and nix flake check) can evaluate them
     checks = lib.genAttrs supportedSystems (
       system:
-        (nixosChecksFor system) // (homeChecksFor system)
+        (mkChecks system "nixos" (config: config.config.system.build.toplevel))
+        // (mkChecks system "home" (config: config.activationPackage))
     );
   };
 }

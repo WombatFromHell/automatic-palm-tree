@@ -8,8 +8,8 @@
 
   # Upstream tools, read through the flake package set (lib/default.nix injects
   # `flakePackages` for every input that exposes `packages`).
-  watcherPkg = pkgs.flakePackages.beryl-utils.${pkgs.system}.default;
-  gamemodePkg = pkgs.flakePackages.beryl-gamemode.${pkgs.system}.gamemode;
+  watcherPkg = pkgs.flakePackages.beryl-utils.${pkgs.stdenv.hostPlatform.system}.default;
+  gamemodePkg = pkgs.flakePackages.beryl-gamemode.${pkgs.stdenv.hostPlatform.system}.gamemode;
 
   # Mirrors upstream assets/units/wl-watcher/wl-watcher-uwsm.service: uwsm's
   # wayland-session@.target declares BindsTo/Before/PropagatesStopTo

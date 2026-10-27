@@ -1,13 +1,16 @@
 # Helpers handed to host files (as `hostLib`) for composing host definitions.
 {lib, ...}: let
-  inherit (lib) isAttrs isList isDerivation mapAttrs unique;
+  inherit (lib) isAttrs isList isDerivation mapAttrs;
 
   # Module-system wrappers (mkForce, mkIf, ...) and derivations are leaves.
   isLeaf = v: !(isAttrs v) || v ? _type || isDerivation v;
 
+  # Lists merge by first occurrence. `lib.unique` only removes *consecutive*
+  # duplicates, so a profile reached through two paths would be imported twice and
+  # the module system would reject the second declaration of the same option.
   mergeValue = l: r:
     if isList l && isList r
-    then unique (l ++ r)
+    then lib.foldl' (acc: x: if lib.elem x acc then acc else acc ++ [x]) l r
     else if !(isLeaf l) && !(isLeaf r)
     then mergeAttrs l r
     else r;
@@ -24,30 +27,27 @@
   mergeModules = lib.foldl' mergeAttrs {};
 
   # mergeHome [profiles...]: mergeModules for a standalone Home Manager host (no NixOS).
-  # Forces isNixOS off, drops NixOS-only features, and clears isAdmin (a no-op there).
+  # Forces isNixOS off and clears isAdmin (a no-op there). A `nixos-` feature here is an
+  # authoring mistake, not something that can be silently dropped and then wondered about.
   mergeHome = modules: let
     merged = mergeModules modules;
+    nixosOnly = lib.filter (f: lib.hasPrefix "nixos-" f) (merged.features or []);
   in
-    merged
-    // {
-      isNixOS = false;
-      nixosModules = [];
-      features = lib.filter (f: !lib.hasPrefix "nixos-" f) (merged.features or []);
-      users = mapAttrs (_: u: u // {isAdmin = false;}) (merged.users or {});
-    };
-
-  # Drop features from a list, e.g. for a variant that must not carry a base feature.
-  removeFeatures = drop: features: lib.subtractLists drop features;
+    if nixosOnly != []
+    then
+      throw
+        "mergeHome: ${lib.concatStringsSep ", " nixosOnly} ${if lib.length nixosOnly == 1 then "is" else "are"} NixOS-only ${if lib.length nixosOnly == 1 then "feature" else "features"} and cannot apply to a standalone Home Manager host; see hosts/methyl-base/standalone.nix for the home-only list"
+    else
+      merged
+      // {
+        isNixOS = false;
+        nixosModules = [];
+        users = mapAttrs (_: u: u // {isAdmin = false;}) (merged.users or {});
+      };
 
   # profiles dir [names]: load <dir>/<name>.nix for each name, as a list for mergeModules.
   # Profiles get `hostLib`, so a profile can itself compose other profiles.
   profiles = dir: map (name: import (dir + "/${name}.nix") {inherit hostLib;});
 
-  # A host-record fragment that adds one NixOS module / one user's HM module.
-  nixosModule = path: {nixosModules = [path];};
-  homeModule = user: path: {homeModules.${user} = [path];};
-
-  hostLib = {inherit mergeModules mergeHome profiles removeFeatures nixosModule homeModule;};
-in {
-  inherit (hostLib) mergeModules mergeHome profiles removeFeatures nixosModule homeModule;
-}
+  hostLib = {inherit mergeModules mergeHome profiles;};
+in hostLib

@@ -77,6 +77,10 @@ let
       type = lib.types.listOf lib.types.str;
       description = "Usernames NixOS creates for this host.";
     };
+    adminUsernames = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      description = "Enabled usernames declared as isAdmin.";
+    };
     hmUsernames = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       description = "Host users that get a Home Manager configuration.";

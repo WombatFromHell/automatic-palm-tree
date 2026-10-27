@@ -4,7 +4,7 @@
   pkgs,
   ...
 }: let
-  dcalPkg = pkgs.unstable.flakePackages.dcal.${pkgs.unstable.system}.default;
+  dcalPkg = pkgs.unstable.flakePackages.dcal.${pkgs.unstable.stdenv.hostPlatform.system}.default;
   cfg = config.features.dcal;
 in {
   options.features.dcal = {

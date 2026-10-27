@@ -58,7 +58,7 @@
     ''
       while validating host file ${toString path} against lib/host-options.nix.
       A host file is a host record (system, isNixOS, users, features, nixosModules, homeModules),
-      not a NixOS module. Pass NixOS config via `hostLib.nixosModule ./path/to/module.nix`
+      not a NixOS module. Pass NixOS config via `nixosModules = [ ./path/to/module.nix ]`
       or `hosts/<name>/nixos.nix` instead of listing it as a profile.''
     evaluated.config;
 
@@ -96,12 +96,19 @@
 
   enrichHost = evaluatedConfig: autoModules: let
     enabledUsernames = lib.attrNames (lib.filterAttrs (_: u: u.enabled) evaluatedConfig.users);
-    hasHomeModule = u: autoModules.homeModules ? ${u} || evaluatedConfig.homeModules ? ${u};
+    # One merged view of the two sources; reading it twice is what made `hmUsernames` drift.
+    homeModules = autoModules.homeModules // evaluatedConfig.homeModules;
   in {
     nixosModules = autoModules.nixosModules ++ evaluatedConfig.nixosModules;
-    homeModules = autoModules.homeModules // evaluatedConfig.homeModules;
+    inherit homeModules;
     osUsernames = enabledUsernames;
-    hmUsernames = builtins.filter (u: hasHomeModule u && evaluatedConfig.users.${u}.hmEnabled) enabledUsernames;
+    # Admins are derived here, once, so host-facts and the NixOS user defaults read
+    # the same list instead of each re-filtering `users`.
+    adminUsernames = builtins.filter (u: evaluatedConfig.users.${u}.isAdmin) enabledUsernames;
+    hmUsernames =
+      builtins.filter
+      (u: builtins.hasAttr u homeModules && evaluatedConfig.users.${u}.hmEnabled)
+      enabledUsernames;
   };
 
   buildHost = entry: let

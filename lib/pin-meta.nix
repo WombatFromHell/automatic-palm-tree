@@ -31,8 +31,10 @@
     or (throw "metadata for '${pin.repo}' pins no hash for system '${system}'. Pinned systems: ${concatStringsSep ", " (pinnedSystems pin)}.");
 
   # release asset for one system: fetchurl-ready {url, sha256}
-  # ponytail: template expansion is duplicated in lib/updater.sh render_url; keep in sync,
-  # upgrade path is a one-shot parity check over features/*/metadata.json
+  # lib/updater.sh render_url expands the same template in bash; the two runtimes
+  # cannot share code, so tests/run.sh diffs them byte-for-byte over every pin x system.
+  # `arch` is lazy on purpose: the throw below fires only when {arch} is in the template,
+  # which is what lets a single-arch pin with no `arches` key (hm-tmux) still resolve.
   releaseAsset = pin: system: let
     arch =
       pin.arches.${system}

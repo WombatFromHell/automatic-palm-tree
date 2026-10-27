@@ -1,151 +1,103 @@
 # flakeroot
 
-Flake-driven, host-discovering config system for NixOS and Home Manager.
+One Nix flake that builds every machine's config. A host is a file under `hosts/` that lists the
+features it wants; the loader discovers it and emits `nixosConfigurations.<host>` and
+`homeConfigurations.<user>@<host>`.
+
+## Helpers
+
+Run from the repo root.
+
+| Helper                                         | What it does                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `./bootstrap.sh [init] <host>`                 | Day zero on a **NixOS** host: `sudo nixos-rebuild boot --flake .#<host>`. Passes the registry caches as `--option extra-substituters` / `--option extra-trusted-public-keys` so a fresh machine fetches instead of compiling — `--option` survives `sudo` and needs no trusted user.                    |
+| `features/<name>/update.sh [<ref> \| --check]` | Pins one feature. No arg = latest release; `<ref>` = pin that ref explicitly; `--check` = exit 1 when a newer version exists or the pinned hash moved. A symlink to `lib/updater.sh`, configured by that feature's `metadata.json`.                                                                     |
+| `./update-all.sh [--flake] [--check]`          | Runs every `features/*/update.sh` (aborts on the first failure), forwards its args to each, then commits `features/` and `flake.lock`. `--flake` also runs `nix flake update`. Stops if any `update.sh` is a copy instead of a symlink, and skips the commit when the tree is dirty beyond those paths. |
+| `bash tests/run.sh`                            | Eval-only gate on the loader. Green suites print `ok tests/<suite>.nix`; each `tests/red/` guard must throw a message containing its first line (`# expect: <substring>`). Never runs `nix build`.                                                                                                      |
 
 ## Deploy
 
 ```bash
-export NH_FLAKE="$HOME/.config/flakeroot"
-./bootstrap.sh init                     # day zero: NixOS system or Home Manager
-./bootstrap.sh init propyl              # explicit host
-./bootstrap.sh init josh@methyl-bazzite # explicit home config
-./bootstrap.sh init propyl --dry-run    # report what would be fetched vs built, then stop
-nh os switch                            # day 2+: NixOS system + Home Manager
-nh home switch                          # day 2+: Home Manager only
-nix flake show                          # List all discovered configs
+export NH_FLAKE="$HOME/.config/flakeroot"   # tells nh which flake to build
+./bootstrap.sh propyl                        # day zero on a fresh NixOS host
+nh os switch                                 # day 2+: NixOS system + Home Manager
+nh home switch                               # day 2+: Home Manager only
+nix flake show                               # list discovered configs
 ```
 
-`bootstrap.sh init` passes the registry's cache urls and keys as
-`--option extra-substituters` / `--option extra-trusted-public-keys`, so a host whose `nix.conf`
-does not carry them yet fetches instead of compiling (a kernel build and a firmware VM on a
-RAM-constrained laptop). `--option` beats `NIX_CONFIG` because `sudo` wipes the environment and the
-flag needs no trusted user. After a NixOS switch, `/etc/nix/nix.conf` carries the caches from
-`flakeCache.enable`, so plain `nh os switch` is enough from then on. It also creates zram swap
-first: the persistent swapfile is activated by a systemd unit that only runs on the new system's
-boot, so the first switch would otherwise have no swap.
+A Home-Manager-only host (e.g. Bazzite) has no `nixos-rebuild` step — switch it with `nh home switch`
+once Nix is installed.
 
-To opt a host out of cache substitution entirely, set `flakeCache.enable = []`.
+After a NixOS switch, `/etc/nix/nix.conf` carries the caches from `flakeCache.enable`, so plain
+`nh os switch` is enough from then on. Set `flakeCache.enable = []` to build everything locally.
 
-## Single-File Host (HM-only)
+## Hosts
 
-`hosts/<name>.nix`:
+| Path                                                     | Kind                                                               |
+| -------------------------------------------------------- | ------------------------------------------------------------------ |
+| `hosts/<name>.nix`                                       | Home-Manager-only host — build the record with `hostLib.mergeHome` |
+| `hosts/<name>/default.nix`                               | NixOS host — build the record with `hostLib.mergeModules`          |
+| `hosts/<name>/nixos.nix`, `hosts/<name>/home-<user>.nix` | Extra modules, picked up automatically                             |
+
+Host options:
+
+| Option                               | Default    | Meaning                                                     |
+| ------------------------------------ | ---------- | ----------------------------------------------------------- |
+| `system`                             | —          | required, e.g. `x86_64-linux`                               |
+| `isNixOS`                            | `false`    | build a NixOS system for this host                          |
+| `features`                           | `[]`       | feature names from `features/` — the single source of truth |
+| `users.<name>.enabled`               | `true`     | include the user in `osUsernames`                           |
+| `users.<name>.isAdmin`               | `false`    | add `wheel` to `extraGroups`; meaningless on a HM-only host |
+| `users.<name>.hmEnabled`             | `true`     | `false` creates the NixOS user but skips its home config    |
+| `isQemuVM`                           | `false`    | host is a QEMU/KVM VM; features gate hardware choices on it |
+| `nixosModules`, `homeModules.<user>` | `[]`, `{}` | extra module paths beyond the features                      |
+
+`name`, `osUsernames`, `adminUsernames` and `hmUsernames` are derived by the loader — a host file that
+sets one is rejected.
 
 ```nix
-_: {
-  system = "x86_64-linux";
-  isNixOS = false;
-  features = [ "hm-base" ];
-  homeModules.someuser = [{
-    home.packages = with pkgs.unstable; [ helix tmux ];
-  }];
-}
+# hosts/methyl-bazzite.nix — Home Manager only
+{hostLib, ...}: let
+  myHome = {pkgs, ...}: {
+    home.packages = with pkgs; [cachix pkgs.unstable.herdr];
+  };
+in
+  hostLib.mergeHome (
+    hostLib.profiles ./methyl-base ["standalone"]
+    ++ [{system = "x86_64-linux"; homeModules.josh = [myHome];}]
+  )
 ```
-
-## Multi-File Host (NixOS)
-
-`hosts/<name>/default.nix`:
 
 ```nix
-_: {
-  system   = "x86_64-linux";
-  isNixOS  = true;
-  users.someuser.isAdmin = true;
-  features = [ "hm-base" "hm-dev" "nixos-base" "nixos-podman" ];
-  nixosModules = [ ./nixos.nix ];
-}
+# hosts/propyl/default.nix — NixOS, reuses a profile and adds one feature
+{hostLib, ...}:
+hostLib.mergeModules (
+  hostLib.profiles ../methyl-base/profiles ["methyl-common"]
+  ++ [{features = ["nixos-kait2en"];}]
+)
 ```
 
-Sibling files are auto-discovered from the `hosts/<name>/` directory:
+`hostLib.profiles <dir> [names]` loads `<dir>/<name>.nix`; `mergeModules` merges them (lists merge by
+first occurrence, later records win on scalars), so a variant reuses a profile and states only its
+diff. `mergeHome` is `mergeModules` plus `isNixOS = false`, and throws if you list a `nixos-*` feature.
+Keep `hardware-configuration.nix` per-host: import it in that host's own `nixos.nix`, never in a shared
+profile.
 
-`nixos.nix` — standard NixOS module:
-
-```nix
-_: {
-  imports = [./hardware-configuration.nix];
-  boot.loader.systemd-boot.enable = true;
-  networking.hostName = "my-machine";
-  services.openssh.enable = true;
-  users.users.someuser.extraGroups = ["podman"];
-}
-```
-
-`home-<user>.nix` — plain Home Manager module (`pkgs`, `config.flakeHost` available):
-
-```nix
-{ pkgs, ... }: {
-  home.packages = with pkgs.unstable; [ heroic khal trash-cli ];
-  programs.gpg.enable = true;
-}
-```
-
-## Host Inheritance
-
-A host can inherit from another host's config, overriding only what differs. This avoids
-repeating the same feature list, user declarations, and module config across variants
-(e.g., a bare-metal host and its QEMU VM sibling).
-
-### Host metadata (`default.nix`)
-
-Use Nix's `import + //` to copy the base attrset and override specific fields:
-
-```nix
-# hosts/myhost-vm/default.nix
-_: let
-  base = import ../myhost/default.nix {};
-in base // {
-  isQemuVM = true;
-}
-```
-
-### NixOS module (`nixos.nix`)
-
-Split shared config into a `base.nix` (no hardware import) and have each variant's
-`nixos.nix` import its own hardware config plus the base:
-
-```
-hosts/myhost/                    # bare metal
-├── default.nix                  # isQemuVM = false
-├── base.nix                     # shared boot, services, feature toggles
-├── nixos.nix                    # imports [./hardware-configuration.nix ./base.nix]
-├── hardware-configuration.nix
-└── home-josh.nix
-
-hosts/myhost-vm/                 # QEMU variant
-├── default.nix                  # isQemuVM = true, inherits features/users from myhost
-├── nixos.nix                    # imports [../myhost/base.nix ./hardware-configuration.nix]
-├── hardware-configuration.nix   # qemu-guest profile
-└── home-josh.nix                # imports [../myhost/home-josh.nix]
-```
-
-This keeps `hardware-configuration.nix` strictly per-host and avoids conflicting
-definitions when both variants inherit the same `nixos.nix`.
-
-> **Extending a list (adding features), not just a scalar?** `base // { … }` replaces
-> whole fields, so a variant that wants "base + one extra feature" must re-list the
-> rest. For that, make the variant a module the module system can merge and validate:
-> `_: { imports = [ ../myhost/default.nix ]; … }` and extend the list explicitly
-> (`features = base.features ++ [ "extra" ]`). methyl-nixos stays on `//` — its only
-> override is the scalar `isQemuVM`.
-
-## User Options
-
-| Option      | Default | Description                                                           |
-| ----------- | ------- | --------------------------------------------------------------------- |
-| `enabled`   | `true`  | Include the user in `osUsernames`                                     |
-| `isAdmin`   | `false` | Add `wheel` to `extraGroups`                                          |
-| `hmEnabled` | `true`  | Set `false` to create the NixOS user but skip its home-manager module |
-| `isQemuVM`  | `false` | Whether this host is a QEMU/KVM virtual machine                       |
+Sibling modules are plain module files: `{config, flakeHost, pkgs, ...}: {…}`, with `pkgs.unstable`
+available for packages that need a newer version.
 
 ## Features
 
-Feature modules under `features/<name>/` are auto-discovered — no registration needed.
-A directory may contain `nixos.nix` (NixOS module) and/or `home.nix` (Home Manager
-module). The `nixos-*` / `hm-*` prefix marks the _primary_ platform only — a feature is
-a **hybrid** when it ships both files (e.g. `nixos-oom`, `nixos-dms`, `nixos-kde`). A
-feature a host lists but that has no file for that platform is silently skipped.
+`features/<name>/` is auto-discovered — no registration. A directory may hold `nixos.nix`, `home.nix`,
+and `_overlays.nix`:
 
-**Overlay contract.** A feature that needs overlays ships a `_overlays.nix` file in
-its directory: `{inputs, ...}: [ … ]`. The loader imports it directly (no module
-eval, no `pkgs = null` sentinel). Features without `_overlays.nix` contribute no
-overlays. Keep overlay definitions lazy (`final: prev: …`); don't force `pkgs.*` at
-top level.
+- the `nixos-*` / `hm-*` prefix marks the **primary** platform; a feature shipping both files is a
+  hybrid (`nixos-kde`, `nixos-oom`)
+- a feature a host lists that has no file for that platform is skipped
+- `_overlays.nix` is `{inputs, ...}: [ … ]`, applied to `nixpkgs.overlays`; keep it lazy
+  (`final: prev: …`) and never force `pkgs.*` at top level
+- a feature that pins a package keeps `metadata.json`, `_package.nix`, and an `update.sh` symlink;
+  a derivation reads flake packages through `flakePackages.<name>.<system>.default`, not an `inputs`
+  closure
+
+See `DESIGN.md` for the loader's data flow.

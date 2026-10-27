@@ -25,22 +25,22 @@ in {
   ];
 
   config = lib.mkIf cfg.enable {
-    # Names the cache so modules/caches.nix warns — or fails under `flakeCache.strict` —
-    # when spicy is asked for but this host does not substitute from it.
+    # Names the cache so modules/caches.nix warns when spicy is asked for but this host
+    # does not substitute from it.
     flakeCache.required.wombatfromhell = cfg.niriSpicy.enable;
 
     environment.systemPackages = with pkgs;
       niriPackages
       ++ lib.optionals isKde [kdePackages.qt6ct]
       ++ [
-        pkgs.unstable.dsearch
+        pkgs.unstable.dux-search
         liberation_ttf
         noto-fonts
         # Upstream tools, replacing the vendored ./bin scripts: beryl-utils
         # exposes `spawn-browser` / `chromium-flags` (no .sh suffix), beryl-gamemode
         # exposes `gamemode`.
-        pkgs.flakePackages.beryl-utils.${pkgs.system}.default
-        pkgs.flakePackages.beryl-gamemode.${pkgs.system}.gamemode
+        pkgs.flakePackages.beryl-utils.${pkgs.stdenv.hostPlatform.system}.default
+        pkgs.flakePackages.beryl-gamemode.${pkgs.stdenv.hostPlatform.system}.gamemode
         # Colour picker: native packages, no wrapper script (config.kdl uses
         # `spawn-sh "hyprpicker | wl-copy"`).
         hyprpicker

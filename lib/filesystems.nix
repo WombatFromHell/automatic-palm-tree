@@ -29,9 +29,10 @@
   # an automount declares only `where`/`description`/`wantedBy` (+deps), so `what`/`type`/`options`
   # are stripped from it — leaving them there is an eval error.
   mkUnitMounts = defaults: units: let
-    inherit (builtins) attrValues isString mapAttrs removeAttrs replaceStrings stringLength substring;
-    inherit (lib) concatStringsSep filterAttrs optional optionalAttrs;
-    automountName = where: replaceStrings ["/"] ["-"] (substring 1 (stringLength where - 1) where);
+    inherit (builtins) attrValues isString mapAttrs removeAttrs replaceStrings;
+    inherit (lib) concatStringsSep filterAttrs optional optionalAttrs removePrefix;
+    # systemd derives the unit name from the path, minus its leading `/`.
+    automountName = where: replaceStrings ["/"] ["-"] (removePrefix "/" where);
     joinOptions = u:
       concatStringsSep ","
       ((u.options or defaults.options or [])

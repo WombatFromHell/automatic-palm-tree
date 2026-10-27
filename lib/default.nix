@@ -73,6 +73,9 @@
     )
     discoveredHosts;
 in {
+  # Exported so tooling and tests read the loader's own package set instead of
+  # reaching through a built configuration (`homeConfigurations.<key>.pkgs`).
+  inherit hostsWithPkgs;
   nixosConfigurations = buildNixosConfigurations hostsWithPkgs;
   homeConfigurations = buildHomeConfigurations hostsWithPkgs;
 }

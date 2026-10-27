@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # lib/updater.sh — generic pin updater for metadata-backed derivations.
 #
-# Copy or symlink this file to features/<name>/update.sh. All feature-specific
-# config lives in the feature's metadata.json, which the derivation
-# (_package.nix) reads too:
+# Symlink this file to features/<name>/update.sh — update-all.sh refuses a copy.
+# All feature-specific config lives in the feature's metadata.json, which the
+# derivation (_package.nix) reads too:
 #
 #   repo      "owner/name" (used for GitHub API calls)
 #   kind      "sri" (fetchurl release asset) | "nar" (fetchFromGitHub source)
@@ -48,8 +48,9 @@ systems() { jq -r '.hashes | keys[]' "$META"; }
 arch_of() { jq -r --arg s "$1" '.arches[$s] // ""' "$META"; }
 
 # render_url <system> <version> -> expanded asset/archive URL
-# ponytail: template expansion is duplicated in lib/pin-meta.nix releaseAsset; keep in sync,
-# upgrade path is a one-shot parity check over features/*/metadata.json
+# Mirrors lib/pin-meta.nix releaseAsset; tests/run.sh diffs the two byte-for-byte.
+# A missing arches entry renders an empty token here instead of naming the system,
+# so fetch_hash fails at the URL; the Nix side throws at eval.
 render_url() {
   local u="$URL"
   u="${u//\{repo\}/$REPO}"
@@ -173,4 +174,5 @@ main() {
   fi
 }
 
-main "$@"
+# Sourced by tests/run.sh to reuse render_url; executed runs the CLI contract.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

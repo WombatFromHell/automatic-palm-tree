@@ -49,9 +49,11 @@
     home.homeDirectory = lib.mkDefault "/home/${user}";
   };
 
-  # ── helper: special args for host modules (four features build module paths from inputs) ──
-  # fsLib reaches every module via specialArgs: nixosSystem (:103), HM integration (:60)
-  # and standalone HM configs (:~122), including generated hardware-configuration.nix.
+  # ── helper: special args for host modules ──
+  # `inputs` is pass-through: 6 feature modules read it, 3 of them to build an import path.
+  # `fsLib` is ours, injected instead of imported so the hand-edited
+  # hardware-configuration.nix still resolves it after nixos-generate-config regenerates
+  # the file. Reached from nixosSystem, HM integration, and standalone HM configs below.
   inputArgs = {
     inherit inputs;
     fsLib = import (self + /lib/filesystems.nix) {inherit lib;};
@@ -74,7 +76,7 @@
     nixosHosts = lib.filterAttrs (_: h: h.isNixOS) hostsWithPkgs;
 
     mkConfig = host:
-      inputs.nixpkgs.lib.nixosSystem {
+      lib.nixosSystem {
         modules = lib.flatten [
           # Substitution first: caches.nix owns every url/key the feature modules below gate on.
           (self + /modules/caches.nix)

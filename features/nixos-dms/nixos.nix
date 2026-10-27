@@ -5,7 +5,9 @@
   ...
 }: let
   cfg = config.features.dms;
-  dmsPkg = pkgs.unstable.dms-shell;
+  # Upstream renamed the package (dms-shell → dux-shell); the option name is still
+  # `programs.dms-shell`, and the binary is still `dms`.
+  dmsPkg = pkgs.unstable.dux-shell;
   quickshellPkg = pkgs.unstable.quickshell;
 in {
   options.features.dms = {

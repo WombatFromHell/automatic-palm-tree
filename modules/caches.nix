@@ -54,12 +54,6 @@ in {
       internal = true;
       description = "Every required cache is enabled, i.e. its url and key land in /etc/nix/nix.conf.";
     };
-
-    strict = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Fail the switch on a missing required cache instead of warning.";
-    };
   };
 
   config = {
@@ -71,19 +65,11 @@ in {
     # Explains a slow build instead of just being slow: names the cache and the fix.
     warnings = map warn (lib.attrNames missing);
 
-    assertions =
-      [
-        {
-          assertion = unknown == {};
-          message = "flakeCache.required names unknown cache(s) ${lib.concatStringsSep ", " (lib.attrNames unknown)}";
-        }
-      ]
-      # Off by default: eval must not break on a cache that happens to be unavailable.
-      ++ lib.optionals cfg.strict [
-        {
-          assertion = missing == {};
-          message = "flakeCache.strict: required cache(s) ${lib.concatStringsSep ", " (lib.attrNames missing)} are not in flakeCache.enable";
-        }
-      ];
+    assertions = [
+      {
+        assertion = unknown == {};
+        message = "flakeCache.required names unknown cache(s) ${lib.concatStringsSep ", " (lib.attrNames unknown)}";
+      }
+    ];
   };
 }
