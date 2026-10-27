@@ -11,7 +11,7 @@ _: {
     "nixos-plymouth"
     "nixos-print"
     #
-    # "nixos-cachyos"
+    "nixos-cachyos"
     "nixos-lix"
     #
     "nixos-automounts"
