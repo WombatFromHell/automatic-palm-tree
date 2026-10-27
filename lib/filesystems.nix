@@ -1,62 +1,100 @@
-# Mount description helper: one defaults attrset, one short entry per mount, so a host
-# repeats a device and fsType once instead of on every mount. Filesystem-agnostic — fsType,
-# options and any other `fileSystems.<mount>` attr pass straight through untouched.
-{lib}: {
-  # A mount that names `options` replaces the defaults (NixOS's own default semantics), which
-  # is what keeps `/boot` on vfat correct. `options` must be a list of non-empty strings —
-  # NixOS rejects a string here (strings belong to systemd mount units, not `fileSystems`).
-  # `subvol` is sugar for one extra option and is dropped from the result; if a mount has a
-  # subvol but nothing else to say about options, it gets just `subvol=…`.
-  mkMounts = defaults: mounts:
-    lib.mapAttrs (
-      _mount: mount: let
-        inherit (builtins) isString removeAttrs;
-        options =
-          (mount.options or defaults.options or [])
-          ++ lib.optional (isString (mount.subvol or null)) "subvol=${mount.subvol}";
-      in
-        removeAttrs (defaults // removeAttrs mount ["subvol"]) ["options"]
-        // lib.optionalAttrs (options != []) {inherit options;}
-    )
-    mounts;
+# Mount description helpers: one defaults attrset, one short entry per mount, so a host
+# repeats a device and fsType once. Filesystem-agnostic: everything except the sugar keys
+# below passes straight through to the target attrset.
+#
+# `options` is a list; an entry's `options` replaces the defaults' (NixOS semantics, keeps
+# `/boot` on vfat correct). `subvol` is sugar for one trailing `subvol=…` option. Sugar keys
+# may sit in defaults or on an entry.
+{lib}: let
+  inherit (builtins) intersectAttrs isString removeAttrs replaceStrings;
+  inherit (lib) concatStringsSep filterAttrs mapAttrs mapAttrsToList optional optionalAttrs removePrefix zipAttrsWith concatLists;
 
-  # systemd `.mount` / `.mount+.automount` units. Keyed by the mount path — systemd derives the
-  # unit name from `where`, so `systemd.mounts`/`systemd.automounts` are LISTS: compose blocks
-  # with `++`, never `//`. Unit `options` is a comma string here (`types.commas` rejects a list),
-  # so pass a list and this joins it; entry `options` replaces the defaults exactly like
-  # `mkMounts`, so extend with `options = defaults.options ++ [...]`. `subvol` is sugar for one
-  # extra option. `automount = true` emits the paired `.automount` unit and links the mount to it;
-  # an automount declares only `where`/`description`/`wantedBy` (+deps), so `what`/`type`/`options`
-  # are stripped from it — leaving them there is an eval error.
+  merge = defaults: entry: let
+    all = defaults // entry;
+  in
+    removeAttrs all ["subvol" "options"]
+    // {
+      options =
+        (all.options or [])
+        ++ optional (isString (all.subvol or null)) "subvol=${all.subvol}";
+    };
+
+  # ponytail: assumes paths without `-` or special chars; use
+  # `utils.escapeSystemdPath` (NixOS module arg) if a mount point ever needs them.
+  unitName = where: replaceStrings ["/"] ["-"] (removePrefix "/" where);
+in {
+  # -> attrset for `fileSystems`. An empty option list is dropped so NixOS defaults apply.
+  mkMounts = defaults:
+    mapAttrs (
+      _: entry: let
+        m = merge defaults entry;
+      in
+        if m.options == []
+        then removeAttrs m ["options"]
+        else m
+    );
+
+  # -> { mounts, automounts }, both LISTS (systemd derives unit names from `where`); combine
+  # groups with `joinUnitMounts`, never `//`.
+  #
+  # Sugar, on top of `options`/`subvol`:
+  #   "/mnt/x" = "dev";       shorthand for { what = "dev"; }
+  #   automount = true;       emits the paired `.automount`; the mount requires/follows it
+  #   skipIfMissing = true;   skips the mount and automount when `what` doesn't exist at
+  #                           unit start (ConditionPathExists)
+  #   (ponytail: checked once, so a device plugged in later needs a unit restart)
+  #
+  # The automount is only a lazy trigger, so it keeps just `description`, `wantedBy`,
+  # `unitConfig` and `automountConfig`. Mount-side deps (`requires`, `after`, ...) must not
+  # leak onto it: a `network-online.target` dependency there closes an ordering cycle
+  # through `local-fs.target`.
   mkUnitMounts = defaults: units: let
-    inherit (builtins) attrValues isString mapAttrs removeAttrs replaceStrings;
-    inherit (lib) concatStringsSep filterAttrs optional optionalAttrs removePrefix;
-    # systemd derives the unit name from the path, minus its leading `/`.
-    automountName = where: replaceStrings ["/"] ["-"] (removePrefix "/" where);
-    joinOptions = u:
-      concatStringsSep ","
-      ((u.options or defaults.options or [])
-        ++ optional (isString (u.subvol or null)) "subvol=${u.subvol}");
-    mount = where: u:
-      (defaults // removeAttrs u ["automount" "subvol"])
+    entries =
+      mapAttrs (
+        _: u: let
+          m = merge defaults (
+            if isString u
+            then {what = u;}
+            else u
+          );
+        in
+          removeAttrs m ["skipIfMissing"]
+          // optionalAttrs (m.skipIfMissing or false) {
+            unitConfig = (m.unitConfig or {}) // {ConditionPathExists = m.what;};
+          }
+      )
+      units;
+
+    mount = where: m:
+      removeAttrs m ["automount"]
       // {
         inherit where;
-        description = u.description or defaults.description or "Mount for ${where}";
-        options = joinOptions u;
+        description = m.description or "Mount for ${where}";
+        options = concatStringsSep "," m.options;
       }
-      // optionalAttrs (u.automount or false) {
-        requires = (u.requires or defaults.requires or []) ++ ["${automountName where}.automount"];
-        after = (u.after or defaults.after or []) ++ ["${automountName where}.automount"];
-      };
-    automount = where: u:
-      removeAttrs (defaults // removeAttrs u ["automount" "subvol"]) ["what" "type" "options"]
+      // optionalAttrs (m.automount or false) (let
+        dep = ["${unitName where}.automount"];
+      in {
+        requires = (m.requires or []) ++ dep;
+        after = (m.after or []) ++ dep;
+      });
+
+    automount = where: m:
+      intersectAttrs {
+        unitConfig = null;
+        automountConfig = null;
+      }
+      m
       // {
         inherit where;
-        description = u.description or defaults.description or "Automount for ${where}";
-        wantedBy = u.wantedBy or ["multi-user.target"];
+        description = m.description or "Automount for ${where}";
+        wantedBy = m.wantedBy or ["multi-user.target"];
       };
   in {
-    mounts = attrValues (mapAttrs mount units);
-    automounts = attrValues (mapAttrs automount (filterAttrs (_: u: u.automount or false) units));
+    mounts = mapAttrsToList mount entries;
+    automounts = mapAttrsToList automount (filterAttrs (_: m: m.automount or false) entries);
   };
+
+  # [ mkUnitMounts result ] -> `{ mounts, automounts }`, ready to assign to `systemd`.
+  joinUnitMounts = zipAttrsWith (_: concatLists);
 }

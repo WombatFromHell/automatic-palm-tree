@@ -3,72 +3,57 @@
   fsLib,
   ...
 }: let
-  # ponytail: systemd mount units use their own `options` string, so fsLib.mkMounts
-  # (fileSystems-shaped) cannot cover them; fsLib.mkUnitMounts covers the unit shape.
-  # `compress=zstd:3` here intentionally differs from the zstd root mounts.
-  # Upgrade path: share one options string if they ever must match.
-  btrfs =
-    fsLib.mkUnitMounts {
-      type = "btrfs";
-      options = [
-        "noatime"
-        "compress=zstd:3"
-        "nofail"
-        "x-gvfs-show"
-        "x-systemd.mount-timeout=5"
-      ];
-    } {
-      "/mnt/data" = {
-        what = "/dev/disk/by-uuid/25dc01da-4cc4-4d5b-bca7-d11f74732d0c";
-        subvol = "@";
-        automount = true;
-      };
-      "/mnt/linuxdata" = {
-        what = "/dev/disk/by-uuid/be63764a-f6bd-4687-aa07-9c7ddea97cc4";
-        subvol = "@";
-        automount = true;
-      };
-    };
+  # Group that owns the CIFS shares. Files are group-rw, so anyone listed in `members`
+  # below gets access; no uid is hardcoded, and `mount.cifs` resolves the name at mount time.
+  group = "nas";
+  members = ["josh"];
 
-  cifs =
-    fsLib.mkUnitMounts {
+  credentials = "/etc/.smb-credentials";
+  smb = share: "//192.168.1.153/${share}";
+
+  base = {
+    automount = true;
+    mountConfig.TimeoutSec = 5;
+  };
+  common = ["nofail" "x-gvfs-show"];
+
+  btrfs = fsLib.mkUnitMounts (base
+    // {
+      type = "btrfs";
+      subvol = "@";
+      skipIfMissing = true;
+      options = common ++ ["noatime" "compress=zstd:3"];
+    }) {
+    "/mnt/data" = "/dev/disk/by-uuid/25dc01da-4cc4-4d5b-bca7-d11f74732d0c";
+    "/mnt/linuxdata" = "/dev/disk/by-uuid/be63764a-f6bd-4687-aa07-9c7ddea97cc4";
+  };
+
+  cifs = fsLib.mkUnitMounts (base
+    // {
       type = "cifs";
-      options = [
-        "rw"
-        "credentials=/etc/.smb-credentials"
-        "uid=1000"
-        "gid=1000"
-        "iocharset=utf8"
-        "file_mode=0644"
-        "dir_mode=0755"
-        "x-systemd.mount-timeout=5"
-        "x-gvfs-show"
-        "nofail"
-      ];
+      options =
+        common
+        ++ [
+          "rw"
+          "credentials=${credentials}"
+          "gid=${group}"
+          "file_mode=0664"
+          "dir_mode=0775"
+          "iocharset=utf8"
+        ];
       requires = ["network-online.target"];
       after = ["network-online.target"];
-    } {
-      "/mnt/Downloads" = {
-        what = "//192.168.1.153/Downloads";
-        automount = true;
-      };
-      "/mnt/FTPRoot" = {
-        what = "//192.168.1.153/FTPRoot";
-        automount = true;
-      };
-    };
-in {
-  environment.systemPackages = with pkgs; [cifs-utils];
-
-  systemd = {
-    mounts = btrfs.mounts ++ cifs.mounts;
-    automounts = btrfs.automounts ++ cifs.automounts;
-
-    tmpfiles.rules = [
-      "d /mnt/data 0755 0 0 -"
-      "d /mnt/linuxdata 0755 0 0 -"
-      "d /mnt/Downloads 0755 1000 1000 -"
-      "d /mnt/FTPRoot 0755 1000 1000 -"
-    ];
+      unitConfig.ConditionPathExists = credentials;
+    }) {
+    "/mnt/Downloads" = smb "Downloads";
+    "/mnt/FTPRoot" = smb "FTPRoot";
   };
+in {
+  environment.systemPackages = [pkgs.cifs-utils];
+
+  users.groups.${group}.members = members;
+
+  extraGroups = {filesystems = ["nas"];};
+
+  systemd = fsLib.joinUnitMounts [btrfs cifs];
 }
