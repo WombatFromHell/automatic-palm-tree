@@ -10,8 +10,8 @@ let
   # attrNames is sorted, so the derived list is sorted too.
   expectedChecks =
     lib.sort (a: b: a < b)
-      ((map (h: "nixos-${h}") (lib.attrNames out.nixosConfigurations))
-        ++ (map (k: "home-${k}") (lib.attrNames out.homeConfigurations)));
+    ((map (h: "nixos-${h}") (lib.attrNames out.nixosConfigurations))
+      ++ (map (k: "home-${k}") (lib.attrNames out.homeConfigurations)));
 
   checks = [
     (ck "the flake exposes only nixosConfigurations, homeConfigurations and checks"
@@ -30,4 +30,5 @@ let
     (ck "host facts reach the configuration through builders.nix"
       (lib.all (h: out.nixosConfigurations.${h}.config.flakeHost.name == h) (lib.attrNames out.nixosConfigurations)))
   ];
-in suite "outputs" checks
+in
+  suite "outputs" checks

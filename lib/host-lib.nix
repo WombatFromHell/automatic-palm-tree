@@ -10,7 +10,13 @@
   # the module system would reject the second declaration of the same option.
   mergeValue = l: r:
     if isList l && isList r
-    then lib.foldl' (acc: x: if lib.elem x acc then acc else acc ++ [x]) l r
+    then
+      lib.foldl' (acc: x:
+        if lib.elem x acc
+        then acc
+        else acc ++ [x])
+      l
+      r
     else if !(isLeaf l) && !(isLeaf r)
     then mergeAttrs l r
     else r;
@@ -36,7 +42,15 @@
     if nixosOnly != []
     then
       throw
-        "mergeHome: ${lib.concatStringsSep ", " nixosOnly} ${if lib.length nixosOnly == 1 then "is" else "are"} NixOS-only ${if lib.length nixosOnly == 1 then "feature" else "features"} and cannot apply to a standalone Home Manager host; see hosts/methyl-base/standalone.nix for the home-only list"
+      "mergeHome: ${lib.concatStringsSep ", " nixosOnly} ${
+        if lib.length nixosOnly == 1
+        then "is"
+        else "are"
+      } NixOS-only ${
+        if lib.length nixosOnly == 1
+        then "feature"
+        else "features"
+      } and cannot apply to a standalone Home Manager host; see hosts/methyl-base/standalone.nix for the home-only list"
     else
       merged
       // {
@@ -50,4 +64,5 @@
   profiles = dir: map (name: import (dir + "/${name}.nix") {inherit hostLib;});
 
   hostLib = {inherit mergeModules mergeHome profiles;};
-in hostLib
+in
+  hostLib

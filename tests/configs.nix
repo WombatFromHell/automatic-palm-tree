@@ -41,8 +41,11 @@ let
 
     # --- profile-specific effects -------------------------------------------
     (ck "gaming profile adds its services and packages to methyl only"
-      ((hasService methyl "dmemcg-booster") && (hasPkg methyl "steam") && (hasPkg methyl "scx-loader")
-        && (hasPkg methyl "gamescope") && (hasPkg methyl "lsfg-vk")))
+      ((hasService methyl "dmemcg-booster")
+        && (hasPkg methyl "steam")
+        && (hasPkg methyl "scx-loader")
+        && (hasPkg methyl "gamescope")
+        && (hasPkg methyl "lsfg-vk")))
     (ck "methyl-only packages stay on methyl"
       (lib.all (cfg: !(lib.any (n: hasPkg cfg n) methylOnlyPkgs)) [ws propyl]))
     (ck "zswap reaches the kernel command line on methyl and methyl-nixos"
@@ -77,4 +80,5 @@ let
           modules = [{flakeCache.required.bogus-cache = true;}];
         }).config.assertions))
   ];
-in suite "configs" checks
+in
+  suite "configs" checks

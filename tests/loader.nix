@@ -27,12 +27,14 @@ let
   # derivation without evaluating one.
   leafStub = {_type = "derivation";};
 
-  mergeHomeCase = hostLib.mergeHome [{
-    isNixOS = true;
-    nixosModules = [./x];
-    features = ["hm-base" "hm-tmux"];
-    users.josh.isAdmin = true;
-  }];
+  mergeHomeCase = hostLib.mergeHome [
+    {
+      isNixOS = true;
+      nixosModules = [./x];
+      features = ["hm-base" "hm-tmux"];
+      users.josh.isAdmin = true;
+    }
+  ];
 
   checks = [
     # --- feature discovery --------------------------------------------------
@@ -78,7 +80,19 @@ let
     # mergeModules = lib.foldl' mergeAttrs {}, so it takes ONE list of modules.
     (ck "mergeModules: later scalar wins" ((hostLib.mergeModules [{a = 1;} {a = 2;}]).a == 2))
     (ck "mergeModules: lists union and deduplicate" ((hostLib.mergeModules [{l = [1 2];} {l = [2 3];}]).l == [1 2 3]))
-    (ck "mergeModules: nested attrsets deep-merge" ((hostLib.mergeModules [{n = {x = 1; y = 2;};} {n = {y = 3;};}]).n == {x = 1; y = 3;}))
+    (ck "mergeModules: nested attrsets deep-merge" ((hostLib.mergeModules [
+        {
+          n = {
+            x = 1;
+            y = 2;
+          };
+        }
+        {n = {y = 3;};}
+      ]).n
+      == {
+        x = 1;
+        y = 3;
+      }))
     (ck "mergeModules: a derivation-shaped leaf beats attrs" ((hostLib.mergeModules [{leaf = {a = 1;};} {leaf = leafStub;}]).leaf._type == "derivation"))
     (ck "profiles merge through hostLib" ((hostLib.mergeModules (hostLib.profiles ./fixtures/profiles ["a" "b"])).features == ["x" "y"]))
     # A feature reached through two paths (profile + host) must import ONE module,
@@ -89,7 +103,10 @@ let
     # --- mergeHome: the footgun that turns a profile into a standalone host --
     # A home-only feature list survives untouched; a `nixos-` one is a red guard.
     (ck "mergeHome forces a standalone host record"
-      ((mergeHomeCase.isNixOS == false) && (mergeHomeCase.nixosModules == [])
-        && (mergeHomeCase.features == ["hm-base" "hm-tmux"]) && (mergeHomeCase.users.josh.isAdmin == false)))
+      ((mergeHomeCase.isNixOS == false)
+        && (mergeHomeCase.nixosModules == [])
+        && (mergeHomeCase.features == ["hm-base" "hm-tmux"])
+        && (mergeHomeCase.users.josh.isAdmin == false)))
   ];
-in suite "loader" checks
+in
+  suite "loader" checks

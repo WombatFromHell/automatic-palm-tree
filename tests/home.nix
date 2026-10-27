@@ -35,8 +35,9 @@ let
     # hm-base ships packages, not program flags; that contract shows up in the
     # host's own package list, which is what the profile actually promises.
     (ck "hm-base's CLI packages land in home.packages"
-      (lib.all (n: hasPkg n) ["fish" "starship" "ripgrep" "atuin"]))
+      (lib.all hasPkg ["fish" "starship" "ripgrep" "atuin"]))
 
     # Must-throw guards for this suite live in tests/red/home-config-is-not-nixos.nix.
   ];
-in suite "home" checks
+in
+  suite "home" checks

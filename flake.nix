@@ -55,7 +55,6 @@
       (lib.filterAttrs
         (_: config: config.pkgs.stdenv.hostPlatform.system == system)
         cfg."${kind}Configurations");
-
   in {
     inherit (cfg) nixosConfigurations homeConfigurations;
 

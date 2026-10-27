@@ -23,6 +23,8 @@ flowchart LR
   S --> C["tests/configs.nix"]
   S --> H["tests/home.nix"]
   S --> O["tests/outputs.nix"]
+  S --> F["tests/filesystems.nix"]
+  S --> M["tests/mounts.nix"]
   S --> RD["tests/red/*.nix"]
   FX["tests/fixtures/<dir>/hosts/*.nix<br/>shapes no real host uses"] --> L
 ```
@@ -59,6 +61,17 @@ flowchart TD
     O3["one check per configuration, and each is a derivation"]
     O4["configs derived from host records; host name wired into config.flakeHost"]
   end
+  subgraph filesystems["filesystems.nix — pure lib, ~0.2s"]
+    F1["mkMounts: entry keys win, entry options REPLACE defaults,<br/>subvol appended last, empty option list dropped"]
+    F2["mkUnitMounts: string shorthand, options joined to a comma string,<br/>skipIfMissing -> ConditionPathExists, sugar keys removed"]
+    F3["automount whitelist: only where/description/wantedBy/unitConfig/<br/>automountConfig, so mount->automount->mount is not an ordering cycle"]
+    F4["joinUnitMounts: groups concatenate in order, [] == {}"]
+  end
+  subgraph mounts["mounts.nix — forces the 3 hosts enabling nixos-automounts"]
+    M1["only those hosts have systemd.automounts; every automount has a<br/>mount at the same where (proves where -> unit-name derivation)"]
+    M2["that mount requires and after <unit>.automount;<br/>automounts carry no requires/after/wants and no mountConfig"]
+    M3["mounts: mountConfig.TimeoutSec 5, ConditionPathExists shared with the<br/>automount; cifs options carry credentials=/etc/.smb-credentials"]
+  end
 ```
 
 ```mermaid
@@ -70,6 +83,11 @@ flowchart LR
     R4["host file authoring a derived name"]
     R5["mergeHome handed a nixos-* feature"]
     R6["a home configuration has no NixOS system"]
+    R7["mkMounts options is a string, not a list"]
+    R8["mkUnitMounts options is a string, not a list"]
+    R9["mkMounts entry is a string, not an attrset"]
+    R10["mkUnitMounts entry is a number, not an attrset"]
+    R11["skipIfMissing without what (ConditionPathExists needs the device)"]
   end
 ```
 

@@ -15,7 +15,9 @@ lib/               # pure loader, one concern per file
   host-lib.nix     #   host-facing composition: mergeModules, mergeHome, profiles
   features.nix     #   feature discovery + resolveFeaturePaths (unknown feature = throw)
   builders.nix     #   nixosSystem / homeManagerConfiguration, module order
-  filesystems.nix  #   mkMounts / mkUnitMounts (subvolume → mount + automount units)
+  filesystems.nix  #   mkMounts / mkUnitMounts (subvolume -> mount + automount units;
+                   #   automount = true adds the lazy .automount unit, skipIfMissing conditions
+                   #   on the device) / joinUnitMounts (concat groups, never //)
   pin-meta.nix     #   metadata.json contract: pinnedSystems, assetHash, releaseAsset, gitSource
   updater.sh       #   generic pin updater; features symlink it to their own update.sh
 modules/           # NixOS/HM modules the loader always imports
