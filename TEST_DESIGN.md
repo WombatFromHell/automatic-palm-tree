@@ -21,13 +21,14 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-  S["tests/support.nix<br/>lib, flake outputs, features, hosts, hostLib,<br/>hostsAt(dir), hasPkg, ck, suite"] --> L["tests/loader.nix"]
+  S["tests/support.nix<br/>lib, flake outputs, features, hosts, hostLib,<br/>hostsAt(dir), hasPkg, ck, suite,<br/>assertWarnStubs, failingAssertions"] --> L["tests/loader.nix"]
   S --> C["tests/configs.nix"]
   S --> H["tests/home.nix"]
   S --> O["tests/outputs.nix"]
   S --> F["tests/filesystems.nix"]
   S --> M["tests/mounts.nix"]
   S --> PI["tests/pins.nix"]
+  S --> WA["tests/warnings.nix"]
   S --> RD["tests/red/*.nix"]
   FX["tests/fixtures/<dir>/hosts/*.nix<br/>shapes no real host uses"] --> L
 ```
@@ -37,11 +38,20 @@ A guard that must fail is a tiny file whose _exit status_ is the assertion; ever
 boolean check inside a suite. Fixture directories exist so loader guards never depend on a real
 host changing shape.
 
+Each suite runs in its own process inside a transient systemd scope (`MemoryMax=1792M`, RSS
+polled every 40ms). Splitting is not cosmetic: one `nix flake check --no-build` needs ~2.6GB in
+a single process (measured), so a single eval would exceed the cap on a RAM-constrained host.
+Going over the cap is a failure (exit 137), not a hang. `run.sh` prints each eval's `peak=` on its
+line, read from the scope's `MemoryPeak` **while the unit is alive** — systemd drops the unit when
+the scope exits, so a peak read afterwards is gone; a killed eval still reports the peak it
+reached.
+
 ## What each suite covers
 
 ```mermaid
 flowchart TD
   subgraph loader["loader.nix — pure, ~0.2s"]
+    L0["hasPkg contract: pname shape, name shape, a miss,<br/>and a hit that forces nothing after it"]
     L1["feature discovery: features/ dirs == discovered;<br/>hm-* have home.nix; nixos-* have nixos.nix;<br/>overlay-bearing set; resolveFeaturePaths maps each feature to its file"]
     L2["host discovery: names == hosts/; every listed feature resolves;<br/>standalone lists no nixos-*; NixOS hosts carry modules; hmUsernames"]
     L3["fixtures: flat record derives osUsernames/hmUsernames;<br/>directory host auto-discovers nixos.nix + home-*.nix"]
@@ -50,13 +60,13 @@ flowchart TD
   subgraph configs["configs.nix — forces every NixOS config"]
     C1["per-host facts: hostName, timezone, user shell"]
     C2["universal wiring: tailscale, podman, firefox, printing, wheel"]
-    C3["gating: gaming stack only on methyl; gnome/qemu/btrfs only on the VM;<br/>kait2en+fprintd only on the laptop; korthos methyl-only; dms everywhere"]
-    C4["cache gate: flakeCache.ready everywhere;<br/>substituters/keys counts == enabled caches; warnings clean"]
+    C3["gating: gaming stack only on methyl; gnome/qemu/btrfs only on the VM;<br/>kait2en+fprintd only on the laptop; korthos methyl-only; dms everywhere;<br/>absence read from namespace/systemd-unit/option, never by scanning the package list"]
+    C4["cache gate: flakeCache.ready everywhere;<br/>substituters/keys counts == enabled caches"]
   end
   subgraph home["home.nix — forces the standalone HM config"]
     H1["builder facts: username, homeDirectory, genericLinux target"]
     H2["features + packages the profile and the host contribute"]
-    H3["nixGL wrapper names; no warnings"]
+    H3["nixGL wrapper names"]
   end
   subgraph outputs["outputs.nix — reads the output attrsets"]
     O1["outputs are exactly configs + checks"]
@@ -79,6 +89,9 @@ flowchart TD
     PN1["metadata-backed features discovered; templates use only<br/>the tokens both expanders know ({repo} {version} {arch})"]
     PN2["every pin expands to a resolved url for every pinned system;<br/>a declared arches set covers exactly the hashed systems and is a set, never null"]
     PN3["features/<name>/update.sh is absent or a symlink to lib/updater.sh<br/>the key is quoted — .update.sh would walk update then sh"]
+  end
+  subgraph warnings["warnings.nix — bare module eval"]
+    W1["modules/warnings-gate.nix: assertion true with no warnings,<br/>false with one, and its message carries every warning verbatim"]
   end
 ```
 
@@ -105,6 +118,14 @@ defaults are unreliable evidence — several features ship packages without turn
 option on — so checks look for the service, the package, or the kernel parameter the feature
 actually produces.
 
+Warnings and host assertions are **build-time** signals, and forcing either one evaluates a
+host's whole module config (~2.0GB here): `config.assertions` forces `config.warnings`, and
+`lib.asserts.checkAssertWarn` throws on failed assertions while printing warnings. So
+`modules/warnings-gate.nix` asserts `config.warnings == []` and the build tier (`nix build`,
+`nix flake check`, `nixos-rebuild switch`) fails on any warning; no eval suite may force
+`config.assertions` or `config.warnings` of a real host. The gate's own logic is covered on a
+bare `lib.evalModules` (`tests/warnings.nix`), as is the house warning (`tests/caches.nix`).
+
 ## What we do not cover
 
 ```mermaid
@@ -116,6 +137,7 @@ flowchart TD
   N --> N5["network cache availability: bootstrap.sh reads the registry;<br/>whether a cache answers is not a configuration value"]
   N --> N6["other architectures: every host is x86_64-linux,<br/>so pin-meta's per-system boundaries are not exercised"]
   N --> N7["assertion text: NixOS assertions are data on .config.assertions,<br/>they never throw at eval, so we assert the collected list"]
+  N --> N8["warnings observed at eval: they go to the CLI, not into a derivation log.<br/>The build tier fails them via modules/warnings-gate.nix"]
 ```
 
 Deliberately skipped: per-feature coverage of all 39 modules. Feature modules are exercised

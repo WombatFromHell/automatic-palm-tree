@@ -5,6 +5,15 @@
     nixpkgs.url = "https://flakehub.com/f/DeterminateSystems/nixpkgs-26.05-chilled/0.1";
     nixpkgs-unstable.url = "https://flakehub.com/f/NixOS/nixpkgs/0.1";
     #
+    # Six more inputs bring their own nixpkgs, so the lock carries seven trees in total
+    # (ours x2, beryl-utils, kait2en, niri-spicy, nix-cachyos-kernel, xilo). None of them
+    # uses `follows`, and that is the boundary: forcing one to follow ours would evaluate it
+    # against a rev its CI never built, so every path it publishes from its own cache stops
+    # matching — the CachyOS kernel and KaiT2en's kernel/firmware would rebuild locally, on
+    # the host with the least RAM. The caches named in modules/cache-registry.nix are the
+    # same story: each is somebody else's build of their own rev, so nothing here may repin
+    # them.
+    #
     kait2en.url = "github:LukeChannings/KaiT2en-NixOS";
     nix-cachyos-kernel.url = "github:xddxdd/nix-cachyos-kernel/release";
     xilo.url = "github:stubbedev/xilo?rev=4528483a1a261f5ed6578606d30526c6a908d1b4"; # v1.2.2

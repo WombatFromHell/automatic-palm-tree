@@ -47,31 +47,26 @@
 
   # The unstable set gets baseOverlay only: it is read as `pkgs.unstable`, a member of
   # the set above it, so it must never ask for itself.
-  mkUnstablePkgs = system:
+  unstableFor = lib.genAttrs systems (system:
     import inputs.nixpkgs-unstable {
       inherit system;
       overlays = [baseOverlay];
       config.allowUnfree = true;
-    };
+    });
 
-  # ── pre-compute one package set per host ──
-  # This runs once here so both config builders share one pkgs, which carries the
-  # unstable set as a member rather than as a second argument to thread. Feature
-  # overlays are *not* applied here: they are modules that set `nixpkgs.overlays`,
-  # which nixpkgs appends to this set at eval time so they can be gated on options.
+  # ── one package set per system, shared by the hosts that target it ──
+  # Every host here is x86_64-linux, so per-host instantiation was four copies of the same
+  # tree (and four of the unstable one). Feature overlays are *not* applied here: they are
+  # modules that set `nixpkgs.overlays`, which nixpkgs appends to this set at eval time so
+  # they can be gated on options.
+  systems = lib.unique (map (h: h.system) (lib.attrValues discoveredHosts));
+  pkgsFor = lib.genAttrs systems (system: import inputs.nixpkgs {
+    inherit system;
+    overlays = [baseOverlay (_: _: {unstable = unstableFor.${system};})];
+    config.allowUnfree = true;
+  });
   hostsWithPkgs =
-    lib.mapAttrs (
-      _name: host:
-        host
-        // {
-          pkgs = import inputs.nixpkgs {
-            inherit (host) system;
-            overlays = [baseOverlay (_: _: {unstable = mkUnstablePkgs host.system;})];
-            config.allowUnfree = true;
-          };
-        }
-    )
-    discoveredHosts;
+    lib.mapAttrs (_name: host: host // {pkgs = pkgsFor.${host.system};}) discoveredHosts;
 in {
   # Exported so tooling and tests read the loader's own package set instead of
   # reaching through a built configuration (`homeConfigurations.<key>.pkgs`).

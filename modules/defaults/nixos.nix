@@ -7,6 +7,8 @@
   # Feature-declared groups are host-wide, so read them once instead of per user.
   featureExtraGroups = lib.concatLists (lib.attrValues config.extraGroups);
 in {
+  # Any configuration warning fails the build; the build path already forces assertions.
+  imports = [../warnings-gate.nix];
   system.stateVersion = "25.11";
   networking.hostName = lib.mkDefault config.flakeHost.name;
   programs.fish.enable = lib.mkDefault true;

@@ -2,8 +2,16 @@
 # Eval-only test gate. Green suites must print "OK <suite>"; red guards in
 # tests/red/ must throw, with the message named in their first line
 # (`# expect: <substring>`). Nothing here runs `nix build`.
+#
+# Every eval goes through tests/nix-eval.sh, which caps it in a transient systemd scope
+# (override with TEST_MEMORY_MAX_MB) so a suite that balloons is killed here instead of
+# swapping the machine.
 set -u
 cd "$(dirname "$0")/.."
+
+# Each eval is capped at this much memory (tests/nix-eval.sh). One host's config costs ~1.4GB
+# of anonymous memory, hence the per-host configs run below.
+mem="${TEST_MEMORY_MAX_MB:-1792}"
 
 # nix writes fetcher locks under $XDG_CACHE_HOME, which is read-only in some
 # sandboxes; fall back to a scratch cache dir rather than failing every suite.
@@ -16,16 +24,54 @@ export XDG_CACHE_HOME="$cache"
 
 fail=0
 
+# tests/nix-eval.sh reports the scope's highest memory on stderr. Keep the suite's own output on
+# one line and carry the peak alongside it, so the cap is auditable: a suite that balloons shows
+# up here instead of only in a separate measurement.
+peak=""
+body=""
+split_peak() {
+  body=$(printf '%s\n' "$1" | grep -v '^peak=')
+  peak=$(printf '%s\n' "$1" | grep '^peak=' | tail -n 1)
+  [ -n "$peak" ] || peak="peak=n/a"
+}
+
 for suite in tests/*.nix; do
-  case "$suite" in tests/support.nix) continue ;; esac
-  if out=$(nix eval --impure --file "$suite" 2>&1); then
-    echo "ok   $suite  $out"
+  case "$suite" in
+    tests/support.nix | tests/configs.nix) continue ;;
+  esac
+  if out=$(TEST_SCOPE_NAME="$(basename "$suite" .nix)" tests/nix-eval.sh "$mem" -- nix eval --impure --file "$suite" 2>&1); then
+    split_peak "$out"
+    echo "ok   $suite  $body  $peak"
   else
-    echo "FAIL $suite"
-    echo "$out" | tail -20
+    split_peak "$out"
+    echo "FAIL $suite  $peak"
+    echo "$body" | tail -20
     fail=1
   fi
 done
+
+# tests/configs.nix evaluates one host per process (see its header): forcing three hosts in
+# one eval needs ~4GB, which is over the cap.
+for host in methyl methyl-nixos propyl; do
+  if out=$(TEST_HOST="$host" TEST_SCOPE_NAME="configs-$host" tests/nix-eval.sh "$mem" -- nix eval --impure --file tests/configs.nix 2>&1); then
+    split_peak "$out"
+    echo "ok   tests/configs.nix [$host]  $body  $peak"
+  else
+    split_peak "$out"
+    echo "FAIL tests/configs.nix [$host]  $peak"
+    echo "$body" | tail -20
+    fail=1
+  fi
+done
+
+# The boot path must be a rebuild that installs the bootloader. nixos-rebuild-ng sets
+# NIXOS_INSTALL_BOOTLOADER itself and runs the activation under `env -i`, so an `env`
+# prefix never reaches it — only the flag does.
+if ! grep -q -- '--install-bootloader' bootstrap.sh || grep -q 'env NIXOS_INSTALL_BOOTLOADER' bootstrap.sh
+then
+  echo "FAIL bootstrap.sh must boot with --install-bootloader and no env NIXOS_INSTALL_BOOTLOADER"
+  fail=1
+fi
 
 # Byte-parity between the two template expanders, which live in different runtimes:
 # lib/updater.sh render_url (bash, at fetch time) and lib/pin-meta.nix releaseAsset
@@ -34,8 +80,8 @@ done
 # One eval lists every pin and system; the bash side expands the same list. Per-pin
 # evals cost ~2.9s each (nixpkgs re-imported), which was most of the gate's runtime.
 par=0
-pins=$(nix eval --impure --raw --expr '
-  let lib = (builtins.getFlake "nixpkgs").lib;
+parout=$(TEST_SCOPE_NAME=parity tests/nix-eval.sh "$mem" -- nix eval --impure --raw --expr '
+  let lib = (builtins.getFlake (toString ./.)).inputs.nixpkgs.lib;
       pinMeta = import ./lib/pin-meta.nix {inherit lib;};
       dirs = builtins.attrNames (builtins.filterAttrs (_: t: t == "directory") (builtins.readDir ./features));
       line = f: let
@@ -47,10 +93,13 @@ pins=$(nix eval --impure --raw --expr '
   in
     lib.concatMapStringsSep "\n" line
       (lib.filter (f: builtins.pathExists ./features/${f}/metadata.json) dirs)
-') || {
+' 2>&1) || {
   echo "FAIL parity (nix eval)"
   par=1
 }
+# The eval result is a line-per-pin list; tests/nix-eval.sh's peak line is not part of it.
+split_peak "$parout"
+pins="$body"
 while IFS=: read -r feature sys ver want; do
   [ -n "$feature" ] || continue
   got=$(
@@ -65,18 +114,19 @@ while IFS=: read -r feature sys ver want; do
   fi
 done <<<"$pins"
 if [ "$par" = 0 ]; then
-  echo "ok   expander parity"
+  echo "ok   expander parity  $peak"
 else
   fail=1
 fi
 
 for guard in tests/red/*.nix; do
   want=$(head -n 1 "$guard" | sed 's/^# expect: //')
-  if out=$(nix eval --impure --file "$guard" 2>&1); then
+  if out=$(TEST_SCOPE_NAME="red-$(basename "$guard" .nix)" tests/nix-eval.sh "$mem" -- nix eval --impure --file "$guard" 2>&1); then
     echo "FAIL $guard  expected a throw mentioning \"$want\""
     fail=1
   elif case "$out" in *"$want"*) true ;; *) false ;; esac; then
-    echo "ok   $guard"
+    split_peak "$out"
+    echo "ok   $guard  $peak"
   else
     echo "FAIL $guard  expected \"$want\""
     echo "$out" | tail -8

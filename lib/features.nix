@@ -10,7 +10,10 @@
 }: let
   # ── feature discovery ──
   featuresDir = self + /features;
-  featureDirs = lib.filterAttrs (_: t: t == "directory") (builtins.readDir featuresDir);
+  # A feature dir may be a symlink (a checkout pointing at another tree); readDir
+  # reports "symlink", so accepting only "directory" skipped it silently.
+  featureDirs =
+    lib.filterAttrs (_: t: t == "directory" || t == "symlink") (builtins.readDir featuresDir);
 
   # Feature file names: the module files are named after the platform, and
   # `_overlays.nix` is a module too — it contributes `nixpkgs.overlays`, so an
@@ -26,7 +29,7 @@
     files = builtins.readDir dirPath;
   in
     builtins.mapAttrs (name: file: dirPath + "/${file}.nix")
-    (lib.filterAttrs (_: file: (files."${file}.nix" or null) == "regular") knownFiles))
+    (lib.filterAttrs (_: file: lib.elem (files."${file}.nix" or null) ["regular" "symlink"]) knownFiles))
   featureDirs;
 
   # ── feature path resolution (direct path interpolation, idiomatic) ──

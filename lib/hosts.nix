@@ -8,26 +8,35 @@
   hostsDir = self + /hosts;
   entries = builtins.readDir hostsDir;
 
+  # A host entry can be a symlink (a checkout where a host file or a whole host dir
+  # points elsewhere); readDir reports "symlink", so a "regular"/"directory" filter
+  # silently dropped it. A symlink counts as a directory host only if it has a
+  # default.nix, exactly like a real directory.
+  isHostDir = name: type:
+    (type == "directory" || type == "symlink") && builtins.pathExists (hostsDir + "/${name}/default.nix");
+
   hostEntries =
     lib.filterAttrs (
       n: t:
-        (t == "regular" && lib.hasSuffix ".nix" n)
-        || (t == "directory" && builtins.pathExists (hostsDir + "/${n}/default.nix"))
+        isHostDir n t
+        || ((t == "regular" || t == "symlink") && lib.hasSuffix ".nix" n)
     )
     entries;
 
-  parseHostEntry = filename: type: {
-    isDir = type == "directory";
+  parseHostEntry = filename: type: let
+    isDir = isHostDir filename type;
+  in {
+    inherit isDir;
     name =
-      if type == "directory"
+      if isDir
       then filename
       else lib.removeSuffix ".nix" filename;
     path =
-      if type == "directory"
+      if isDir
       then hostsDir + "/${filename}/default.nix"
       else hostsDir + "/${filename}";
     hostDir =
-      if type == "directory"
+      if isDir
       then hostsDir + "/${filename}"
       else null;
   };
@@ -77,8 +86,7 @@
         homeFiles =
           lib.filterAttrs (
             n: t:
-              t
-              == "regular"
+              (t == "regular" || t == "symlink")
               && lib.hasPrefix "home-" n
               && lib.hasSuffix ".nix" n
           )
@@ -96,8 +104,10 @@
 
   enrichHost = evaluatedConfig: autoModules: let
     enabledUsernames = lib.attrNames (lib.filterAttrs (_: u: u.enabled) evaluatedConfig.users);
-    # One merged view of the two sources; reading it twice is what made `hmUsernames` drift.
-    homeModules = autoModules.homeModules // evaluatedConfig.homeModules;
+    # Union, not replacement: `//` dropped the discovered home-<user>.nix whenever a
+    # host declared its own module for that user. hostLib.mergeModules unions the
+    # per-user module lists.
+    homeModules = hostLib.mergeModules [autoModules.homeModules evaluatedConfig.homeModules];
   in {
     nixosModules = autoModules.nixosModules ++ evaluatedConfig.nixosModules;
     inherit homeModules;

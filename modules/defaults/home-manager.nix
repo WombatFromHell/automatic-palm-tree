@@ -1,4 +1,7 @@
 {config, ...}: {
+  # Any configuration warning fails the build; Home Manager throws on failed assertions when
+  # its activation package is forced, and nixpkgs' assertions module declares both options.
+  imports = [../warnings-gate.nix];
   manual = {
     html.enable = false;
     json.enable = false;

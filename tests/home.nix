@@ -29,7 +29,6 @@ let
     (ck "profile features reach the configuration" (lib.all homePkg ["fish" "tmux" "agenix"]))
     (ck "hm-nixgl installs its wrappers"
       ((cfg.lib.nixGL ? wrappers) && (lib.attrNames cfg.lib.nixGL.wrappers == ["mesa" "mesaPrime" "nvidia" "nvidiaPrime"])))
-    (ck "the standalone host produces no warnings" (cfg.warnings == []))
 
     # hm-base ships packages, not program flags; that contract shows up in the
     # host's own package list, which is what the profile actually promises.

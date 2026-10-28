@@ -5,7 +5,7 @@
 # binds tighter than == / &&, so each check's condition must be its own paren.
 let
   s = import ./support.nix;
-  inherit (s) lib features hosts hostsAt hostLib ck suite;
+  inherit (s) lib features featuresAt hosts hostsAt hostLib ck suite;
 
   d = hosts.discoveredHosts;
   fixtureHosts = hostsAt ./fixtures;
@@ -37,6 +37,18 @@ let
   ];
 
   checks = [
+    # --- support.nix helpers ---------------------------------------------
+    # A package name is on the derivation as `pname`, falling back to `name`.
+    (ck "hasPkg matches pname and name, and a miss is a miss"
+      ((s.hasPkg [{pname = "fish";}] "fish")
+        && (s.hasPkg [{name = "yt-dlp";}] "yt-dlp")
+        && !(s.hasPkg [{pname = "fish";}] "yt-dlp")))
+    # A hit must not force the elements after it — the contract that keeps a presence check
+    # from evaluating every package in a config. A miss scans the whole list, so absence is
+    # asserted elsewhere (tests/configs.nix).
+    (ck "hasPkg stops at the first match"
+      (s.hasPkg [{pname = "fish";} (throw "later package forced")] "fish"))
+
     # --- feature discovery --------------------------------------------------
     (ck "every features/ directory is discovered" (featureNames == builtins.attrNames onDisk))
     (ck "hm-* features contribute a home module"
@@ -46,6 +58,12 @@ let
         (lib.filter (n: lib.hasPrefix "nixos-" n) featureNames)))
     (ck "overlay-bearing features are discovered"
       ((lib.filter (n: features.discoveredFeatures.${n} ? overlays) featureNames) == ["nixos-cachyos" "nixos-niri"]))
+    # A feature dir can be a symlink (a checkout that points at another tree); readDir
+    # reports "symlink", so a type == "directory" filter silently skipped it.
+    (ck "a symlinked feature directory and its module files are discovered"
+      ((lib.elem "linked" (lib.attrNames (featuresAt ./fixtures/features).discoveredFeatures))
+        && (toString (featuresAt ./fixtures/features).discoveredFeatures.linked.nixos
+          == toString ./fixtures/features/features/linked/nixos.nix)))
     # Every home-bearing feature must resolve to exactly its own home.nix, so a
     # feature list in a host or profile is a promise that the module exists.
     (ck "resolveFeaturePaths maps each home-bearing feature to its home.nix"
@@ -75,6 +93,18 @@ let
       ((fixtureHosts.discoveredHosts.dirhost.nixosModules == [./fixtures/hosts/dirhost/nixos.nix])
         && (fixtureHosts.discoveredHosts.dirhost.homeModules ? guest)
         && (fixtureHosts.discoveredHosts.dirhost.osUsernames == ["guest" "josh"])))
+  # Symlinked module files inside a host directory are the same silent-skip failure
+  # one level down: readDir reports "symlink", not "regular".
+  (ck "a directory host discovers symlinked nixos.nix and home-*.nix"
+    ((fixtureHosts.discoveredHosts.linkhost.nixosModules
+        == [./fixtures/hosts/linkhost/nixos.nix])
+      && (fixtureHosts.discoveredHosts.linkhost.homeModules ? guest)))
+  # A host that declares its own module for a user must not drop the discovered
+  # home-<user>.nix: `//` used to replace the whole per-user list.
+  (ck "a declared homeModules.<user> keeps the discovered home-<user>.nix too"
+    ((fixtureHosts.discoveredHosts.overridehost.homeModules.josh
+        == [./fixtures/hosts/overridehost/home-josh.nix ./fixtures/hosts/overridehost/override.nix])
+      && (fixtureHosts.discoveredHosts.overridehost.hmUsernames == ["josh"])))
 
     # --- hostLib merge semantics --------------------------------------------
     # mergeModules = lib.foldl' mergeAttrs {}, so it takes ONE list of modules.

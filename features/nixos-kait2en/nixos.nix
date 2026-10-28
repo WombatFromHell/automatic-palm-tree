@@ -20,16 +20,16 @@
 }: let
   cfg = config.features.kait2en;
   # KaiT2en's locked nixpkgs (rev 02c087f3), not our chilled one: the rev their CI builds and
-  # pushes to the cache. Their lib exposes the patched kernel and the modules built against it.
-  kait2enPkgs = inputs.kait2en.inputs.nixpkgs.legacyPackages.x86_64-linux;
-  kait2enLib = inputs.kait2en.lib.x86_64-linux;
-  inherit (kait2enLib) kait2enKernel;
-  # The brcm firmware needs the same locked nixpkgs (so outPath matches what their cache serves)
-  # and an unfree allowance scoped to that one package, instead of the host-wide `allowUnfree`.
-  kait2enUnfreePkgs = import inputs.kait2en.inputs.nixpkgs {
+  # pushes to the cache. One instance serves the kernel, the module set and the firmware. The
+  # unfree allowance is scoped to brcm-firmware; `allowUnfreePredicate` gates evaluation and
+  # does not participate in any outPath, so the cached paths are the same as with plain
+  # legacyPackages.
+  kait2enPkgs = import inputs.kait2en.inputs.nixpkgs {
     system = "x86_64-linux";
     config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) ["brcm-firmware"];
   };
+  kait2enLib = inputs.kait2en.lib.x86_64-linux;
+  inherit (kait2enLib) kait2enKernel;
 in {
   # The model-agnostic baseline (boot params, cdc_mbim blacklist, redistributable firmware,
   # PipeWire + rtkit). `nixosProfiles.macbookpro16-2` does not exist upstream yet — profiles
@@ -73,7 +73,7 @@ in {
           version = cfg.firmwareVersion;
           # Built with KaiT2en's own nixpkgs so outPath is the one their CI pushed to the cache;
           # our chilled rev would produce an uncached hash and build it in a VM instead.
-          package = kait2enUnfreePkgs.callPackage "${inputs.kait2en.outPath}/nix/pkgs/brcm-firmware" {
+          package = kait2enPkgs.callPackage "${inputs.kait2en.outPath}/nix/pkgs/brcm-firmware" {
             version = cfg.firmwareVersion;
           };
         };

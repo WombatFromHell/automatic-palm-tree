@@ -10,10 +10,38 @@ Run from the repo root.
 
 | Helper                                         | What it does                                                                                                                                                                                                                                                                                            |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `./bootstrap.sh [init] <host>`                 | Day zero on a **NixOS** host: `sudo nixos-rebuild boot --flake .#<host>`. Passes the registry caches as `--option extra-substituters` / `--option extra-trusted-public-keys` so a fresh machine fetches instead of compiling — `--option` survives `sudo` and needs no trusted user.                    |
+| `./bootstrap.sh [init] <host>`                 | Day zero on a **NixOS** host: `sudo nixos-rebuild boot --install-bootloader --flake .#<host>`. Passes the registry caches as `--option extra-substituters` / `--option extra-trusted-public-keys` so a fresh machine fetches instead of compiling — `--option` survives `sudo` and needs no trusted user. The flag, not an `env` assignment, is what installs the bootloader: nixos-rebuild-ng sets `NIXOS_INSTALL_BOOTLOADER` itself and runs the activation under `env -i`.                    |
 | `features/<name>/update.sh [<ref> \| --check]` | Pins one feature. No arg = latest release; `<ref>` = pin that ref explicitly; `--check` = exit 1 when a newer version exists or the pinned hash moved. A symlink to `lib/updater.sh`, configured by that feature's `metadata.json`.                                                                     |
 | `./update-all.sh [--flake] [--check]`          | Runs every `features/*/update.sh` (aborts on the first failure), forwards its args to each, then commits `features/` and `flake.lock`. `--flake` also runs `nix flake update`. Stops if any `update.sh` is a copy instead of a symlink, and skips the commit when the tree is dirty beyond those paths. |
-| `bash tests/run.sh`                            | Eval-only gate on the loader. Green suites print `ok tests/<suite>.nix`; each `tests/red/` guard must throw a message containing its first line (`# expect: <substring>`). Never runs `nix build`.                                                                                                      |
+| `bash tests/run.sh`                            | Eval-only gate. Green suites print `ok tests/<suite>.nix`; each `tests/red/` guard must throw a message containing its first line (`# expect: <substring>`). Never runs `nix build`. See **Test gate** below.                                                                                                      |
+
+## Test gate
+
+`bash tests/run.sh` runs every suite with `nix eval --impure --file`, one process per suite, and
+caps each process with a transient systemd scope (`MemoryHigh` 90%, `MemoryMax 1792M`,
+`MemorySwapMax` half that, RSS polled every 40ms). Splitting is not cosmetic: a single
+`nix flake check --no-build` needs ~2.6GB in one process (measured), and `methyl-bazzite` — 3 GB
+free, 3 GB swap — thrashes on a whole-tree eval. Going over the cap is a failure (`exit 137`),
+not a hang.
+
+Cost, measured on this host with the cap in force: whole gate ~18s, 24 checks green. `run.sh`
+prints each eval's peak on its own line (`peak=715MB`), taken from the scope's `MemoryPeak` while
+the eval is still alive — a killed eval reports the peak it reached before the OOM. Widest peaks:
+`configs` 715MB (methyl) / 790MB (methyl-nixos) / 740MB (propyl), `outputs` 482MB, `home` 396MB,
+`mounts` 367MB; the eval-only tiers (`loader`, `filesystems`, `pins`, `warnings`, `caches`, the red
+guards, parity) sit at 13–19MB, which is `nix` startup. Nothing on the gate path is ever built, so
+no tier pulls a kernel, firmware or package derivation.
+
+**The warning invariant.** A config warning must fail a build, not print one line of text. Every
+NixOS config and Home Manager config gets `modules/warnings-gate.nix`, which appends a
+`config.assertions` entry asserting `warnings == []`. Assertions are part of the toplevel and HM
+activation derivations, so the throw fires when the real config is built; a warning is a mistake
+here, not a hint. Reading `config.warnings` costs ~450MB on its own (Nix 2.34 re-warns every
+warning string on each access), which is why the gate runs no warnings check at all. The feature
+layer has its own rule: a feature may not set `nixpkgs.overlays` and declare an option at the same
+time — such a module is never reachable through the loader, since nixpkgs instantiates an overlay
+before the config that gates it. `tests/warnings.nix` pins the gate and `tests/red/*.nix` pin the
+layer rule; the config layer itself is tested in `tests/configs.nix`.
 
 ## Deploy
 

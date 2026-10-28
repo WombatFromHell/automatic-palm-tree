@@ -1,13 +1,15 @@
-# Config suite: what each host actually ends up configured with. Every check
-# forces an option value, never a derivation, so nothing is built. ~12s.
+# Config suite: what one host actually ends up configured with. Every check forces an
+# option value, never a derivation, so nothing is built.
+#
+# run.sh runs this file once per host with TEST_HOST set: three host configs in one eval
+# need ~2.1GB, over the cap tests/nix-eval.sh puts on every eval, so one host per process.
 let
   s = import ./support.nix;
   inherit (s) lib ck suite;
   out = s.flake.outputs;
 
-  methyl = out.nixosConfigurations.methyl.config;
-  ws = out.nixosConfigurations.methyl-nixos.config;
-  propyl = out.nixosConfigurations.propyl.config;
+  host = builtins.getEnv "TEST_HOST";
+  cfg = out.nixosConfigurations.${host}.config;
 
   # `set ? name` only accepts a literal attribute path, so dynamic names go
   # through builtins.hasAttr.
@@ -15,77 +17,118 @@ let
   sysPkg = cfg: name: s.hasPkg cfg.environment.systemPackages name;
   hasParam = cfg: param: lib.elem param cfg.boot.kernelParams;
   hasNs = cfg: name: builtins.hasAttr name cfg.features;
-  # The kernel name features/nixos-cachyos pins, asserted per host below.
+  # An option path read as a value: `["services" "lact" "enable"]` -> bool.
+  optFalse = cfg: path: lib.getAttrFromPath path cfg == false;
+  optTrue = cfg: path: lib.getAttrFromPath path cfg == true;
+  # The kernel name features/nixos-cachyos pins.
   cachyosKernel = "linux-cachyos-latest-lto-x86_64-v3";
 
   # users.users.josh.shell is a derivation whose store path is hashed, so match
   # the name inside outPath rather than a prefix of the basename.
   hasFish = cfg: builtins.match ".*fish-[0-9].*" cfg.users.users.josh.shell.outPath != null;
 
-  # Gaming- and KDE-only effects must not leak onto the workstation or laptop.
-  methylOnlyPkgs = ["steam" "gamescope" "scx-loader" "lsfg-vk" "dmemcg-booster" "plasma-desktop"];
+  # Gaming- and KDE-only effects must not leak onto the workstation or laptop. Asserted one
+  # layer above the package list: mapping `pname` over environment.systemPackages forces every
+  # package (~500MB per host), while the namespace, systemd unit and program option the same
+  # features write answer the same question for a few option values.
+  gamingStack = {
+    absentFeatures = ["korthos" "lsfg" "dmemcg-booster"];
+    # scx_loader and dmemcg-booster are systemd units only the gaming features declare, and
+    # `services.scx-loader` is an option from nixpkgs-unstable, so it does not exist on a host
+    # that does not enable the feature — the unit name is the absence signal.
+    absentServices = ["dmemcg-booster" "scx_loader"];
+    absentOptions = [
+      ["programs" "steam" "enable"]
+      ["services" "lact" "enable"]
+      ["services" "desktopManager" "plasma6" "enable"]
+    ];
+  };
 
-  checks = [
-    # --- facts every host shares --------------------------------------------
-    (ck "host names come from the host record"
-      ((methyl.networking.hostName == "methyl") && (ws.networking.hostName == "methyl-nixos") && (propyl.networking.hostName == "propyl")))
-    (ck "timezone is set by the base profile on every host"
-      (lib.all (cfg: cfg.time.timeZone == "America/Denver") [methyl ws propyl]))
-    (ck "fish is the interactive shell for josh on every host"
-      (lib.all hasFish [methyl ws propyl]))
-    (ck "tailscale, podman, firefox and printing are on by default everywhere"
-      (lib.all
-        (cfg: cfg.services.tailscale.enable && cfg.virtualisation.podman.enable && cfg.programs.firefox.enable && cfg.services.printing.enable)
-        [methyl ws propyl]))
-    (ck "josh is a wheel member on every NixOS host"
-      (lib.all (cfg: lib.elem "wheel" cfg.users.users.josh.extraGroups) [methyl ws propyl]))
+  # Per-host expectations, straight from hosts/ and the profile layout. `kernel = null`
+  # means "the kernel its own feature pins", compared against that feature's derivation.
+  expect = {
+    methyl = {
+      kernel = cachyosKernel;
+      features = ["zswap" "korthos" "dms"];
+      absentFeatures = ["kait2en" "gnome" "qemu"];
+      packages = ["steam" "gamescope" "scx-loader" "lsfg-vk"];
+      # The positive side of the gaming-stack signals, so the absence assertions below are
+      # not vacuous: `scx_loader` really is the unit nixos-scx declares, and plasma6 really
+      # is the option nixos-kde turns on.
+      services = ["dmemcg-booster" "scx_loader"];
+      options = [["services" "desktopManager" "plasma6" "enable"]];
+      absentServices = [];
+      absentOptions = [];
+      required = {nix-community = true;};
+    };
+    methyl-nixos = {
+      kernel = cachyosKernel;
+      features = ["zswap" "gnome" "qemu" "dms"];
+      absentFeatures = ["kait2en"] ++ gamingStack.absentFeatures;
+      packages = ["btrfs-progs" "snapper" "spice-vdagent"];
+      absentServices = gamingStack.absentServices;
+      absentOptions = gamingStack.absentOptions;
+      services = [];
+      options = [];
+      # niri-spicy is on here, so its cache is required as well as the CachyOS one.
+      required = {nix-community = true; wombatfromhell = true;};
+    };
+    propyl = {
+      kernel = null;
+      features = ["kait2en" "dms"];
+      absentFeatures = ["korthos" "gnome" "qemu"] ++ gamingStack.absentFeatures;
+      packages = ["fprintd"];
+      absentServices = gamingStack.absentServices;
+      absentOptions = gamingStack.absentOptions;
+      services = [];
+      options = [];
+      required = {kait2en = true;};
+    };
+  };
 
-    # --- profile-specific effects -------------------------------------------
-    (ck "gaming profile adds its services and packages to methyl only"
-      ((hasService methyl "dmemcg-booster")
-        && (sysPkg methyl "steam")
-        && (sysPkg methyl "scx-loader")
-        && (sysPkg methyl "gamescope")
-        && (sysPkg methyl "lsfg-vk")))
-    (ck "methyl-only packages stay on methyl"
-      (lib.all (cfg: !(lib.any (n: sysPkg cfg n) methylOnlyPkgs)) [ws propyl]))
-    (ck "zswap reaches the kernel command line on methyl and methyl-nixos"
-      ((hasParam methyl "zswap.enabled=1") && (hasParam ws "zswap.enabled=1") && (hasNs methyl "zswap") && (hasNs ws "zswap")))
-    (ck "nixos-defaults reaches every NixOS host"
-      (lib.all (cfg: hasParam cfg "kvm.ignore_msrs=1") [methyl ws propyl]))
-    # Which kernel a host boots is a host-level choice: lib/features.nix allows exactly one
-    # kernel-pinning feature per host, so propyl's boot kernel must be KaiT2en's own derivation.
-    (ck "each host boots the kernel its feature pins"
-      ((methyl.boot.kernelPackages.kernel.pname == cachyosKernel)
-        && (ws.boot.kernelPackages.kernel.pname == cachyosKernel)
-        && (propyl.boot.kernelPackages.kernel == propyl.hardware.kait2en.kernelPackages.kernel)))
-    (ck "workstation-only features: gnome, btrfs, qemu"
-      ((hasNs ws "gnome") && (hasNs ws "qemu") && (sysPkg ws "btrfs-progs") && (sysPkg ws "snapper") && (sysPkg ws "spice-vdagent")))
-    (ck "kait2en is laptop-only"
-      ((hasNs propyl "kait2en") && (sysPkg propyl "fprintd") && !(hasNs methyl "kait2en") && !(hasNs ws "kait2en")))
-    (ck "kde is methyl-only" ((hasNs methyl "korthos") && !(hasNs ws "korthos") && !(hasNs propyl "korthos")))
-    (ck "dms is on every graphical host" (lib.all (cfg: hasNs cfg "dms") [methyl ws propyl]))
+  checks =
+    if host == "" || !expect ? ${host}
+    then throw "configs.nix: TEST_HOST must be one of ${lib.concatStringsSep ", " (lib.attrNames expect)}"
+    else let
+      e = expect.${host};
+    in
+      [
+        # --- facts every host shares --------------------------------------------
+        (ck "${host}: host name comes from the host record" (cfg.networking.hostName == host))
+        (ck "${host}: timezone is set by the base profile" (cfg.time.timeZone == "America/Denver"))
+        (ck "${host}: fish is the interactive shell for josh" (hasFish cfg))
+        (ck "${host}: tailscale, podman, firefox and printing are on by default"
+          (cfg.services.tailscale.enable && cfg.virtualisation.podman.enable && cfg.programs.firefox.enable && cfg.services.printing.enable))
+        (ck "${host}: josh is a wheel member" (lib.elem "wheel" cfg.users.users.josh.extraGroups))
+        (ck "${host}: nixos-defaults reaches the kernel command line" (hasParam cfg "kvm.ignore_msrs=1"))
+        (ck "${host}: dms is on" (hasNs cfg "dms"))
 
-    # --- cache wiring --------------------------------------------------------
-    (ck "every host substitutes from the caches its features need"
-      (lib.all (cfg: cfg.flakeCache.ready) [methyl ws propyl]))
-    # No host may produce a configuration warning: a stale option write or a cache
-    # a feature needs but the host does not substitute from shows up here.
-    (ck "every host produces no configuration warnings"
-      (lib.all (cfg: cfg.warnings == []) [methyl ws propyl]))
-    # The cache list is the registry default everywhere (modules/caches.nix), so the
-    # facts worth asserting are the ones below: the derived substituters and keys.
-    (ck "substituters and keys are derived from the cache list"
-      ((lib.length methyl.nix.settings.extra-substituters == lib.length methyl.flakeCache.enable)
-        && (lib.length methyl.nix.settings.extra-trusted-public-keys == lib.length methyl.flakeCache.enable)))
-    # Assertions are data, not throws: they only stop a switch when built, so the
-    # eval-level check is "some assertion fails and names the cache".
-    (ck "a required cache outside the registry fails an assertion"
-      (lib.any
-        (a: !a.assertion && lib.hasPrefix "flakeCache.required names unknown cache(s)" a.message)
-        (out.nixosConfigurations.propyl.extendModules {
-          modules = [{flakeCache.required.bogus-cache = true;}];
-        }).config.assertions))
-  ];
+        # --- this host's own profile effects -------------------------------------
+        (ck "${host}: its features are enabled" (lib.all (f: hasNs cfg f) e.features))
+        (ck "${host}: another host's features are absent" (lib.all (f: !hasNs cfg f) e.absentFeatures))
+        (ck "${host}: its packages are installed" (lib.all (p: sysPkg cfg p) e.packages))
+        (ck "${host}: another host's systemd units are absent" (lib.all (u: !hasService cfg u) e.absentServices))
+        (ck "${host}: another host's program and service options stay off"
+          (lib.all (p: optFalse cfg p) e.absentOptions))
+        (ck "${host}: its services are enabled" (lib.all (svc: hasService cfg svc) e.services))
+        (ck "${host}: its program and service options are on" (lib.all (p: optTrue cfg p) e.options))
+        # Which kernel a host boots is a host-level choice: lib/features.nix allows exactly one
+        # kernel-pinning feature per host.
+        (ck "${host}: it boots the kernel its feature pins"
+          (if e.kernel == null
+            then cfg.boot.kernelPackages.kernel == cfg.hardware.kait2en.kernelPackages.kernel
+            else cfg.boot.kernelPackages.kernel.pname == e.kernel))
+
+        # --- cache wiring --------------------------------------------------------
+        # A feature that gates on cache membership declares the cache required here, and
+        # modules/caches.nix turns that into the substituters, keys and warnings.
+        # Only the caches actually needed count: niri writes `required.wombatfromhell = false`
+        # when its spicy option is off, and caches.nix filters false entries out.
+        (ck "${host}: its features name the caches they need" (lib.filterAttrs (_: r: r) cfg.flakeCache.required == e.required))
+        (ck "${host}: every required cache is enabled" cfg.flakeCache.ready)
+        (ck "${host}: substituters and keys are derived from the cache list"
+          (lib.length cfg.nix.settings.extra-substituters == lib.length cfg.flakeCache.enable
+            && lib.length cfg.nix.settings.extra-trusted-public-keys == lib.length cfg.flakeCache.enable))
+      ];
 in
-  suite "configs" checks
+  suite "configs ${host}" checks
