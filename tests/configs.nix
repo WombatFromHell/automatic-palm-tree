@@ -66,20 +66,21 @@ let
       features = ["zswap" "gnome" "qemu" "dms"];
       absentFeatures = ["kait2en"] ++ gamingStack.absentFeatures;
       packages = ["btrfs-progs" "snapper" "spice-vdagent"];
-      absentServices = gamingStack.absentServices;
-      absentOptions = gamingStack.absentOptions;
+      inherit (gamingStack) absentServices absentOptions;
       services = [];
       options = [];
       # niri-spicy is on here, so its cache is required as well as the CachyOS one.
-      required = {nix-community = true; wombatfromhell = true;};
+      required = {
+        nix-community = true;
+        wombatfromhell = true;
+      };
     };
     propyl = {
       kernel = null;
       features = ["kait2en" "dms"];
       absentFeatures = ["korthos" "gnome" "qemu"] ++ gamingStack.absentFeatures;
       packages = ["fprintd"];
-      absentServices = gamingStack.absentServices;
-      absentOptions = gamingStack.absentOptions;
+      inherit (gamingStack) absentServices absentOptions;
       services = [];
       options = [];
       required = {kait2en = true;};
@@ -91,44 +92,46 @@ let
     then throw "configs.nix: TEST_HOST must be one of ${lib.concatStringsSep ", " (lib.attrNames expect)}"
     else let
       e = expect.${host};
-    in
-      [
-        # --- facts every host shares --------------------------------------------
-        (ck "${host}: host name comes from the host record" (cfg.networking.hostName == host))
-        (ck "${host}: timezone is set by the base profile" (cfg.time.timeZone == "America/Denver"))
-        (ck "${host}: fish is the interactive shell for josh" (hasFish cfg))
-        (ck "${host}: tailscale, podman, firefox and printing are on by default"
-          (cfg.services.tailscale.enable && cfg.virtualisation.podman.enable && cfg.programs.firefox.enable && cfg.services.printing.enable))
-        (ck "${host}: josh is a wheel member" (lib.elem "wheel" cfg.users.users.josh.extraGroups))
-        (ck "${host}: nixos-defaults reaches the kernel command line" (hasParam cfg "kvm.ignore_msrs=1"))
-        (ck "${host}: dms is on" (hasNs cfg "dms"))
+    in [
+      # --- facts every host shares --------------------------------------------
+      (ck "${host}: host name comes from the host record" (cfg.networking.hostName == host))
+      (ck "${host}: timezone is set by the base profile" (cfg.time.timeZone == "America/Denver"))
+      (ck "${host}: fish is the interactive shell for josh" (hasFish cfg))
+      (ck "${host}: tailscale, podman, firefox and printing are on by default"
+        (cfg.services.tailscale.enable && cfg.virtualisation.podman.enable && cfg.programs.firefox.enable && cfg.services.printing.enable))
+      (ck "${host}: josh is a wheel member" (lib.elem "wheel" cfg.users.users.josh.extraGroups))
+      (ck "${host}: nixos-defaults reaches the kernel command line" (hasParam cfg "kvm.ignore_msrs=1"))
+      (ck "${host}: dms is on" (hasNs cfg "dms"))
 
-        # --- this host's own profile effects -------------------------------------
-        (ck "${host}: its features are enabled" (lib.all (f: hasNs cfg f) e.features))
-        (ck "${host}: another host's features are absent" (lib.all (f: !hasNs cfg f) e.absentFeatures))
-        (ck "${host}: its packages are installed" (lib.all (p: sysPkg cfg p) e.packages))
-        (ck "${host}: another host's systemd units are absent" (lib.all (u: !hasService cfg u) e.absentServices))
-        (ck "${host}: another host's program and service options stay off"
-          (lib.all (p: optFalse cfg p) e.absentOptions))
-        (ck "${host}: its services are enabled" (lib.all (svc: hasService cfg svc) e.services))
-        (ck "${host}: its program and service options are on" (lib.all (p: optTrue cfg p) e.options))
-        # Which kernel a host boots is a host-level choice: lib/features.nix allows exactly one
-        # kernel-pinning feature per host.
-        (ck "${host}: it boots the kernel its feature pins"
-          (if e.kernel == null
-            then cfg.boot.kernelPackages.kernel == cfg.hardware.kait2en.kernelPackages.kernel
-            else cfg.boot.kernelPackages.kernel.pname == e.kernel))
+      # --- this host's own profile effects -------------------------------------
+      (ck "${host}: its features are enabled" (lib.all (f: hasNs cfg f) e.features))
+      (ck "${host}: another host's features are absent" (lib.all (f: !hasNs cfg f) e.absentFeatures))
+      (ck "${host}: its packages are installed" (lib.all (p: sysPkg cfg p) e.packages))
+      (ck "${host}: another host's systemd units are absent" (lib.all (u: !hasService cfg u) e.absentServices))
+      (ck "${host}: another host's program and service options stay off"
+        (lib.all (p: optFalse cfg p) e.absentOptions))
+      (ck "${host}: its services are enabled" (lib.all (svc: hasService cfg svc) e.services))
+      (ck "${host}: its program and service options are on" (lib.all (p: optTrue cfg p) e.options))
+      # Which kernel a host boots is a host-level choice: lib/features.nix allows exactly one
+      # kernel-pinning feature per host.
+      (ck "${host}: it boots the kernel its feature pins"
+        (
+          if e.kernel == null
+          then cfg.boot.kernelPackages.kernel == cfg.hardware.kait2en.kernelPackages.kernel
+          else cfg.boot.kernelPackages.kernel.pname == e.kernel
+        ))
 
-        # --- cache wiring --------------------------------------------------------
-        # A feature that gates on cache membership declares the cache required here, and
-        # modules/caches.nix turns that into the substituters, keys and warnings.
-        # Only the caches actually needed count: niri writes `required.wombatfromhell = false`
-        # when its spicy option is off, and caches.nix filters false entries out.
-        (ck "${host}: its features name the caches they need" (lib.filterAttrs (_: r: r) cfg.flakeCache.required == e.required))
-        (ck "${host}: every required cache is enabled" cfg.flakeCache.ready)
-        (ck "${host}: substituters and keys are derived from the cache list"
-          (lib.length cfg.nix.settings.extra-substituters == lib.length cfg.flakeCache.enable
-            && lib.length cfg.nix.settings.extra-trusted-public-keys == lib.length cfg.flakeCache.enable))
-      ];
+      # --- cache wiring --------------------------------------------------------
+      # A feature that gates on cache membership declares the cache required here, and
+      # modules/caches.nix turns that into the substituters, keys and warnings.
+      # Only the caches actually needed count: niri writes `required.wombatfromhell = false`
+      # when its spicy option is off, and caches.nix filters false entries out.
+      (ck "${host}: its features name the caches they need" (lib.filterAttrs (_: r: r) cfg.flakeCache.required == e.required))
+      (ck "${host}: every required cache is enabled" cfg.flakeCache.ready)
+      (ck "${host}: substituters and keys are derived from the cache list"
+        (lib.length cfg.nix.settings.extra-substituters
+          == lib.length cfg.flakeCache.enable
+          && lib.length cfg.nix.settings.extra-trusted-public-keys == lib.length cfg.flakeCache.enable))
+    ];
 in
   suite "configs ${host}" checks

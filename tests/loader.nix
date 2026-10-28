@@ -93,16 +93,16 @@ let
       ((fixtureHosts.discoveredHosts.dirhost.nixosModules == [./fixtures/hosts/dirhost/nixos.nix])
         && (fixtureHosts.discoveredHosts.dirhost.homeModules ? guest)
         && (fixtureHosts.discoveredHosts.dirhost.osUsernames == ["guest" "josh"])))
-  # Symlinked module files inside a host directory are the same silent-skip failure
-  # one level down: readDir reports "symlink", not "regular".
-  (ck "a directory host discovers symlinked nixos.nix and home-*.nix"
-    ((fixtureHosts.discoveredHosts.linkhost.nixosModules
+    # Symlinked module files inside a host directory are the same silent-skip failure
+    # one level down: readDir reports "symlink", not "regular".
+    (ck "a directory host discovers symlinked nixos.nix and home-*.nix"
+      ((fixtureHosts.discoveredHosts.linkhost.nixosModules
         == [./fixtures/hosts/linkhost/nixos.nix])
       && (fixtureHosts.discoveredHosts.linkhost.homeModules ? guest)))
-  # A host that declares its own module for a user must not drop the discovered
-  # home-<user>.nix: `//` used to replace the whole per-user list.
-  (ck "a declared homeModules.<user> keeps the discovered home-<user>.nix too"
-    ((fixtureHosts.discoveredHosts.overridehost.homeModules.josh
+    # A host that declares its own module for a user must not drop the discovered
+    # home-<user>.nix: `//` used to replace the whole per-user list.
+    (ck "a declared homeModules.<user> keeps the discovered home-<user>.nix too"
+      ((fixtureHosts.discoveredHosts.overridehost.homeModules.josh
         == [./fixtures/hosts/overridehost/home-josh.nix ./fixtures/hosts/overridehost/override.nix])
       && (fixtureHosts.discoveredHosts.overridehost.hmUsernames == ["josh"])))
 

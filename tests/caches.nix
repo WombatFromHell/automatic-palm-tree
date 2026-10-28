@@ -55,11 +55,11 @@ in
 
     (ck "ready is false while a required cache is disabled" (!(evalCfg [] {kait2en = true;}).flakeCache.ready))
     (ck "ready is true when every required cache is enabled"
-      ((evalCfg ["kait2en" "nix-community"] {
+      (evalCfg ["kait2en" "nix-community"] {
         kait2en = true;
         nix-community = true;
-      }).flakeCache.ready))
-    (ck "ready is true when nothing is required" ((evalCfg [] {}).flakeCache.ready))
+      }).flakeCache.ready)
+    (ck "ready is true when nothing is required" (evalCfg [] {}).flakeCache.ready)
 
     (ck "a required cache outside the registry fails an assertion"
       (let

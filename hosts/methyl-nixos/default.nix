@@ -7,8 +7,8 @@ hostLib.mergeModules (
         "nixos-cachyos"
         "nixos-btrfs"
         "nixos-qemu"
-        # "nixos-niri"
-        # "nixos-dms"
+        "nixos-niri"
+        "nixos-dms"
       ];
     }
   ]

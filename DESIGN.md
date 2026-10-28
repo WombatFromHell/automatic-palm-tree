@@ -18,14 +18,20 @@ lib/               # pure loader, one concern per file
   filesystems.nix  #   mkMounts / mkUnitMounts (subvolume -> mount + automount units;
                    #   automount = true adds the lazy .automount unit, skipIfMissing conditions
                    #   on the device) / joinUnitMounts (concat groups, never //)
+                   #   / unitName (where -> unit name, exported so consumers and tests
+                   #   name a unit exactly the way mkUnitMounts does)
   pin-meta.nix     #   metadata.json contract: pinnedSystems, assetHash, releaseAsset, gitSource
   updater.sh       #   generic pin updater; features symlink it to their own update.sh
 modules/           # NixOS/HM modules the loader always imports
   cache-registry.nix caches.nix feature-options.nix host-facts.nix nix-settings.nix
-  defaults/{nixos,home-manager}.nix packages/pyz-wrapper.nix
+  warnings-gate.nix defaults/{nixos,home-manager}.nix packages/pyz-wrapper.nix
 features/<name>/   # nixos.nix, home.nix, optional _overlays.nix; private helpers are _*.nix
 hosts/             # host records: <name>.nix or <name>/ (nixos.nix + home-<user>.nix)
-tests/             # eval-only suite (see TEST_DESIGN.md)
+                   #   methyl (KDE gaming) · methyl-nixos (GNOME; niri-spicy on,
+                   #   libvirtd off, spice-vdagent as a guest) · propyl (T2 laptop)
+                   #   methyl-bazzite (standalone HM) · methyl-base/ (shared records + profiles,
+                   #   not a host: no default.nix)
+tests/             # eval-only suite (see TEST_DESIGN.md); nix-eval.sh caps each eval in RAM
 bootstrap.sh       # day-zero switch: cache urls/keys via --option, then switch
 update-all.sh      # feature updaters, then flake input bumps
 ```
@@ -40,7 +46,7 @@ flowchart TD
   I["inputs: nixpkgs, nixpkgs-unstable, home-manager, agenix + 9 tool inputs"] --> D["lib/default.nix"]
   D --> HO["host-options.nix<br/>schema: facts + authoring + derived"]
   D --> H["hosts.nix<br/>discover hosts/ → validate → enrich"]
-  H --> HD["host records<br/>name, system, isNixOS, users,<br/>features, nixosModules, homeModules<br/>+ derived osUsernames / hmUsernames"]
+  H --> HD["host records<br/>name, system, isNixOS, users,<br/>features, nixosModules, homeModules<br/>+ derived name / osUsernames / adminUsernames / hmUsernames"]
   D --> F["features.nix<br/>discover features/ → discoveredFeatures"]
   HD --> P["hostsWithPkgs<br/>pkgs + pkgs.unstable + flakePackages + pinMeta"]
   F --> P
@@ -72,7 +78,15 @@ flowchart LR
 Feature lists are the single source of truth: `features = ["nixos-niri" "hm-tmux"]` resolves to
 `features/nixos-niri/nixos.nix` and `features/hm-tmux/home.nix`. A name with no module for the
 platform contributes nothing; a name that does not exist throws at evaluation with the available
-list.
+list. Listing two kernel-pinning features (`nixos-cachyos`, `nixos-kait2en`) also throws — both
+write `boot.kernelPackages` at `mkDefault`, and the module system would only report "defined
+multiple times" with no host name.
+
+Hosts are composed from shared records rather than duplicated: `hosts/methyl-base/{core,base,
+graphical,gaming,extras,nixos-defaults}.nix` plus `hosts/methyl-base/profiles/` chain through
+`hostLib.mergeModules` (`methyl-kde → methyl-gaming → methyl-common → core/base/graphical`).
+Discovery also accepts symlinked feature dirs, symlinked host files and symlinked module files,
+because `readDir` reports `"symlink"` for a checkout pointing at another tree.
 
 ## NixOS module composition (order matters)
 
@@ -83,13 +97,18 @@ flowchart TD
   3 --> 4["modules/host-facts.nix<br/>config.flakeHost"]
   4 --> 5["modules/nix-settings.nix<br/>nix.settings + nix.package"]
   5 --> 6["modules/defaults/nixos.nix<br/>hostName, kernel, users.users, extraGroups"]
-  6 --> 7["host.nixosModules<br/>host-local modules, incl. hardware-configuration.nix"]
-  7 --> 8["home-manager module<br/>useGlobalPkgs, useUserPackages, users.&lt;user&gt;"]
-  8 --> 9["nixpkgs.pkgs = host pkgs"]
+  6 --> 7["modules/warnings-gate.nix<br/>any config warning fails the build<br/>(imported by defaults/nixos.nix)"]
+  7 --> 8["host.nixosModules<br/>host-local modules, incl. hardware-configuration.nix"]
+  8 --> 9["home-manager module<br/>useGlobalPkgs, useUserPackages, users.&lt;user&gt;"]
+  9 --> 10["nixpkgs.pkgs = host pkgs"]
 ```
 
 Caches come first because feature modules gate on `config.flakeCache.enable` — e.g. `nixos-niri`
-swaps niri for the spicy build only when its cache is substituted from. Feature overlays are
+swaps niri for the spicy build only when its cache is substituted from. `modules/defaults/nixos.nix`
+adds the warnings gate, sets `nix.extraOptions = "fallback = true"` (substitute when a cache serves
+the path, build it ourselves only when it does not) and pins the default kernel at
+`mkOverride 1100`, so a kernel feature's `mkDefault` still wins while a host's plain assignment
+overrides both. Feature overlays are
 modules that set `nixpkgs.overlays`, so they are appended to the pinned set at eval time and can
 be gated on options; host `pkgs` is threaded in last so a host can pin its own package set.
 
@@ -119,6 +138,7 @@ flowchart LR
   C --> W["config.warnings when a required cache<br/>is not enabled"]
   C --> A["assertion: unknown required cache name"]
   R --> B["bootstrap.sh<br/>nix eval --raw → --option<br/>(pre-nixosInstall: root, no config yet)"]
+  W --> G["modules/warnings-gate.nix<br/>the warning fails nix build /<br/>nix flake check / switch"]
 ```
 
 ## Pin metadata
@@ -137,8 +157,19 @@ flowchart LR
   U2["update-all.sh"] --> U
 ```
 
-`pinMeta` and `flakePackages` are injected into every package set by `lib/default.nix`, so a
-feature reads them like a build dependency rather than threading arguments.
+`pinMeta` and `flakePackages` are injected into every package set by `lib/default.nix` — one set
+per _system_, not per host, since every host here is x86_64-linux — so a feature reads them like a
+build dependency rather than threading arguments. Feature overlays are not baked into that set:
+they arrive as `nixpkgs.overlays` modules, appended at eval time.
+
+## Input boundary
+
+The lock carries seven nixpkgs trees (ours ×2, plus beryl-utils, kait2en, niri-spicy,
+nix-cachyos-kernel, xilo). None uses `follows`, and that is the boundary: forcing one to follow
+ours would evaluate it against a rev its CI never built, so every path it publishes from its own
+cache stops matching — the CachyOS and KaiT2en kernels would rebuild locally, on the host with
+the least RAM. The caches named in `modules/cache-registry.nix` are the same story: each is
+somebody else's build of their own rev, so nothing here may repin them.
 
 ## User-facing ergonomics
 
@@ -149,6 +180,8 @@ flowchart LR
   E["nix flake check"] --> CK["checks.&lt;system&gt;.*"]
   E2["nix build .#nixosConfigurations.&lt;host&gt;.config.system.build.toplevel"] --> NC["system derivation"]
   E3["nix build .#homeConfigurations.&lt;user&gt;@&lt;host&gt;.activationPackage"] --> HC["HM activation derivation"]
+  E4["bootstrap.sh &lt;host&gt;"] --> RB["sudo nixos-rebuild boot --install-bootloader<br/>+ registry urls/keys via --option"]
+  E5["update-all.sh [--flake|--check]"] --> UP["features/*/update.sh, symlinked to<br/>lib/updater.sh; a copy is refused"]
 ```
 
 Placeholders for ergonomics we do **not** implement yet (no `packages`, `devShell`, or `apps`

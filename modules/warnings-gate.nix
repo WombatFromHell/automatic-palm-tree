@@ -13,8 +13,7 @@
   config,
   lib,
   ...
-}:
-{
+}: {
   assertions = [
     {
       assertion = config.warnings == [];

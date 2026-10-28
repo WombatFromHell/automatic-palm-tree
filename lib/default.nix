@@ -60,11 +60,12 @@
   # modules that set `nixpkgs.overlays`, which nixpkgs appends to this set at eval time so
   # they can be gated on options.
   systems = lib.unique (map (h: h.system) (lib.attrValues discoveredHosts));
-  pkgsFor = lib.genAttrs systems (system: import inputs.nixpkgs {
-    inherit system;
-    overlays = [baseOverlay (_: _: {unstable = unstableFor.${system};})];
-    config.allowUnfree = true;
-  });
+  pkgsFor = lib.genAttrs systems (system:
+    import inputs.nixpkgs {
+      inherit system;
+      overlays = [baseOverlay (_: _: {unstable = unstableFor.${system};})];
+      config.allowUnfree = true;
+    });
   hostsWithPkgs =
     lib.mapAttrs (_name: host: host // {pkgs = pkgsFor.${host.system};}) discoveredHosts;
 in {
