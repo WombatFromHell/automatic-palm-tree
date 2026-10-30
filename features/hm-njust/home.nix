@@ -22,9 +22,6 @@
 in {
   home.packages = [
     pkgs.just
-    # The nix.just clients: fast build + the evaluator it delegates to.
-    pkgs.lixPackageSets.latest.nix-fast-build
-    pkgs.lixPackageSets.latest.nix-eval-jobs
     njust
   ];
 

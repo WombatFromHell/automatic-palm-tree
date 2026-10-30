@@ -4,9 +4,8 @@
 # rebuild and os-build --dry-run, so only default/info/clean came over.
 #
 # Flags, accepted by every recipe and in any order: --dry-run = evaluate only,
-# never build/copy/ssh; --plain = plain nix instead of nix-fast-build; --sudo =
-# run the nix client as root; --switch/--boot/--test = activation action (not for
-# the build-only recipes). A bare argument is the target (user@host for home
+# never build/copy/ssh; --sudo = run the nix client as root; --switch/--boot/--test
+# = activation action (not for the build-only recipes). A bare argument is the target (user@host for home
 # recipes, host for system recipes) and may appear anywhere; omit it to use the
 # local host, which for system recipes may not be a NixOS host at all -- `njust
 # info` lists them and the build says so. Anything else is forwarded verbatim to
@@ -22,11 +21,9 @@ set shell := ["bash", "-uc"]
 # Shared values: one source of truth for every recipe below. Paths use env_var
 # rather than `~` because some recipes interpolate them inside quotes.
 flake := env_var_or_default("FLAKE_ROOT", env_var("HOME") + "/.config/flakeroot")
-njobs := `nproc | awk '{ j = int($1 * 0.75); print (j > 1 ? j : 1) }'`
-# Only what this Nix (Determinate Systems 2.34.8) accepts, so neither client
-# spits warnings. ponytail: eval-cache / or-as-identifier are fork-only here.
+# Options every recipe passes. All of these are accepted by upstream Nix; the
+# Determinate-only knobs (eval-cache, eval-cores, or-as-identifier) are not here.
 nix_opts := "--option show-trace true --option connect-timeout 5 --option extra-experimental-features 'nix-command flakes'"
-nfb_opts := "--max-jobs " + njobs + " " + nix_opts
 
 # Closure attribute roots, out-links, and the system profile, spelled once.
 hm_root := flake + "#homeConfigurations."
@@ -115,42 +112,34 @@ ccaf *args: (clean "all" "-k" "3" "--optimise" args)
 # --- build -------------------------------------------------------------------
 # nix.fish: _nfb + nix_build + nix_eval + _nix_dry_run, merged so the option set
 # and the eval call exist once. `--sudo` is stripped and prefix-wrapped.
-# ponytail: nix-fast-build 1.4 has no --dry-run/-n, so fast evaluation goes
-# through nix-eval-jobs, the evaluator it delegates to.
+# The fast clients (nix-fast-build / nix-eval-jobs) were measured and culled: the
+# Lix-linked evaluator holds a ~2.3GB floor whatever the host and spills swap, for
+# ~4s saved on one host and *slower* on another. See DESIGN.md "What to run".
 
-# Build a closure; --dry-run evaluates instead, --plain uses nix instead of nix-fast-build.
+# Build a closure; --dry-run evaluates instead.
 build attr out_link="nix-result" *args:
     #!/usr/bin/env bash
     set -uo pipefail
     args=()
     sudo=()
     dry=false
-    plain=false
     for a in {{ args }}; do
         case "$a" in
         --sudo) sudo=(sudo -i) ;;
         --dry-run) dry=true ;;
-        --plain) plain=true ;;
         *) args+=("$a") ;;
         esac
     done
     if [[ "$dry" == true ]]; then
         export GC_INITIAL_HEAP_SIZE=2G
-        if [[ "$plain" == true ]]; then
-            echo "Evaluating {{ attr }} with nix build --dry-run..."
-            cmd=(nix build {{ nix_opts }} --no-link --dry-run {{ attr }})
-        else
-            echo "Evaluating {{ attr }} via nix-eval-jobs..."
-            cmd=(nix-eval-jobs {{ nfb_opts }} --flake {{ attr }})
-        fi
-    elif [[ "$plain" == true ]]; then
-        cmd=(nix build {{ nix_opts }} {{ attr }} --out-link {{ out_link }})
+        echo "Evaluating {{ attr }} with nix build --dry-run..."
+        cmd=(nix build {{ nix_opts }} --no-link --dry-run {{ attr }})
     else
-        cmd=(nix-fast-build {{ nfb_opts }} --flake {{ attr }} --out-link {{ out_link }})
+        cmd=(nix build {{ nix_opts }} {{ attr }} --out-link {{ out_link }})
     fi
     "${sudo[@]}" "${cmd[@]}" "${args[@]}"
 
-# Evaluate a flake attribute: fast by default, --plain for plain nix (nix.fish: nix_eval).
+# Evaluate a flake attribute (nix.fish: nix_eval).
 eval attr *args: (build attr "/tmp/nix-eval-result" "--dry-run" args)
 
 # --- activate / deploy -------------------------------------------------------
@@ -202,7 +191,7 @@ _deploy kind="hm" *args:
         --test) act=test ;;
         --activate) act=activate ;;
         --dry-run) dry=true; flags+=("$a") ;;
-        --plain|--sudo) flags+=("$a") ;;
+        --sudo) flags+=("$a") ;;
         --option|--override-input|--remote-ssh-option)
             flags+=("$a" "${arr[i + 1]:-}" "${arr[i + 2]:-}"); i=$((i + 2)) ;;
         --*)
@@ -291,7 +280,7 @@ os-deploy *args: (_deploy "os-deploy" args)
 # NAS deploy: nasty-config's flake + its Cachix cache via ssh alias homenas-deployer.
 os-deploy-nas *args: (_deploy "os-deploy-nas" args)
 
-# Plain nixos-rebuild, no nix-fast-build (nixos-justnh / drs); its flags pass through.
+# Plain nixos-rebuild (nixos-justnh / drs); its flags pass through.
 rebuild *args: (_deploy "rebuild" args)
 
 # NixOS generations (nix.fish: nhdls); needs root, takes a profile to list another.

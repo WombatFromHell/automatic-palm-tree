@@ -283,7 +283,7 @@ Measured on this box (3 cores, ~4.6GB free):
   jobs are dispatched only while total RSS plus the estimated growth of in-flight jobs fits it, and
   a worker over its share is restarted. Our configs need ~2.4GB each, so the README's rule of thumb
   — fewer workers with a larger share when a single attribute exceeds one share — is what this flake
-  wants one worker. See "What to run" below for the memory-size floor that a Lix worker needs.
+  wants one worker. "What to run" below is why this flake runs one target per process instead.
 - Cores are available for free _inside_ one process: Determinate's
   [parallel evaluation](https://determinate.systems/blog/parallel-nix-eval) shares a single
   evaluator heap, so `--option eval-cores 4` cost the same 3063MB and saved 5s. A NixOS toplevel is
@@ -311,37 +311,36 @@ so it cannot come back.
 
 ### What to run
 
-Same attribute (methyl's toplevel), three clients:
+Every prospective host, one attribute each, scoped at 2560MB (`MemoryHigh=2304MB`,
+`MemorySwapMax=1280MB`) through `tests/build-harness.sh`:
 
-| client                                                                               | peak   | swap   | wall         |
-| ------------------------------------------------------------------------------------ | ------ | ------ | ------------ |
-| plain `nix eval` (Determinate Nix 3.21.7)                                            | 2364MB | 0MB    | 12s          |
-| `nix-eval-jobs` (what `hm-njust` installs from `lixPackageSets`; links `lix-2.95.4`) | 2701MB | 623MB  | 16s          |
-| the same through two workers                                                         | 4743MB | 2048MB | 21s (killed) |
+| host                       | `nix build --dry-run` (what `njust` runs) | `nix-eval-jobs`, now removed |
+| -------------------------- | ----------------------------------------- | ---------------------------- |
+| methyl                     | **1698MB / 0MB swap / 22s**               | 2306MB / 1047MB swap / 18s   |
+| methyl-nixos               | 1556MB / 0MB / 15s                        | 2305MB / 680MB / 16s         |
+| propyl                     | 1488MB / 0MB / 9s                         | 2304MB / 783MB / 17s         |
+| josh@methyl-bazzite (home) | 980MB / 0MB / 6s                          | 1832MB / 0MB / 9s            |
 
 The strategy this flake follows:
 
-- **One closure: plain `nix` / `nixos-rebuild`, scoped.** On a NixOS host that is upstream Nix, the
-  lightest evaluator measured here (1712MB against 2363MB on Determinate for the same attribute).
-  `nix-eval-jobs` is a _different
-  evaluator_ here — `features/hm-njust/home.nix` installs it from `pkgs.lixPackageSets`, so it links
-  Lix rather than the Determinate Nix this box runs, cannot reuse that Nix's eval cache (no
-  `~/.cache/lix` exists), and costs +14% RAM and +33% wall on the same attribute. `nix-fast-build`
-  delegates to it and inherits the cost, and neither tool activates a system generation, so a
-  rebuild needs `nixos-rebuild` regardless. `bootstrap.sh` therefore uses `nixos-rebuild` inside a
-  scope and nothing else.
-- **Many closures: the tools, but one worker.** Their payoff is pipelining — builds start as soon as
-  an attribute finishes evaluating. Keep `--workers 1` / `--eval-workers 1`, and do not lower
-  `--max-memory-size` below ~2700: a Lix eval of a host toplevel needs 2.7GB, and a worker over its
-  share is restarted and never finishes. `nix.just` already exposes `--plain`, which is the
-  RAM-cheaper client on a constrained host.
-- **`--option eval-cores 4` only for a bulk eval of several configs**, never for a single-host
-  rebuild (measured slower there, 15s against 13s). It is Determinate-only: `eval-cores` and
-  `parallel-eval.cc` are not in [NixOS/nix](https://github.com/NixOS/nix) or
-  [Lix](https://github.com/lix-project/lix), whose evaluator stays single-threaded (upstream
-  multi-threaded eval, [NixOS/nix#8711](https://github.com/NixOS/nix/pull/8711), regresses and is
-  unmerged). `eval-cache` is universal — upstream, Lix and Determinate all ship it and default it
-  to `true` — so it needs no configuration here.
+- **One closure: plain `nix` / `nixos-rebuild`, scoped.** Upstream Nix is the lightest evaluator
+  measured here ("Which evaluator" above). The fast clients were culled on the numbers above: the
+  Lix-linked evaluator keeps a flat ~2.3GB floor whatever the host and spills 0.7–1.0GB into swap
+  under the cap, saving ~4s on methyl and running _slower_ on propyl (17s against 9s).
+  `nix-fast-build` delegated to it and inherited the cost, and neither tool activates a system
+  generation, so a rebuild needs `nixos-rebuild` regardless. `nix.just` therefore runs `nix build`,
+  `nixos-rebuild`, and `home-manager switch`, and `features/hm-njust/home.nix` no longer installs
+  `pkgs.nix-fast-build` / `pkgs.nix-eval-jobs`. `bootstrap.sh` uses `nixos-rebuild` inside a scope
+  and nothing else.
+- **One attribute per process.** A single expression holding every config is the higher-memory shape
+  ("More cores, same RAM"), and `nix-fast-build`'s pipelining was never affordable here: each worker
+  is a separate Nix process, so a pair cost 4.7GB cold.
+- Parallel evaluation is Determinate-only — `eval-cores` and `parallel-eval.cc` are not in
+  [NixOS/nix](https://github.com/NixOS/nix) or [Lix](https://github.com/lix-project/lix), whose
+  evaluator stays single-threaded (upstream multi-threaded eval,
+  [NixOS/nix#8711](https://github.com/NixOS/nix/pull/8711), regresses and is unmerged) — so there is
+  nothing to configure on this flake's upstream Nix. `eval-cache` is universal and defaults to
+  `true`.
 - `GC_INITIAL_HEAP_SIZE=2G` (what `nix.just`'s dry-run sets) is not a RAM hammer: 2362MB with it
   against 2375MB without, swap 0 both ways. Boehm reserves address space and only faults pages it
   actually uses.

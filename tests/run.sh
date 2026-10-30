@@ -127,39 +127,23 @@ else
   fail=1
 fi
 
-# bootstrap.sh behaviour is bash-level — which installer flags it picks, which switch command it
-# picks, the flags it refuses, the trusted-user gate — so it is a bats suite against stubs, not an
-# eval suite: ~0MB and ~1s. bats comes from the installed Nix profile, so the gate *skips* rather
-# than fails when it is missing.
+# bootstrap.sh and build-harness.sh behaviour is bash-level — which installer flags bootstrap
+# picks, which switch command it picks, the trusted-user gate; and which command each nix client
+# maps to, what the telemetry line reports, what the harness refuses — so both are bats suites
+# against PATH stubs, not eval suites: ~0MB and ~1s. bats comes from the installed Nix profile, so
+# a missing `bats` is a `skip`, not a failure.
 if command -v bats > /dev/null 2>&1; then
-  if out=$(bats tests/bootstrap.bats 2>&1); then
-    echo "ok   tests/bootstrap.bats [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
-  else
-    echo "FAIL tests/bootstrap.bats"
-    printf '%s\n' "$out" | grep -E '^not ok|^# ' | tail -20
-    fail=1
-  fi
+  for suite in tests/bootstrap.bats tests/build-harness.bats; do
+    if out=$(bats "$suite" 2>&1); then
+      echo "ok   $suite [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
+    else
+      echo "FAIL $suite"
+      printf '%s\n' "$out" | grep -E '^not ok|^# ' | tail -20
+      fail=1
+    fi
+  done
 else
-  echo "skip tests/bootstrap.bats [bats not installed]"
-fi
-
-# The rebuild harness (rebuild-gate.sh) is how rebuild RAM gets measured, so its target
-# discovery is checked here rather than by running a real build: discovery must name this
-# flake's own NixOS toplevels and home activation packages, and a trivial plan must survive the
-# scope cap. Nothing here evaluates a host configuration.
-if ! bash -n rebuild-gate.sh; then
-  echo "FAIL rebuild-gate.sh does not parse"
-  fail=1
-elif targets=$(bash rebuild-gate.sh -m list 2>/dev/null) \
-  && printf '%s\n' "$targets" | grep -q '^\.#nixosConfigurations\.methyl\.config\.system\.build\.toplevel$' \
-  && printf '%s\n' "$targets" | grep -q '^\.#homeConfigurations\.josh@methyl-bazzite\.activationPackage$' \
-  && bash rebuild-gate.sh -m probe -c 1200 -t '(builtins.getFlake (toString ./.)).outputs.nixosConfigurations.methyl' \
-       -e '.config.system.stateVersion' >/dev/null 2>&1 \
-  && bash rebuild-gate.sh -m plan -t nixpkgs#hello >/dev/null 2>&1; then
-  echo "ok   rebuild-gate.sh [discovery + spine probe + trivial plan]"
-else
-  echo "FAIL rebuild-gate.sh (parse, discovery, or trivial plan)"
-  fail=1
+  echo "skip bats suites [bats not installed]"
 fi
 
 # Byte-parity between the two template expanders, which live in different runtimes:

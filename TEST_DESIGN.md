@@ -22,7 +22,7 @@ flowchart TD
   R --> B["bootstrap.sh invariant<br/>grep: --install-bootloader present,<br/>no env NIXOS_INSTALL_BOOTLOADER"]
   R --> A["appdir fixture build<br/>nix build of tests/appdir.nix, via the same scope<br/>the build's exit status is the assertion"]
   A --> G1
-  R --> I["bootstrap.sh behaviour<br/>bats tests/bootstrap.bats against stubs<br/>skip when bats is absent"]
+  R --> I["bootstrap.sh + build-harness.sh behaviour<br/>bats tests/bootstrap.bats, tests/build-harness.bats against stubs<br/>skip when bats is absent"]
   I --> G1
   G1 --> X["exit 0 = repo is green"]
   D1 --> X
@@ -77,6 +77,40 @@ Splitting is not cosmetic: forcing three host configs in one eval peaks at ~2.1G
 per-eval peak ~793MB (`tests/home.nix`, the standalone profile, which forces its Home Manager
 users), `wrap` ~733MB, host configs ~670–695MB, pure suites under 40MB, and the appdir fixture
 build ~88MB with no download.
+
+## Build telemetry, outside the gate
+
+`tests/build-harness.sh` measures one attribute — how much RAM it needs and how long it takes under
+a cap — and is deliberately **not** part of `tests/run.sh`: the gate never runs a real build, and
+this harness does. It wraps the attribute in the same transient scope `tests/nix-eval.sh` provides
+and prints one telemetry line — `mode` (eval or build), `attr`, `cap`, `peak`, `swap`, `wall`,
+`exit` — then the client's own output. Exit code is the client's.
+
+- `peak`/`swap` are the scope's `MemoryPeak`/`MemorySwapPeak`, read while the unit is alive. That is
+  the only authoritative number for a Nix eval (DESIGN.md, "Build RAM"): `NIX_SHOW_STATS` and
+  `/usr/bin/time -v` both under-report it, so `--stats` is for thunk and attrset counts, never RAM.
+- `wall` is the whole scoped run, so a run killed at the cap reports the time it took to die.
+- `--build` realises instead, and reports `out=` plus the recursive NAR size (`nix path-info -Ssh`).
+  Realisation runs in the root `nix-daemon`, outside the scope, so `peak` is the **client's** memory
+  — eval — not the machine's total.
+- It runs exactly what `features/hm-njust/nix.just` runs: `nix build --no-link --dry-run` for
+  `njust eval`, `nix build --out-link` for `njust build`. Extra arguments after the attribute reach
+  `nix build` verbatim.
+- Rebuild telemetry (`nixos-rebuild`, `home-manager switch`) is `bootstrap.sh`'s own scope; wrap any
+  other command with `tests/nix-eval.sh <cap> -- <cmd>`.
+- Overrides: `BUILD_HARNESS_MEM` (cap, default 3072), `BUILD_HARNESS_LINK`.
+
+Its own logic is gated without building anything: `tests/build-harness.bats` drives the harness
+against a PATH stub and asserts the command mapping, the telemetry fields, and the refusals (~0MB).
+Measuring every prospective host is four runs of one interface — **sequentially**, because two
+scoped runs side by side contaminate each other's peak:
+
+```bash
+bash tests/build-harness.sh -- '.#nixosConfigurations.methyl.config.system.build.toplevel'
+bash tests/build-harness.sh -- '.#nixosConfigurations.methyl-nixos.config.system.build.toplevel'
+bash tests/build-harness.sh -- '.#nixosConfigurations.propyl.config.system.build.toplevel'
+bash tests/build-harness.sh -- '.#homeConfigurations.josh@methyl-bazzite.activationPackage'
+```
 
 ## What each suite covers
 

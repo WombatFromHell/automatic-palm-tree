@@ -73,7 +73,7 @@
   in {
     inherit (cfg) nixosConfigurations homeConfigurations;
 
-    # Expose checks so nix-fast-build (and nix flake check) can evaluate them
+    # Expose checks so `nix flake check` can evaluate them
     checks = lib.genAttrs supportedSystems (
       system:
         (mkChecks system "nixos" (config: config.config.system.build.toplevel))
