@@ -1,0 +1,13 @@
+{
+  "repo": "pkgforge-dev/ghostty-appimage",
+  "kind": "sri",
+  "strategy": "semver",
+  "url": "https://github.com/{repo}/releases/download/v{version}/Ghostty-{version}-{arch}.AppImage",
+  "arches": {
+    "x86_64-linux": "x86_64"
+  },
+  "version": "1.4.0",
+  "hashes": {
+    "x86_64-linux": "sha256-UK1Pi1SgHn1BQm59Ev+unIiqHFFqwUB1XivKWW4dKuY="
+  }
+}

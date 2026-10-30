@@ -143,7 +143,7 @@ flowchart LR
 
 ## Pin metadata
 
-Three features are metadata-backed today (`hm-brave`, `hm-tmux`, `hm-zed`); each carries a
+Four features are metadata-backed today (`hm-brave`, `hm-ghostty`, `hm-tmux`, `hm-zed`); each carries a
 `metadata.json` and a symlink to `lib/updater.sh` as its own `update.sh`
 (`update-all.sh` refuses a copy; `lib/updater.sh --install features/<name>` creates both). The template is expanded twice — once in Nix
 (`lib/pin-meta.nix releaseAsset`, at eval) and once in bash (`render_url`, at fetch) —
@@ -162,6 +162,31 @@ per _system_, not per host, since every host here is x86_64-linux — so a featu
 build dependency rather than threading arguments. Feature overlays are not baked into that set:
 they arrive as `nixpkgs.overlays` modules, appended at eval time.
 
+An asset pin may be a binary upstream never ships: `hm-ghostty` pins the pkgforge Ghostty
+AppImage and its `_package.nix` unpacks it (`--appimage-extract`) into the store as an AppDir —
+static launcher, bundled libs, and the resource trees Home Manager's `programs.ghostty` reads
+(`share/ghostty`, `share/terminfo`, `share/bat`, `share/glib-2.0/schemas`, `share/systemd/user`,
+`share/dbus-1/services`). Nothing is compiled and nothing is patchelf'd; the launcher resolves its
+own AppDir from `/proc/self/exe` and exports the resource and driver search paths from there, so
+the only dependency injected at runtime is GPU drivers, via `config.lib.nixGL.wrapGpu`. The
+AppDir's desktop entry and icon are moved to `share/applications` and `share/icons/hicolor`, which
+is where Home Manager's profile (`~/.nix-profile/share`, already on `XDG_DATA_DIRS`) surfaces them
+for app launchers and `update-desktop-database`; the entry's `Exec=ghostty` resolves through the
+profile's `bin`, the same way `home.packages` puts the binary on `PATH`.
+
+Every feature that ships a prebuilt binary calls one helper, `config.lib.nixGL.wrapGpu`
+(`modules/defaults/home-manager.nix`), and each side of the disable is explicit: it is identity when
+Home Manager has no nixGL namespace, and identity when `targets.genericLinux.nixGL.packages` is null
+(Home Manager's own wrapper is a no-op on null, which is the shape a NixOS host has). When the wrap
+does happen it delegates to Home Manager's `lib.nixGL.wrap`, which picks
+`wrappers.`${targets.genericLinux.nixGL.defaultWrapper}`— so the driver set follows the host rather
+than a hardcoded Mesa:`features/hm-nixgl`declares`features.nixgl.wrapper` (`mesa`by default;`nvidia`/`nvidiaPrime`on an Nvidia host, which needs the config built with`--impure`and has not
+been run on a box with an Nvidia GPU).`features/hm-nixgl`supplies packages only when`flakeHost.isNixOS` is false — on NixOS the system already provides GL/EGL/drivers, and setting
+packages there would pull foreign Mesa into the closure. The three callers (`hm-brave`, `hm-zed`, `hm-ghostty`) install through their program module
+(`programs.chromium`installs`finalPackage`, `programs.zed-editor`installs`package`,
+`programs.ghostty`installs`package`), so none of them adds a second copy to `home.packages`.
+`hm-brave`takes`commandLineArgs`because`programs.chromium`overrides its package whenever`features.brave-browser.passwordStore` is set; with no flags its bin entries stay plain symlinks.
+
 ## Input boundary
 
 The lock carries seven nixpkgs trees (ours ×2, plus beryl-utils, kait2en, niri-spicy,
@@ -170,6 +195,156 @@ ours would evaluate it against a rev its CI never built, so every path it publis
 cache stops matching — the CachyOS and KaiT2en kernels would rebuild locally, on the host with
 the least RAM. The caches named in `modules/cache-registry.nix` are the same story: each is
 somebody else's build of their own rev, so nothing here may repin them.
+
+## Build RAM
+
+Evaluation, not the builder, is what a host build costs here (measured through
+`tests/nix-eval.sh`, Determinate Nix 3.21.7 — see "Which evaluator" below for the per-evaluator
+numbers): a host's `system.build.toplevel.drvPath` peaks at
+~2.1GB and a standalone profile's `activationPackage.drvPath` at ~1.4GB, and almost all of it is
+the configuration's own module evaluation — forcing `config.warnings` alone peaks at ~2.0GB. On a
+RAM-constrained host a plain `nixos-rebuild switch` can therefore swap or be OOM-killed mid-eval.
+
+Run host builds inside a transient scope, so the limit kills the process instead of thrashing.
+`bootstrap.sh` does this for its own rebuild; anything run by hand takes the same shape:
+
+```bash
+systemd-run --user --scope --unit="rebuild-$$.scope" \
+  -p MemoryHigh=2600M -p MemoryMax=3072M -p MemorySwapMax=1024M \
+  sudo nixos-rebuild switch --flake .#<host>
+```
+
+The cap is 3072 rather than 2560 because the cold methyl eval measured 2365MB: 2560 leaves ~195MB
+of headroom, and a colder run would be killed. `MemoryHigh` throttles and reclaims before the hard
+cap, and `MemorySwapMax` halves the cap so a spill stays bounded instead of filling the swap device.
+The unit name carries the pid because a scope killed by OOM stays `failed` in systemd's unit table
+and a second `--unit` with the same name refuses with "already loaded".
+
+The build itself is not bounded here: realisation runs in the root `nix-daemon`, outside the scope
+(measured ~1.15GB throughout). Bounding that needs a daemon drop-in with `MemoryMax`, which this
+flake does not install.
+
+The eval gate's cap (1792MB in `tests/run.sh`) bounds the suite, not a build — it is below a host
+build's eval. `flake.nix` reads check systems off the host records instead of forcing every
+configuration's `config.pkgs`, which keeps naming the checks at ~15MB rather than ~510MB.
+
+`rebuild-gate.sh` measures this instead of guessing it: one scoped nix command per target, the
+scope's peak (the eval cost, since evaluation happens in the client process the scope runs) and
+`nix-daemon.service`'s peak (the realisation cost, which no flag here bounds), plus what the
+dry-run says about fetches vs builds. Numbers are appended to `.pi/rebuild-gate.jsonl`, one object
+per phase, so two sessions can be diffed. `--cold` bypasses Nix's eval cache:
+
+```bash
+rebuild-gate.sh -m plan -c 4096 --cold   # this flake's toplevels and activation packages
+```
+
+Measured cold on this box: methyl 2365MB/13s, methyl-nixos 2261MB/23s, propyl 2284MB/12s, the
+standalone activation package 1325MB/8s, with the daemon holding ~1.15GB throughout. A 2048MB cap
+let the methyl eval through at 1845MB — close enough to the limit that a colder run can be killed,
+which is why the scope is 3072MB.
+
+The eval cache is not a lever for a NixOS config: warming it moved methyl to 2364MB/12s against
+2363MB/13s cold. It helps flake metadata and cheap attributes, not module evaluation, so neither
+`bootstrap.sh` nor a rebuild passes `--no-eval-cache` — there is nothing to save.
+
+`-m probe` attributes that RAM instead of guessing it: `-t` is a config expression and each `-e` is
+one attribute forced in its own scoped process. For methyl the spine (module evaluation alone,
+`.config.system.stateVersion`) is 229MB, the installed package list
+(`.config.environment.systemPackages`) is 1475MB, `.config.warnings` is 2067MB and the toplevel is
+2363MB — so ~1.25GB is the closure of packages the host actually installs. Disabling every enabled
+feature one at a time moved the toplevel peak by under 40MB, which is why no feature trimming is
+proposed here. For the standalone profile the spine is 200MB, HM's warnings 202MB, the activation
+package 1324MB, and the wrapped Ghostty package alone 446MB.
+
+```bash
+rebuild-gate.sh -m probe -c 3000 --cold \
+  -t '(builtins.getFlake (toString ./.)).outputs.nixosConfigurations.methyl' \
+  -e '.config.system.stateVersion' -e '.config.environment.systemPackages' \
+  -e '.config.system.build.toplevel.drvPath'
+```
+
+### More cores, same RAM
+
+Measured on this box (3 cores, ~4.6GB free):
+
+| what                                                      | peak   | swap   | wall         |
+| --------------------------------------------------------- | ------ | ------ | ------------ |
+| one host config, cold, `eval-cores 0`                     | 2363MB | 0MB    | 13s          |
+| all three configs in one expression, cold, `eval-cores 0` | 3063MB | 1000MB | 37s          |
+| the same, `eval-cores 4`                                  | 3063MB | 729MB  | 32s          |
+| two `nix-eval-jobs` processes side by side, cold          | 4743MB | 2048MB | 21s (killed) |
+| the same pair with the eval cache warm                    | 3807MB | 1500MB | 17s (killed) |
+
+- `--workers` above 1 is not affordable here. Each `nix-eval-jobs` worker is a separate Nix
+  process, so it cannot share the evaluated nixpkgs or the eval cache with its sibling — the warm
+  pair still cost 3.8GB. ([Discourse](https://discourse.nixos.org/t/parallel-evaluation-comes-to-determinate-nix/68934)
+  reports the same for a multi-config CI flake.)
+- `workers * max-memory-size` is one budget for all workers combined, not per-worker headroom:
+  jobs are dispatched only while total RSS plus the estimated growth of in-flight jobs fits it, and
+  a worker over its share is restarted. Our configs need ~2.4GB each, so the README's rule of thumb
+  — fewer workers with a larger share when a single attribute exceeds one share — is what this flake
+  wants one worker. See "What to run" below for the memory-size floor that a Lix worker needs.
+- Cores are available for free _inside_ one process: Determinate's
+  [parallel evaluation](https://determinate.systems/blog/parallel-nix-eval) shares a single
+  evaluator heap, so `--option eval-cores 4` cost the same 3063MB and saved 5s. A NixOS toplevel is
+  mostly a serial thunk chain, so the win is ~13% rather than the 4x reported for `nix flake show`.
+- One expression holding every config is the _higher_-memory shape (3063MB vs 2363MB for one at a
+  time, same wall time). One target per process is what `nixos-rebuild` and `-m probe` do.
+
+### Which evaluator
+
+Same attribute (methyl's toplevel), three evaluators, each run directly inside the scope, cap
+3000MB so swap stayed 0. Determinate 3.21.7 wraps Nix 2.34.8; the Lix CLI here is 2.95.4:
+
+| evaluator                           | one config       | all configs in one process               | cheap suite |
+| ----------------------------------- | ---------------- | ---------------------------------------- | ----------- |
+| upstream Nix 2.34.9 (`nixpkgs#nix`) | **1712MB / 10s** | **3062MB / 29s** (swap 573MB)            | 10-55MB     |
+| Determinate Nix 3.21.7              | 2363MB / 12s     | 3063MB / 37s cold, 32s at `eval-cores 4` | 16-48MB     |
+| Lix 2.95.4 CLI                      | 2163MB / 11s     | 4204MB / 55s (swap 1699MB)               | 0-10MB      |
+
+Upstream wins both axes on this flake: ~650MB less per config than Determinate and ~1.1GB less on a
+bulk eval, at the lowest wall time. Determinate's extras (lazy trees, eval cache, parallel-eval) do
+not buy the RAM back here. NixOS hosts get upstream by default (`modules/nix-settings.nix` sets
+`nix.package = lib.mkDefault pkgs.nix`) and no host overrides it: the `nixos-lix` feature was deleted
+after this measurement, and `tests/configs.nix` asserts `nix.package.pname == "nix"` on every host
+so it cannot come back.
+
+### What to run
+
+Same attribute (methyl's toplevel), three clients:
+
+| client                                                                               | peak   | swap   | wall         |
+| ------------------------------------------------------------------------------------ | ------ | ------ | ------------ |
+| plain `nix eval` (Determinate Nix 3.21.7)                                            | 2364MB | 0MB    | 12s          |
+| `nix-eval-jobs` (what `hm-njust` installs from `lixPackageSets`; links `lix-2.95.4`) | 2701MB | 623MB  | 16s          |
+| the same through two workers                                                         | 4743MB | 2048MB | 21s (killed) |
+
+The strategy this flake follows:
+
+- **One closure: plain `nix` / `nixos-rebuild`, scoped.** On a NixOS host that is upstream Nix, the
+  lightest evaluator measured here (1712MB against 2363MB on Determinate for the same attribute).
+  `nix-eval-jobs` is a _different
+  evaluator_ here — `features/hm-njust/home.nix` installs it from `pkgs.lixPackageSets`, so it links
+  Lix rather than the Determinate Nix this box runs, cannot reuse that Nix's eval cache (no
+  `~/.cache/lix` exists), and costs +14% RAM and +33% wall on the same attribute. `nix-fast-build`
+  delegates to it and inherits the cost, and neither tool activates a system generation, so a
+  rebuild needs `nixos-rebuild` regardless. `bootstrap.sh` therefore uses `nixos-rebuild` inside a
+  scope and nothing else.
+- **Many closures: the tools, but one worker.** Their payoff is pipelining — builds start as soon as
+  an attribute finishes evaluating. Keep `--workers 1` / `--eval-workers 1`, and do not lower
+  `--max-memory-size` below ~2700: a Lix eval of a host toplevel needs 2.7GB, and a worker over its
+  share is restarted and never finishes. `nix.just` already exposes `--plain`, which is the
+  RAM-cheaper client on a constrained host.
+- **`--option eval-cores 4` only for a bulk eval of several configs**, never for a single-host
+  rebuild (measured slower there, 15s against 13s). It is Determinate-only: `eval-cores` and
+  `parallel-eval.cc` are not in [NixOS/nix](https://github.com/NixOS/nix) or
+  [Lix](https://github.com/lix-project/lix), whose evaluator stays single-threaded (upstream
+  multi-threaded eval, [NixOS/nix#8711](https://github.com/NixOS/nix/pull/8711), regresses and is
+  unmerged). `eval-cache` is universal — upstream, Lix and Determinate all ship it and default it
+  to `true` — so it needs no configuration here.
+- `GC_INITIAL_HEAP_SIZE=2G` (what `nix.just`'s dry-run sets) is not a RAM hammer: 2362MB with it
+  against 2375MB without, swap 0 both ways. Boehm reserves address space and only faults pages it
+  actually uses.
 
 ## User-facing ergonomics
 
@@ -180,9 +355,31 @@ flowchart LR
   E["nix flake check"] --> CK["checks.&lt;system&gt;.*"]
   E2["nix build .#nixosConfigurations.&lt;host&gt;.config.system.build.toplevel"] --> NC["system derivation"]
   E3["nix build .#homeConfigurations.&lt;user&gt;@&lt;host&gt;.activationPackage"] --> HC["HM activation derivation"]
-  E4["bootstrap.sh &lt;host&gt;"] --> RB["sudo nixos-rebuild boot --install-bootloader<br/>+ registry urls/keys via --option"]
+  E4["bootstrap.sh &lt;host&gt;"] --> RB["systemd-run --user --scope (MemoryMax=3072M)<br/>sudo nixos-rebuild boot --install-bootloader<br/>+ registry urls/keys via --option"]
   E5["update-all.sh [--flake|--check]"] --> UP["features/*/update.sh, symlinked to<br/>lib/updater.sh; a copy is refused"]
+  E6["bootstrap.sh --standalone [--install] [--rebind[=DIR]]"] --> IN["pinned upstream installer, ostree plan:<br/>--enable-flakes, --persistence <dir> for a relocated store,<br/>then extra-trusted-users + nix-daemon restart;<br/>--rebind refused once nix is on PATH"]
 ```
+
+`bootstrap.sh --standalone` is the host-side bootstrap for a machine that is not NixOS. It runs the
+pinned upstream installer with the **`ostree` plan** (the plan for immutable root filesystems),
+`--enable-flakes`, and `--persistence <dir>` when `--rebind` names the volume the store should live
+on — the installer owns the `/nix` bind mount, so this repo writes no `nix.mount` unit. It then
+appends `extra-trusted-users` for the invoking user, because caches injected with `--option` are
+ignored for an untrusted user, and re-checks `nix store info` after the daemon restart so a trust
+step that did not take effect cannot report success.
+
+It installs only when `nix` is not on PATH, and `--rebind` is refused past that point — the store
+bind only happens while the installer is running, so a flag that could silently do nothing is
+refused instead. A box that already has Determinate Nix is cleared by hand first, through
+Determinate's own uninstaller, which records its actions in `/nix/receipt.json`
+(including the `/nix` mount it created):
+
+```bash
+sh <(curl -s https://install.determinate.systems/nix) uninstall
+./bootstrap.sh --standalone --install josh@bazzite
+```
+
+The gate checks this behaviour through `tests/bootstrap.bats` (stubs, no root), not through Nix eval.
 
 Placeholders for ergonomics we do **not** implement yet (no `packages`, `devShell`, or `apps`
 output today):

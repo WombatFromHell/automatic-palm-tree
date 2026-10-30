@@ -20,12 +20,20 @@ let
   # An option path read as a value: `["services" "lact" "enable"]` -> bool.
   optFalse = cfg: path: lib.getAttrFromPath path cfg == false;
   optTrue = cfg: path: lib.getAttrFromPath path cfg == true;
-  # The kernel name features/nixos-cachyos pins.
+  # Which kernel a host boots is a host-level choice: lib/features.nix allows exactly one
+  # kernel-pinning feature per host.
   cachyosKernel = "linux-cachyos-latest-lto-x86_64-v3";
 
   # users.users.josh.shell is a derivation whose store path is hashed, so match
   # the name inside outPath rather than a prefix of the basename.
   hasFish = cfg: builtins.match ".*fish-[0-9].*" cfg.users.users.josh.shell.outPath != null;
+
+  # Which package a feature hands its program option is a name and a pin, not a store path.
+  # The derivation being *unwrapped* is proved by the nixGL check below (packages null makes
+  # lib.nixGL.wrapGpu identity) and by tests/wrap.nix's identity-on-a-NixOS-fixture check.
+  rawBrave = s.pkgs.unstable.callPackage ../features/hm-brave/_package.nix {};
+  rawZed = (s.pkgs.callPackage ../features/hm-zed/_package.nix {}).noFHS;
+  homeCfg = cfg: cfg.home-manager.users.josh;
 
   # Gaming- and KDE-only effects must not leak onto the workstation or laptop. Asserted one
   # layer above the package list: mapping `pname` over environment.systemPackages forces every
@@ -102,6 +110,23 @@ let
       (ck "${host}: josh is a wheel member" (lib.elem "wheel" cfg.users.users.josh.extraGroups))
       (ck "${host}: nixos-defaults reaches the kernel command line" (hasParam cfg "kvm.ignore_msrs=1"))
       (ck "${host}: dms is on" (hasNs cfg "dms"))
+      # Lix's evaluator costs ~450MB more per host config than upstream Nix (DESIGN.md "Which
+      # evaluator"), so no host may opt back in. features/nixos-lix was deleted for this.
+      (ck "${host}: nix.package is upstream Nix, not Lix" (cfg.nix.package.pname == "nix"))
+
+      # --- nixGL disabled on this NixOS host ------------------------------------
+      # features/hm-nixgl sets packages only when flakeHost.isNixOS is false, and Home Manager's
+      # wrapper is a no-op on null. Asserted here rather than in tests/wrap.nix because this is
+      # the real host config the profiles build. The "exactly one PATH entry" half stays in
+      # tests/wrap.nix and tests/home.nix: counting home.packages forces every package's name,
+      # which costs ~300MB per host for a fact the fixture already proves.
+      (ck "${host}: nixGL packages are null for josh" (isNull (homeCfg cfg).targets.genericLinux.nixGL.packages))
+      (ck "${host}: the GUI features hand their pinned packages to the program options"
+        ((homeCfg cfg).programs.chromium.package.pname
+          == rawBrave.pname
+          && (homeCfg cfg).programs.chromium.package.version == rawBrave.version
+          && (homeCfg cfg).programs.zed-editor.package.pname == rawZed.pname
+          && (homeCfg cfg).programs.zed-editor.package.version == rawZed.version))
 
       # --- this host's own profile effects -------------------------------------
       (ck "${host}: its features are enabled" (lib.all (f: hasNs cfg f) e.features))

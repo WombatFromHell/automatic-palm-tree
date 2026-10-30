@@ -1,8 +1,10 @@
 # TEST_DESIGN — eval-only suite
 
 The suite asserts on **evaluated configuration values**, never on built output: `nix eval --impure
---file` forces a config far enough to read option values, and that is the whole cost. No `nix
-build` runs, so the gate is fast and works without a store.
+--file` forces a config far enough to read option values, and that is the whole cost. No real
+`nix build` runs, so the gate is fast and works without a store. The one exception is
+`tests/appdir.nix`: a fixture build that re-runs a derivation's own `installPhase` against a
+synthetic tree, downloading nothing.
 
 ## Gate shape
 
@@ -18,6 +20,10 @@ flowchart TD
   D --> D1["must exit non-zero<br/>stderr must contain line-1 expect substring"]
   R --> P["expander parity<br/>one nix eval lists every features/*/metadata.json x pinned system;<br/>bash expands the same list through render_url and diffs byte-for-byte"]
   R --> B["bootstrap.sh invariant<br/>grep: --install-bootloader present,<br/>no env NIXOS_INSTALL_BOOTLOADER"]
+  R --> A["appdir fixture build<br/>nix build of tests/appdir.nix, via the same scope<br/>the build's exit status is the assertion"]
+  A --> G1
+  R --> I["bootstrap.sh behaviour<br/>bats tests/bootstrap.bats against stubs<br/>skip when bats is absent"]
+  I --> G1
   G1 --> X["exit 0 = repo is green"]
   D1 --> X
   P --> X
@@ -27,9 +33,18 @@ flowchart TD
 Style is outside the gate: `statix check .` and `alejandra --check .` are run by hand (or CI), not
 by `tests/run.sh`.
 
+One suite is not an eval: `tests/bootstrap.bats` asserts the behaviour of `bootstrap.sh` — which
+installer flags it picks (`install ostree --enable-flakes --persistence <dir>`), which switch command
+it picks for `host` against `user@host`, the flags it refuses, the trusted-user gate and the trust
+step's post-check, and the memory-scope probe falling back when `systemd-run` cannot run. Those are
+argv and exit codes, not evaluated Nix values, so the suite runs the script against PATH stubs as an
+ordinary user: no root, no real `/nix`, no real `curl`, no eval. It costs ~0MB, which is why it is
+bash rather than another scoped eval. `bats` comes from the installed Nix profile, so a missing `bats`
+is a `skip`, not a failure.
+
 ```mermaid
 flowchart LR
-  S["tests/support.nix<br/>lib, flake outputs, features, hosts, hostLib,<br/>hostsAt(dir), featuresAt(dir), hasPkg, ck, suite,<br/>assertWarnStubs, failingAssertions"] --> L["tests/loader.nix"]
+  S["tests/support.nix<br/>lib, flake outputs, features, hosts, hostLib,<br/>hostsAt(dir), featuresAt(dir), pkgs (nixpkgs + pinMeta overlay),<br/>hasPkg, ck, suite,<br/>assertWarnStubs, failingAssertions"] --> L["tests/loader.nix"]
   S --> CA["tests/caches.nix<br/>bare module eval of modules/caches.nix"]
   S --> WA["tests/warnings.nix<br/>bare module eval of modules/warnings-gate.nix"]
   S --> C["tests/configs.nix"]
@@ -38,6 +53,8 @@ flowchart LR
   S --> F["tests/filesystems.nix"]
   S --> M["tests/mounts.nix"]
   S --> PI["tests/pins.nix"]
+  S --> WR["tests/wrap.nix<br/>nixGL wrap around a derived package"]
+  S --> AP["tests/appdir.nix<br/>fixture build, not an eval"]
   S --> RD["tests/red/*.nix"]
   FX["tests/fixtures/<dir>/hosts/*.nix<br/>shapes no real host uses"] --> L
 ```
@@ -56,8 +73,10 @@ stalls instead of being killed, and the gate hung on this box.
 Splitting is not cosmetic: forcing three host configs in one eval peaks at ~2.1GB, and a single
 `nix flake check --no-build` needs ~2.6GB (measured), both over the 1792MB cap — hence
 `configs.nix` runs one host per process. Going over the cap is a failure (exit 137), not a hang.
-`run.sh` prints each eval's `peak=` on its line. Measured today: the whole gate ~21s, largest
-per-eval peak ~850MB (a host's config), pure suites under 50MB.
+`run.sh` prints each eval's `peak=` on its line. Measured today: the whole gate ~27s, largest
+per-eval peak ~793MB (`tests/home.nix`, the standalone profile, which forces its Home Manager
+users), `wrap` ~733MB, host configs ~670–695MB, pure suites under 40MB, and the appdir fixture
+build ~88MB with no download.
 
 ## What each suite covers
 
@@ -76,11 +95,12 @@ flowchart TD
     C3["gating: gaming stack only on methyl; gnome/qemu/btrfs only on methyl-nixos;<br/>kait2en+fprintd only on propyl; korthos methyl-only; dms everywhere;<br/>absence read from namespace/systemd-unit/option, never by scanning the package list;<br/>the positive side of every absence signal is asserted too, so absence is not vacuous"]
     C4["cache gate: flakeCache.ready everywhere;<br/>substituters/keys counts == enabled caches;<br/>the caches each host's features actually require (nix-community, kait2en,<br/>wombatfromhell only where niri-spicy is on)"]
     C5["kernel: which kernel each host boots, incl. the kait2en kernel<br/>the feature pins rather than boot.kernelPackages"]
+    C6["nixGL disabled: packages null for josh, which is what makes lib.nixGL.wrapGpu<br/>identity; the GUI features hand their pinned pname+version to the program options<br/>(identity by name, not outPath — forcing outPath pulls Brave's whole dependency<br/>closure, ~470MB per host); the PATH-once half lives in wrap/home,<br/>because counting home.packages forces every package name"]
   end
   subgraph home["home.nix — forces the standalone HM config"]
     H1["builder facts: username, homeDirectory, genericLinux target"]
     H2["features + packages the profile and the host contribute;<br/>hm-base ships packages, not program flags"]
-    H3["nixGL wrapper names"]
+    H3["nixGL wrapper names; packages set on this non-NixOS host;<br/>the host uses the default wrapper (mesa); the GUI derivations are wrapped<br/>(outPath differs from _package.nix's) and each lands on PATH exactly once"]
   end
   subgraph outputs["outputs.nix — reads the output attrsets"]
     O1["outputs are exactly configs + checks"]
@@ -110,6 +130,12 @@ flowchart TD
     PN2["every pin expands to a resolved url for every pinned system;<br/>a declared arches set covers exactly the hashed systems and is a set, never null"]
     PN3["features/<name>/update.sh is absent or a symlink to lib/updater.sh<br/>the key is quoted — .update.sh would walk update then sh"]
   end
+  subgraph wrap["wrap.nix — nixGL around derived packages, ~3s, peak ~925MB"]
+    WR1["three fixture Home Manager configs over typed host facts: a NixOS side, a<br/>standalone side with the default wrapper, and a standalone side setting<br/>features.nixgl.wrapper = nvidiaPrime (hm-nixgl, hm-brave, hm-zed, hm-ghostty in all three).<br/>hm-nixgl sets packages only on the non-NixOS side; wrapGpu is identity there and returns<br/>a distinct derivation here, and delegates to Home Manager's own lib.nixGL.wrap; defaultWrapper<br/>follows the host's option (mesa on both default sides, nvidiaPrime when set) — the Nvidia<br/>wrapper itself cannot be forced here, because nixGL's Nvidia wrapper reads the host driver<br/>version and gets null. pname and version survive the wrap; programs.chromium's<br/>commandLineArgs branch fires on both sides and the overridden package keeps its<br/>pname/version, and wrapGpu stays identity on the overridden derivation on the NixOS side<br/>(the branch is an option value, so it is asserted as one rather than by forcing Home<br/>Manager's chromium override chain); each package reaches home.packages exactly once;<br/>brave's .drv wraps its bin entries only when commandLineArgs are set;<br/>the wrapped Ghostty still links the AppDir (`cp -rs`) and execs its launcher through<br/>nixGL's combined wrapper, so its /proc/self/exe AppDir resolution survives the wrap"]
+  end
+  subgraph appdir["appdir.nix — fixture build, ~8s, peak ~83MB"]
+    AD1["features/hm-ghostty/_package.nix's real installPhase against a synthetic AppDir:<br/>bin/ghostty kept and executable, AppRun / sharun / dash / .env / .DirIcon and<br/>bin/*.hook dropped, desktop entry and icon moved into share/ not copied,<br/>and the resource trees left alone"]
+  end
   subgraph warnings["warnings.nix — bare module eval"]
     W1["modules/warnings-gate.nix: assertion true with no warnings,<br/>false with one, and its message carries every warning verbatim"]
   end
@@ -130,6 +156,7 @@ flowchart LR
     R10["mkUnitMounts entry is a number, not an attrset"]
     R11["skipIfMissing without what (ConditionPathExists needs the device)"]
     R12["two kernel-pinning features on one host<br/>(boot.kernelPackages would be defined twice)"]
+    R13["features.nixgl.wrapper outside Home Manager's wrapper enum<br/>(the wrong driver set is a runtime failure, not an eval one)"]
   end
 ```
 
@@ -158,7 +185,15 @@ flowchart TD
   N --> N6["other architectures: every host is x86_64-linux,<br/>so pin-meta's per-system boundaries are not exercised"]
   N --> N7["assertion text: NixOS assertions are data on .config.assertions,<br/>they never throw at eval, so we assert the collected list"]
   N --> N8["warnings observed at eval: they go to the CLI, not into a derivation log.<br/>The build tier fails them via modules/warnings-gate.nix"]
+  N --> N9["store layouts of features/*/_package.nix other than hm-ghostty:<br/>hm-brave's rpm extraction needs its real asset,<br/>so tests/appdir.nix is the only store layout proven today"]
 ```
+
+The seven `features/*/_package.nix` derivations are covered on their **input** side by
+`tests/pins.nix` (pin metadata expands to a resolved URL for every pinned system) and by
+`tests/run.sh` diffing the bash and Nix URL expanders byte-for-byte. What a derivation then does
+with that asset is build-tier: `tests/appdir.nix` proves hm-ghostty's relocation by re-running its
+installPhase over a synthetic AppDir, and the wrap is proven at eval by `tests/wrap.nix`. The
+others unpack real vendor assets (rpm, tarballs), so a fixture could not stand in for them.
 
 Deliberately skipped: per-feature coverage of all 39 modules. Feature modules are exercised
 through the hosts that enable them — 37 of 39 are enabled by at least one host (`nixos-zram` is

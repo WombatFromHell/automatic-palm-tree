@@ -19,10 +19,8 @@
   environment.systemPackages = with pkgs; [
     cachix
     curl
-    ghostty
     git
     helix
-    neovim
     python3
     wget
   ];

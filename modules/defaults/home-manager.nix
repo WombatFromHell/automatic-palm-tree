@@ -10,10 +10,12 @@
   programs.home-manager.enable = true;
   home.stateVersion = "24.11";
 
-  # nixGL wraps a GUI package when the hm-nixgl feature is on; without it the
-  # package is used as-is, so every consumer can call this unconditionally.
-  lib.nixGL.wrapMesa = pkg:
+  # GPU drivers come from nixGL only where the host has none. Home Manager's own lib.nixGL.wrap
+  # picks the wrapper from targets.genericLinux.nixGL.defaultWrapper (features/hm-nixgl sets it
+  # per host) and is a no-op when packages is null, but it only exists when the genericLinux
+  # target is on — so every feature calls this instead, and a NixOS host gets its package as-is.
+  lib.nixGL.wrapGpu = pkg:
     if config.lib ? nixGL
-    then config.lib.nixGL.wrappers.mesa pkg
+    then config.lib.nixGL.wrap pkg
     else pkg;
 }

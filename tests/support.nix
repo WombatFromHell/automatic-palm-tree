@@ -8,7 +8,7 @@ let
   root = ../.;
   flake = builtins.getFlake (toString root);
   lib = flake.inputs.nixpkgs.lib;
-  inherit (import ../lib/host-options.nix {inherit lib;}) hostOptions;
+  inherit (import ../lib/host-options.nix {inherit lib;}) hostOptions flakeHostOptions;
   hostLib = import ../lib/host-lib.nix {inherit lib;};
   features = import ../lib/features.nix {
     inherit lib;
@@ -26,9 +26,61 @@ let
       inherit lib hostLib hostOptions;
       self = dir;
     };
-in {
-  inherit lib flake features featuresAt hostLib hostsAt;
-  hosts = hostsAt root;
+  # The loader's own package set, keyed by system: unfree allowed, pinMeta and flakePackages
+  # injected, and `pkgs.unstable` present, so a suite can callPackage a feature's _package.nix
+  # exactly as production does. Lazy — suites that never touch it pay nothing for the eval.
+  # A let binding, not an attrset member, so hmFixture below can pass it to Home Manager.
+  pkgsSet =
+    (import ../lib/default.nix {
+      inherit lib;
+      self = root;
+      inherit (flake) inputs;
+    }).pkgsFor.x86_64-linux;
+
+  # A fixture Home Manager configuration over typed host facts, narrowed exactly as
+  # lib/builders.nix narrows them, so hm-nixgl's isNixOS guard runs through the real schema
+  # rather than a stub. `features` are the feature option values to set. Lazy: a suite that
+  # never forces it pays nothing. Used by tests/wrap.nix and its red guard, so the fixture is
+  # written once.
+  hmFixture = isNixOS: features:
+    (flake.inputs.home-manager.lib.homeManagerConfiguration {
+      pkgs = pkgsSet;
+      modules = [
+        {
+          home = {
+            username = "josh";
+            homeDirectory = "/home/josh";
+            stateVersion = "24.11";
+          };
+          targets.genericLinux.enable = !isNixOS;
+          inherit features;
+        }
+        (import ../modules/host-facts.nix {
+          inherit lib flakeHostOptions;
+          flakeHost =
+            lib.getAttrs (lib.attrNames flakeHostOptions) {
+              name = "hm-fixture";
+              system = "x86_64-linux";
+              inherit isNixOS;
+              users.josh.isAdmin = isNixOS;
+            }
+            // {
+              osUsernames = ["josh"];
+              adminUsernames = lib.optionals isNixOS ["josh"];
+              hmUsernames = ["josh"];
+            };
+        })
+        ../modules/defaults/home-manager.nix
+        ../features/hm-nixgl/home.nix
+        ../features/hm-brave/home.nix
+        ../features/hm-zed/home.nix
+        ../features/hm-ghostty/home.nix
+      ];
+      extraSpecialArgs = {
+        inherit (flake) inputs;
+        fsLib = import ../lib/filesystems.nix {inherit lib;};
+      };
+    }).config;
 
   # Options NixOS and Home Manager declare but a bare `lib.evalModules` does not: a unit test
   # of a module that writes warnings or assertions has to declare them to read them back.
@@ -79,4 +131,8 @@ in {
     if failed == []
     then "OK ${name}"
     else throw "${name}: FAILED ${lib.concatStringsSep ", " failed}";
+in {
+  inherit lib flake features featuresAt hostLib hostsAt hmFixture assertWarnStubs failingAssertions hasPkg ck suite;
+  hosts = hostsAt root;
+  pkgs = pkgsSet;
 }

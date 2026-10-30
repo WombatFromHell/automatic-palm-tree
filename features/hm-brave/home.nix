@@ -7,7 +7,7 @@
   cfg = config.features.brave-browser;
   basePackage = pkgs.unstable.callPackage ./_package.nix {};
 
-  bravePackage = config.lib.nixGL.wrapMesa basePackage;
+  bravePackage = config.lib.nixGL.wrapGpu basePackage;
 in {
   options.features.brave-browser = {
     enable = lib.mkEnableOption "Privacy-oriented browser for Desktop and Laptop, built on Chromium" // {default = true;};
@@ -18,7 +18,8 @@ in {
     };
   };
   config = lib.mkIf cfg.enable {
-    home.packages = [bravePackage];
+    # programs.chromium installs cfg.finalPackage into home.packages itself, so adding
+    # bravePackage here would put the same store path on PATH twice.
     programs.chromium = {
       enable = true;
       package = bravePackage;

@@ -40,19 +40,27 @@ trap 'rm -f "$tmp"' EXIT
 
 # systemd reports MemoryPeak only while the unit exists, and it is the peak *so far*, so it is
 # polled while the eval is alive: a fast suite exits before a slow poll would ever sample it.
-# MemoryCurrent/MemoryPeak are bytes.
-unit="${TEST_SCOPE_NAME:-nix-eval}.scope"
+# MemoryCurrent/MemoryPeak are bytes. The pid is appended because a scope killed by OOM stays
+# 'failed' in systemd's unit table, and a second systemd-run with the same --unit then refuses
+# with "already loaded" instead of running.
+unit="${TEST_SCOPE_NAME:-nix-eval}-$$.scope"
 systemd-run --user --scope -q --expand-environment=no --unit="$unit" \
   -p MemoryHigh=$((cap * 9 / 10))M -p MemoryMax="${cap}M" -p MemorySwapMax=$((cap / 2))M \
   "$@" >"$tmp" 2>&1 &
 runner=$!
+# MemoryPeak is anonymous RAM; MemorySwapPeak is what spilled to disk, which is the part that
+# stalls the machine rather than killing it. Older systemd reports nothing for it, so it reads 0.
 peak=0
+swap=0
 while kill -0 "$runner" 2>/dev/null; do
   for prop in MemoryCurrent MemoryPeak; do
     n=$(systemctl --user show "$unit" -p "$prop" --value 2>/dev/null | head -n 1)
     case "$n" in (*[!0-9]* | '') n=0 ;; esac
     [ "$n" -gt "$peak" ] && peak=$n
   done
+  n=$(systemctl --user show "$unit" -p MemorySwapPeak --value 2>/dev/null | head -n 1)
+  case "$n" in (*[!0-9]* | '') n=0 ;; esac
+  [ "$n" -gt "$swap" ] && swap=$n
   sleep 0.02
 done
 wait "$runner"
@@ -61,5 +69,5 @@ if [ "$code" = 137 ]; then
   echo "nix-eval.sh: killed at ${cap}MB (MemoryMax) — raise TEST_MEMORY_MAX_MB or split the eval" >&2
 fi
 printf '%s\n' "$(cat "$tmp")"
-echo "peak=$((peak / 1024 / 1024))MB" >&2
+echo "peak=$((peak / 1024 / 1024))MB swap=$((swap / 1024 / 1024))MB" >&2
 exit "$code"

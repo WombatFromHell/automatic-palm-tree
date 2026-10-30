@@ -11,8 +11,6 @@ _: {
     "nixos-plymouth"
     "nixos-print"
     #
-    "nixos-lix"
-    #
     "nixos-automounts"
     # "nixos-zram"
     "nixos-zswap"

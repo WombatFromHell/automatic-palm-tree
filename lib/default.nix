@@ -72,6 +72,9 @@ in {
   # Exported so tooling and tests read the loader's own package set instead of
   # reaching through a built configuration (`homeConfigurations.<key>.pkgs`).
   inherit hostsWithPkgs;
+  # Keyed by system: tests build feature packages against the exact set the hosts get
+  # (pinMeta + flakePackages + `pkgs.unstable`), so a suite cannot drift from production.
+  inherit pkgsFor;
   nixosConfigurations = buildNixosConfigurations hostsWithPkgs;
   homeConfigurations = buildHomeConfigurations hostsWithPkgs;
 }

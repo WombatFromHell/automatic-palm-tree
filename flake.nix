@@ -51,18 +51,24 @@
       inherit self inputs lib;
     };
 
-    # The systems we check come from the configurations themselves, so a host that targets a
-    # system outside this list cannot hide behind a missing check.
-    supportedSystems = lib.unique (lib.mapAttrsToList
-      (_: config: config.pkgs.stdenv.hostPlatform.system)
-      (cfg.nixosConfigurations // cfg.homeConfigurations));
+    # Systems come from the host records, not from forcing each configuration: naming the checks
+    # cost ~500MB of eval RAM walking config.pkgs for every host. Same value as before, since
+    # `pkgsFor` is built from host.system, so a host outside this list still cannot hide behind a
+    # missing check.
+    supportedSystems = lib.unique (map (h: h.system) (lib.attrValues cfg.hostsWithPkgs));
+
+    # A home configuration is keyed "<user>@<host>", so read the host back out of the name.
+    hostOf = kind: name:
+      if kind == "home"
+      then lib.last (lib.splitString "@" name)
+      else name;
 
     # One check per configuration: the derivation `nix flake check` would build for it.
     mkChecks = system: kind: build:
       lib.mapAttrs'
       (name: config: lib.nameValuePair "${kind}-${name}" (build config))
       (lib.filterAttrs
-        (_: config: config.pkgs.stdenv.hostPlatform.system == system)
+        (name: _config: cfg.hostsWithPkgs.${hostOf kind name}.system == system)
         cfg."${kind}Configurations");
   in {
     inherit (cfg) nixosConfigurations homeConfigurations;

@@ -5,6 +5,7 @@
   makeWrapper,
   lib,
   pinMeta,
+  commandLineArgs ? "",
   alsa-lib,
   at-spi2-atk,
   at-spi2-core,
@@ -129,8 +130,15 @@ in
       install -Dm644 "$out/opt/brave.com/brave/product_logo_128.png" \
         "$out/share/icons/hicolor/128x128/apps/brave-browser.png"
 
-      ln -s "$out/opt/brave.com/brave/brave" "$out/bin/brave"
-      ln -s "$out/opt/brave.com/brave/brave-browser" "$out/bin/brave-browser"
+      # programs.chromium overrides this package with commandLineArgs (HM passes it as a string),
+      # so the bin entries have to carry the flags. With none, plain symlinks keep the layout.
+      if [ -n "${commandLineArgs}" ]; then
+        makeWrapper "$out/opt/brave.com/brave/brave" "$out/bin/brave" --add-flags "${commandLineArgs}"
+        makeWrapper "$out/opt/brave.com/brave/brave-browser" "$out/bin/brave-browser" --add-flags "${commandLineArgs}"
+      else
+        ln -s "$out/opt/brave.com/brave/brave" "$out/bin/brave"
+        ln -s "$out/opt/brave.com/brave/brave-browser" "$out/bin/brave-browser"
+      fi
     '';
 
     meta = with lib; {
