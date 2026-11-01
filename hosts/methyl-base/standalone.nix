@@ -10,7 +10,6 @@ _: {
     "hm-nixgl"
     #
     "hm-brave"
-    "hm-zed"
     #
     "hm-tmux"
   ];
