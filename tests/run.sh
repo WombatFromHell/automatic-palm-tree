@@ -147,10 +147,12 @@ fi
 # activation split and its xilo push rules are the same kind of thing, so tests/njust.bats joins
 # them. credsctl's record contract (one secret per file, extension picks the backend, records are
 # immutable) is argv and exit codes too, so tests/creds.bats joins them; its two real-tier tests
-# run the actual systemd-creds and age and skip when either is absent.
+# run the actual systemd-creds and age and skip when either is absent. sopsctl's sops plumbing
+# (key by command, json types on encrypt, field edits re-encrypted to the record's own recipients)
+# is the same kind of thing, so tests/sopsctl.bats joins them and its real tier runs actual sops.
 # bats comes from the installed Nix profile, so a missing `bats` is a `skip`, not a failure.
 if command -v bats >/dev/null 2>&1; then
-  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats; do
+  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats tests/sopsctl.bats; do
     if out=$(bats "$suite" 2>&1); then
       echo "ok   $suite [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
     else

@@ -9,15 +9,20 @@
 # whole contract: commands, the change recipe, the backend rule, and the exit codes.
 #
 # systemd-creds comes from the host PATH (/usr/bin/systemd-creds on Bazzite, systemd's copy on
-# NixOS). age is the only dependency added here: agenix carries its own age and does not put it
-# on PATH, and credsctl needs age/age-keygen semantics rather than agenix's rules-file machinery.
+# NixOS). sops and age are added here: sops is what sopsctl drives, and age only for age-keygen in
+# `sopsctl init` (agenix carries its own age and does not put it on PATH).
 { pkgs, ... }:
 {
   home.packages = [
     pkgs.age
+    pkgs.sops
     (pkgs.writeShellApplication {
       name = "credsctl";
       text = builtins.readFile ./credsctl.sh;
+    })
+    (pkgs.writeShellApplication {
+      name = "sopsctl";
+      text = builtins.readFile ./sopsctl.sh;
     })
   ];
 }
