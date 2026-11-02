@@ -14,12 +14,12 @@ setup() {
   script="$repo/features/hm-xilo/xilo.sh"
   stubs="$(mktemp -d)"
   calls="$stubs/calls"
-  : > "$calls"
+  : >"$calls"
   creds="$stubs/creds"
   mkdir -p "$creds"
 
   # Quoted heredoc: every $ below is the stub's own runtime variable, not setup's.
-  cat > "$stubs/xilo-real" <<'EOF'
+  cat >"$stubs/xilo-real" <<'EOF'
 #!/usr/bin/env bash
 log="${XILO_STUB_LOG:?}"
 printf 'xilo %s\n' "$*" >> "$log"
@@ -32,7 +32,7 @@ EOF
   # CMD with the secrets in its environment. Exit 2 means "no record".
   # Real credsctl semantics for the one form the wrapper uses: decrypt --env K... -- CMD execs
   # CMD with the secrets in its environment only. Exit 2 means "no record".
-  cat > "$stubs/credsctl" <<'EOF'
+  cat >"$stubs/credsctl" <<'EOF'
 #!/usr/bin/env bash
 log="${XILO_STUB_LOG:?}"
 printf 'credsctl %s\n' "$*" >> "$log"
@@ -60,9 +60,9 @@ run_wrapper() {
 }
 
 @test "credentials reach every subcommand, not just push" {
-  printf 'https://xilo.test\n' > "$creds/XILO_URL.cred"
-  printf 'secret-token\n' > "$creds/XILO_TOKEN.cred"
-  printf 'acme/pkgs\n' > "$creds/XILO_CACHE.cred"
+  printf 'https://xilo.test\n' >"$creds/XILO_URL.cred"
+  printf 'secret-token\n' >"$creds/XILO_TOKEN.cred"
+  printf 'acme/pkgs\n' >"$creds/XILO_CACHE.cred"
   run run_wrapper status
   [ "$status" -eq 0 ]
   grep -q '^credsctl decrypt --env XILO_URL XILO_CACHE XILO_TOKEN -- ' "$calls"
@@ -71,17 +71,17 @@ run_wrapper() {
 }
 
 @test "argv reaches the real CLI verbatim, including a path argument" {
-  printf 'https://xilo.test\n' > "$creds/XILO_URL.cred"
-  printf 'secret-token\n' > "$creds/XILO_TOKEN.cred"
+  printf 'https://xilo.test\n' >"$creds/XILO_URL.cred"
+  printf 'secret-token\n' >"$creds/XILO_TOKEN.cred"
   run run_wrapper push --jobs 4 --dry-run ./result
   [ "$status" -eq 0 ]
   grep -q '^xilo push --jobs 4 --dry-run ./result$' "$calls"
 }
 
 @test "an exported variable wins over the record" {
-  printf 'https://xilo.test\n' > "$creds/XILO_URL.cred"
-  printf 'secret-token\n' > "$creds/XILO_TOKEN.cred"
-  printf 'acme/pkgs\n' > "$creds/XILO_CACHE.cred"
+  printf 'https://xilo.test\n' >"$creds/XILO_URL.cred"
+  printf 'secret-token\n' >"$creds/XILO_TOKEN.cred"
+  printf 'acme/pkgs\n' >"$creds/XILO_CACHE.cred"
   env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" XILO_URL=https://from.env \
     bash "$script" push acme/pkgs ./result
   # XILO_URL is skipped, so only the two unset keys are decrypted.
@@ -90,7 +90,7 @@ run_wrapper() {
 }
 
 @test "no credsctl on PATH leaves the environment alone" {
-  printf 'https://xilo.test\n' > "$creds/XILO_URL.cred"
+  printf 'https://xilo.test\n' >"$creds/XILO_URL.cred"
   # /usr/bin has no credsctl (it lives in the nix profile), so this is the real fallback.
   run env PATH=/usr/bin CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" bash "$script" status
   [ "$status" -eq 0 ]

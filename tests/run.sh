@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Eval-only test gate. Green suites must print "OK <suite>"; red guards in
 # tests/red/ must throw, with the message named in their first line
-# (`# expect: <substring>`). Nothing here builds a real package: the single exception is
-# tests/appdir.nix, which builds a synthetic AppDir fixture and downloads nothing.
+# (`# expect: <substring>`). Nothing here builds a real package: the exceptions are
+# tests/appdir.nix, which builds a synthetic AppDir fixture and downloads nothing, and
+# tests/shellwrap.nix, which builds the two writeShellApplication wrappers so nixpkgs' shellcheck
+# runs on the text that ships.
 #
 # Every eval goes through tests/nix-eval.sh, which caps it in a transient systemd scope
 # (override with TEST_MEMORY_MAX_MB) so a suite that balloons is killed here instead of
 # swapping the machine.
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit
 
 # Determinate enables flakes in /etc/nix/nix.conf; upstream Nix has no global config, so the gate
 # carries the experimental features itself rather than relying on whatever the host installed.
@@ -42,7 +44,7 @@ split_peak() {
 
 for suite in tests/*.nix; do
   case "$suite" in
-    tests/support.nix | tests/configs.nix | tests/appdir.nix) continue ;;
+  tests/support.nix | tests/configs.nix | tests/appdir.nix | tests/shellwrap.nix) continue ;;
   esac
   if out=$(TEST_SCOPE_NAME="$(basename "$suite" .nix)" tests/nix-eval.sh "$mem" -- nix eval --impure --file "$suite" 2>&1); then
     split_peak "$out"
@@ -69,6 +71,19 @@ else
   fail=1
 fi
 
+# The same build-tier logic for the shipped shell wrappers: writeShellApplication shellchecks the
+# text it wraps, so the thing that ships is the thing that is linted (~4s on a warm store, and no
+# upstream fetch -- xilo's store path is a placeholder in tests/shellwrap.nix).
+if out=$(TEST_SCOPE_NAME=shellwrap tests/nix-eval.sh "$mem" -- nix build --no-link --quiet -f tests/shellwrap.nix 2>&1); then
+  split_peak "$out"
+  echo "ok   tests/shellwrap.nix [wrapper build + shellcheck]  $peak"
+else
+  split_peak "$out"
+  echo "FAIL tests/shellwrap.nix [wrapper build + shellcheck]  $peak"
+  echo "$body" | tail -20
+  fail=1
+fi
+
 # tests/configs.nix evaluates one host per process (see its header): forcing three hosts in
 # one eval needs ~4GB, which is over the cap.
 for host in methyl methyl-nixos propyl; do
@@ -86,8 +101,7 @@ done
 # The boot path must be a rebuild that installs the bootloader. nixos-rebuild-ng sets
 # NIXOS_INSTALL_BOOTLOADER itself and runs the activation under `env -i`, so an `env`
 # prefix never reaches it — only the flag does.
-if ! grep -q -- '--install-bootloader' bootstrap.sh || grep -q 'env NIXOS_INSTALL_BOOTLOADER' bootstrap.sh
-then
+if ! grep -q -- '--install-bootloader' bootstrap.sh || grep -q 'env NIXOS_INSTALL_BOOTLOADER' bootstrap.sh; then
   echo "FAIL bootstrap.sh must boot with --install-bootloader and no env NIXOS_INSTALL_BOOTLOADER"
   fail=1
 fi
@@ -97,11 +111,11 @@ fi
 # cgroup, which proves the memory scope is really wrapping the rebuild rather than being grepped
 # for. XDG_RUNTIME_DIR pointing at a bus-less directory takes the unscoped fallback branch.
 mock=$(mktemp -d "${TMPDIR:-/tmp}/bootstrap-mock.XXXXXX")
-cat > "$mock/sudo" <<'STUB'
+cat >"$mock/sudo" <<'STUB'
 #!/usr/bin/env bash
 exec "$@"
 STUB
-cat > "$mock/nixos-rebuild" <<'STUB'
+cat >"$mock/nixos-rebuild" <<'STUB'
 #!/usr/bin/env bash
 echo "stub: nixos-rebuild $*"
 # The cgroup is the observation that the scope wrap really happened, not a grep for it.
@@ -112,13 +126,12 @@ chmod +x "$mock/sudo" "$mock/nixos-rebuild"
 scoped=$(PATH="$mock:$PATH" TEST_SCOPE_NAME=bootstrap-scoped tests/nix-eval.sh 600 -- bash bootstrap.sh methyl 2>&1)
 unscoped=$(PATH="$mock:$PATH" TEST_SCOPE_NAME=bootstrap-fallback tests/nix-eval.sh 600 -- env XDG_RUNTIME_DIR="$mock/no-bus" bash bootstrap.sh methyl 2>&1)
 rm -rf "$mock"
-if printf '%s' "$scoped" | grep -q 'stub: nixos-rebuild boot' \
-  && printf '%s' "$scoped" | grep -q -- '--install-bootloader' \
-  && printf '%s' "$scoped" | grep -q -- '--option extra-substituters' \
-  && printf '%s' "$scoped" | grep -q 'flakeroot-rebuild' \
-  && printf '%s' "$unscoped" | grep -q 'stub: nixos-rebuild boot' \
-  && ! printf '%s' "$unscoped" | grep -q 'flakeroot-rebuild'
-then
+if printf '%s' "$scoped" | grep -q 'stub: nixos-rebuild boot' &&
+  printf '%s' "$scoped" | grep -q -- '--install-bootloader' &&
+  printf '%s' "$scoped" | grep -q -- '--option extra-substituters' &&
+  printf '%s' "$scoped" | grep -q 'flakeroot-rebuild' &&
+  printf '%s' "$unscoped" | grep -q 'stub: nixos-rebuild boot' &&
+  ! printf '%s' "$unscoped" | grep -q 'flakeroot-rebuild'; then
   echo "ok   bootstrap.sh [mocked rebuild: scope wrap + no-bus fallback]"
 else
   echo "FAIL bootstrap.sh must rebuild in a memory scope and fall back when there is no user bus"
@@ -136,7 +149,7 @@ fi
 # immutable) is argv and exit codes too, so tests/creds.bats joins them; its two real-tier tests
 # run the actual systemd-creds and age and skip when either is absent.
 # bats comes from the installed Nix profile, so a missing `bats` is a `skip`, not a failure.
-if command -v bats > /dev/null 2>&1; then
+if command -v bats >/dev/null 2>&1; then
   for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats; do
     if out=$(bats "$suite" 2>&1); then
       echo "ok   $suite [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
@@ -157,6 +170,8 @@ fi
 # One eval lists every pin and system; the bash side expands the same list. Per-pin
 # evals cost ~2.9s each (nixpkgs re-imported), which was most of the gate's runtime.
 par=0
+# The single quotes are deliberate: `${f}` and the `./` paths must reach Nix unexpanded.
+# shellcheck disable=SC2016
 parout=$(TEST_SCOPE_NAME=parity tests/nix-eval.sh "$mem" -- nix eval --impure --raw --expr '
   let lib = (builtins.getFlake (toString ./.)).inputs.nixpkgs.lib;
       pinMeta = import ./lib/pin-meta.nix {inherit lib;};
@@ -180,6 +195,11 @@ pins="$body"
 while IFS=: read -r feature sys ver want; do
   [ -n "$feature" ] || continue
   got=$(
+    # Every features/*/update.sh is a symlink to lib/updater.sh (pinned by tests/pins.nix), which
+    # is shellchecked on its own. The path is a variable, so the directive tells shellcheck to
+    # accept the source without following it; naming the target would only resolve relative to
+    # wherever shellcheck happens to be invoked.
+    # shellcheck source=/dev/null
     . "features/$feature/update.sh"
     render_url "$sys" "$ver"
   )
@@ -201,7 +221,7 @@ for guard in tests/red/*.nix; do
   if out=$(TEST_SCOPE_NAME="red-$(basename "$guard" .nix)" tests/nix-eval.sh "$mem" -- nix eval --impure --file "$guard" 2>&1); then
     echo "FAIL $guard  expected a throw mentioning \"$want\""
     fail=1
-  elif case "$out" in *"$want"*) true ;; *) false ;; esac; then
+  elif case "$out" in *"$want"*) true ;; *) false ;; esac then
     split_peak "$out"
     echo "ok   $guard  $peak"
   else

@@ -59,7 +59,10 @@ install_feature() {
   echo "==> Scaffolded $dir — fill in metadata.json and add the feature files." >&2
 }
 
-if [[ "${1:-}" == "--install" ]]; then install_feature "${2:-}"; exit 0; fi
+if [[ ${1:-} == "--install" ]]; then
+  install_feature "${2:-}"
+  exit 0
+fi
 
 REPO=$(j .repo)
 KIND=$(j .kind)
@@ -199,4 +202,4 @@ main() {
 }
 
 # Sourced by tests/run.sh to reuse render_url; executed runs the CLI contract.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi

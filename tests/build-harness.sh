@@ -18,7 +18,7 @@
 # One telemetry line on stdout, then the client's own output. Exit code is the client's.
 # Overrides: BUILD_HARNESS_MEM (cap, default 3072), BUILD_HARNESS_LINK.
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit
 
 # Flakes are not globally enabled on upstream Nix, so the harness carries them itself.
 export NIX_CONFIG="experimental-features = nix-command flakes"
@@ -74,7 +74,7 @@ run=(env "${cmd[@]}")
 start=$(date +%s)
 out=$(TEST_SCOPE_NAME=build-harness tests/nix-eval.sh "$cap" -- "${run[@]}" 2>&1)
 code=$?
-wall=$(( $(date +%s) - start ))
+wall=$(($(date +%s) - start))
 
 # tests/nix-eval.sh's peak line is its own telemetry, not the client's output.
 scope=$(printf '%s\n' "$out" | grep '^peak=' | tail -n 1)

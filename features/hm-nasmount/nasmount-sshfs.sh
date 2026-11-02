@@ -20,13 +20,13 @@ done
 
 do_mount() {
   # Idempotency gate: lock file with live process OR active mountpoint
-  if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+  if [[ -f $PID_FILE ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     exit 0
   fi
-  [[ -f "$PID_FILE" ]] && rm -f "$PID_FILE"
+  [[ -f $PID_FILE ]] && rm -f "$PID_FILE"
 
   if mountpoint -q "$NAS_HOME"; then
-    if [[ ! -L "$LINK" ]] || [[ "$(readlink -f "$LINK")" != "$(readlink -f "$TARGET")" ]]; then
+    if [[ ! -L $LINK ]] || [[ "$(readlink -f "$LINK")" != "$(readlink -f "$TARGET")" ]]; then
       rm -f "$LINK"
       ln -sf "$TARGET" "$LINK"
     fi
@@ -37,7 +37,7 @@ do_mount() {
 
   SSHFS_OPTS=(-p 2222 -o "follow_symlinks,reconnect,noatime,cache_timeout=1,idmap=user")
   HAS_KEY=false
-  if [[ -r "$SSH_KEY" ]]; then
+  if [[ -r $SSH_KEY ]]; then
     SSHFS_OPTS+=(-o "IdentityFile=$SSH_KEY")
     HAS_KEY=true
   fi
@@ -85,18 +85,18 @@ do_mount() {
 }
 
 do_unmount() {
-  if [[ ! -f "$PID_FILE" ]] && ! mountpoint -q "$NAS_HOME"; then
+  if [[ ! -f $PID_FILE ]] && ! mountpoint -q "$NAS_HOME"; then
     exit 0
   fi
 
-  if [[ -f "$PID_FILE" ]]; then
+  if [[ -f $PID_FILE ]]; then
     kill "$(cat "$PID_FILE")" 2>/dev/null
     rm -f "$PID_FILE"
   fi
 
   fusermount -u "$NAS_HOME" 2>/dev/null || true
 
-  [[ -L "$LINK" ]] && rm -f "$LINK"
+  [[ -L $LINK ]] && rm -f "$LINK"
 
   exit 0
 }

@@ -2,9 +2,11 @@
 
 The suite asserts on **evaluated configuration values**, never on built output: `nix eval --impure
 --file` forces a config far enough to read option values, and that is the whole cost. No real
-`nix build` runs, so the gate is fast and works without a store. The one exception is
-`tests/appdir.nix`: a fixture build that re-runs a derivation's own `installPhase` against a
-synthetic tree, downloading nothing.
+`nix build` runs, so the gate is fast and works without a store. The exceptions are
+`tests/appdir.nix` (a fixture build that re-runs a derivation's own `installPhase` against a
+synthetic tree, downloading nothing) and `tests/shellwrap.nix` (a fixture build of the two
+`writeShellApplication` wrappers, so nixpkgs' shellcheck runs on the text that ships rather than
+on the raw files the bats suites exercise).
 
 ## Gate shape
 
@@ -68,6 +70,7 @@ flowchart LR
   S --> PI["tests/pins.nix"]
   S --> WR["tests/wrap.nix<br/>nixGL wrap around a derived package"]
   S --> AP["tests/appdir.nix<br/>fixture build, not an eval"]
+  S --> SW["tests/shellwrap.nix<br/>fixture build of credsctl + xilo-wrapped<br/>the build's exit status is the shellcheck"]
   S --> RD["tests/red/*.nix"]
   FX["tests/fixtures/<dir>/hosts/*.nix<br/>shapes no real host uses"] --> L
 ```
@@ -87,9 +90,10 @@ Splitting is not cosmetic: forcing three host configs in one eval peaks at ~2.1G
 `nix flake check --no-build` needs ~2.6GB (measured), both over the 1792MB cap — hence
 `configs.nix` runs one host per process. Going over the cap is a failure (exit 137), not a hang.
 `run.sh` prints each eval's `peak=` on its line. Measured today: the whole gate ~27s, largest
-per-eval peak ~793MB (`tests/home.nix`, the standalone profile, which forces its Home Manager
-users), `wrap` ~733MB, host configs ~670–695MB, pure suites under 40MB, and the appdir fixture
-build ~88MB with no download.
+per-eval peak ~960MB (`tests/home.nix`, the standalone profile, which forces its Home Manager
+users plus the host's own home module and the three `_package.nix` derivations it compares
+against), `wrap` ~733MB, host configs ~670–695MB, pure suites under 40MB, the appdir fixture
+build ~88MB with no download, and the shellwrap fixture ~243MB (nixpkgs' shellcheck is the work).
 
 ## Build telemetry, outside the gate
 
@@ -146,8 +150,8 @@ flowchart TD
   end
   subgraph home["home.nix — forces the standalone HM config"]
     H1["builder facts: username, homeDirectory, genericLinux target"]
-    H2["features + packages the profile and the host contribute;<br/>hm-base ships packages, not program flags"]
-    H3["nixGL wrapper names; packages set on this non-NixOS host;<br/>the host uses the default wrapper (mesa); the GUI derivations are wrapped<br/>(outPath differs from _package.nix's) and each lands on PATH exactly once"]
+    H2["features + packages the profile and the host contribute;<br/>hm-base ships packages, not program flags;<br/>expectations come from the host's own module and from what the config installs,<br/>so a host gaining or losing a feature stays green"]
+    H3["nixGL wrapper names; packages set on this non-NixOS host;<br/>the host uses the default wrapper (mesa); every package from a feature derivation<br/>is wrapped (outPath differs from _package.nix's) and on PATH exactly once,<br/>with a companion check that at least one is installed so this cannot go vacuous"]
   end
   subgraph outputs["outputs.nix — reads the output attrsets"]
     O1["outputs are exactly configs + checks"]
@@ -182,6 +186,9 @@ flowchart TD
   end
   subgraph appdir["appdir.nix — fixture build, ~8s, peak ~83MB"]
     AD1["features/hm-ghostty/_package.nix's real installPhase against a synthetic AppDir:<br/>bin/ghostty kept and executable, AppRun / sharun / dash / .env / .DirIcon and<br/>bin/*.hook dropped, desktop entry and icon moved into share/ not copied,<br/>and the resource trees left alone"]
+  end
+  subgraph shellwrap["shellwrap.nix — fixture build, ~4s, peak ~243MB"]
+    SW1["features/hm-creds/credsctl.sh and features/hm-xilo/xilo.sh wrapped exactly as<br/>home.nix ships them: writeShellApplication's checkPhase is the assertion, and xilo's<br/>store path is a placeholder so nothing upstream is fetched"]
   end
   subgraph warnings["warnings.nix — bare module eval"]
     W1["modules/warnings-gate.nix: assertion true with no warnings,<br/>false with one, and its message carries every warning verbatim"]

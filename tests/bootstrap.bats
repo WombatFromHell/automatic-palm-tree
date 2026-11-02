@@ -5,9 +5,9 @@ setup() {
   repo="$PWD"
   stubs="$(mktemp -d)"
   calls="$stubs/calls"
-  : > "$calls"
+  : >"$calls"
   # nix answers only the two calls bootstrap makes: `store info` and the registry eval.
-  cat > "$stubs/nix" <<EOF
+  cat >"$stubs/nix" <<EOF
 #!/usr/bin/env bash
 echo "nix \$*" >> "$calls"
 if [ "\$1 \$2" = "store info" ]; then
@@ -22,8 +22,9 @@ case "\$6" in
 esac
 EOF
   for tool in sudo home-manager nixos-rebuild nix-channel nix-shell systemd-run; do
-    env_name="${tool^^}"; env_name="${env_name//-/_}"
-    cat > "$stubs/$tool" <<EOF
+    env_name="${tool^^}"
+    env_name="${env_name//-/_}"
+    cat >"$stubs/$tool" <<EOF
 #!/usr/bin/env bash
 echo "$tool \$*" >> "$calls"
 exit \${${env_name}_EXIT:-0}
@@ -55,43 +56,43 @@ run_boot() { PATH="$stubs:$PATH" bash "$repo/bootstrap.sh" "$@"; }
 @test "--standalone refuses a bare host: it has no NixOS config to rebuild" {
   run run_boot --standalone methyl
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--standalone target must be"* ]]
+  [[ $output == *"--standalone target must be"* ]]
 }
 
 @test "--rebind on a box that already has Nix is refused, not dropped" {
   run run_boot --standalone --rebind=/mnt/data1/nix josh@example.test
   [ "$status" -eq 2 ]
-  [[ "$output" == *"fresh install"* ]]
+  [[ $output == *"fresh install"* ]]
 }
 
 @test "--rebind= with no directory is refused" {
   run run_boot --standalone --rebind= josh@example.test
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--rebind needs a directory"* ]]
+  [[ $output == *"--rebind needs a directory"* ]]
 }
 
 @test "--standalone cannot report success when trust did not take effect" {
   TRUSTED=0 run run_boot --standalone
   [ "$status" -eq 2 ]
-  [[ "$output" == *"still not a trusted nix user"* ]]
+  [[ $output == *"still not a trusted nix user"* ]]
 }
 
 @test "an untrusted switch names the daemon, not just the user" {
   TRUSTED=0 run run_boot josh@example.test
   [ "$status" -eq 2 ]
-  [[ "$output" == *"nix daemon"* ]]
+  [[ $output == *"nix daemon"* ]]
 }
 
 @test "a daemon that does not answer is not reported as an untrusted user" {
   NIX_INFO_EXIT=1 run run_boot josh@example.test
   [ "$status" -eq 2 ]
-  [[ "$output" == *"nix store info"* ]]
+  [[ $output == *"nix store info"* ]]
 }
 @test "--rebind reaches the installer as --persistence" {
   # The installer path only runs where Nix is genuinely absent; this box has a receipt.
   [ -f /nix/receipt.json ] && skip "/nix/receipt.json present — installer path cannot run here"
   rm "$stubs/nix"
-  printf '#!/usr/bin/env bash\necho "curl $*" >> "%s"\nprintf "#!/bin/sh\\nexit 0\\n"\n' "$calls" > "$stubs/curl"
+  printf '#!/usr/bin/env bash\necho "curl $*" >> "%s"\nprintf "#!/bin/sh\\nexit 0\\n"\n' "$calls" >"$stubs/curl"
   chmod +x "$stubs/curl"
   PATH="$stubs:/usr/bin:/bin" bash "$repo/bootstrap.sh" --standalone --rebind=/mnt/data1/nix || true
   grep -q "install ostree --enable-flakes --persistence /mnt/data1/nix" "$calls"
@@ -101,26 +102,26 @@ run_boot() { PATH="$stubs:$PATH" bash "$repo/bootstrap.sh" "$@"; }
   SYSTEMD_RUN_EXIT=1 run run_boot methyl
   [ "$status" -eq 0 ]
   grep -q "^sudo nixos-rebuild boot" "$calls"
-  ! grep -q "systemd-run .*sudo nixos-rebuild" "$calls"
+  run ! grep -q "systemd-run .*sudo nixos-rebuild" "$calls"
 }
 
 @test "--standalone with no target says it is ready" {
   run run_boot --standalone
   [ "$status" -eq 0 ]
-  [[ "$output" == *"standalone ready"* ]]
-  [[ "$output" == *"$(id -un) trusted"* ]]
+  [[ $output == *"standalone ready"* ]]
+  [[ $output == *"$(id -un) trusted"* ]]
 }
 @test "--help prints usage and exits 0" {
   run run_boot --help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"usage:"* ]]
-  [[ "$output" == *"--rebind"* ]]
+  [[ $output == *"usage:"* ]]
+  [[ $output == *"--rebind"* ]]
 }
 
 @test "--install installs the Home Manager release the flake pins" {
   tmp="$(mktemp -d)"
   cp "$repo/bootstrap.sh" "$tmp/"
-  printf '{\n  inputs.home-manager.url = "github:nix-community/home-manager/release-25.05";\n}\n' > "$tmp/flake.nix"
+  printf '{\n  inputs.home-manager.url = "github:nix-community/home-manager/release-25.05";\n}\n' >"$tmp/flake.nix"
   PATH="$stubs:$PATH" bash "$tmp/bootstrap.sh" --standalone --install || true
   grep -q "home-manager/archive/release-25.05.tar.gz" "$calls"
   rm -rf "$tmp"

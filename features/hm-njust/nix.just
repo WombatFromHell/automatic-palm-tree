@@ -14,7 +14,8 @@
 # target has its value read as the target (this
 # nix rejects `--flag=value`, so a value cannot be attached). ponytail: option
 # values must be one token (a multi-word value gets split and the client rejects
-# it loudly); `--with-xilo` is helper-level like nix.fish's `_nfb` strips it: it is
+# it loudly — see the interpolation note above); `--with-xilo` is helper-level like
+# nix.fish's `_nfb` strips it: it is
 # acted on here (push the built closure to the xilo cache) and never forwarded.
 #
 # How far a recipe goes is its *mode*, a parameter of `_deploy`, not a flag: build builds;
@@ -24,11 +25,19 @@
 # os-deploy and nas copy a closure to a remote host and activate it there. Recipe comments
 # stay single-line because `just --list` prints only the last line of a comment block.
 #
+# shortcut: each client's flags are parsed by its own loop (`_exec`, `build`, `_clean`, `sweep`,
+# `_deploy`) rather than one shared parser, because the clients differ (`nh` vs `nix build` vs
+# `nix-env`) and `--dry-run` means "print it" in `_exec` but "evaluate for real" in `build`. A
+# shared parser would hand argv back through stdout, which word-splits and globs it. Upgrade if a
+# fourth client needs the same table.
+#
 # Reached through `njust`, a wrapper pinned to this file, so plain `just`
 # still finds your project justfiles.
 
-# Shebang recipes below run `set -uf`: user arguments are interpolated into unquoted
-# bash lists, so a stray `*` would expand against the caller's cwd. `set shell` cannot
+# Shebang recipes below run `set -uf` (no -e: a recipe's status is its last command's). just joins
+# a variadic argument list when it interpolates it, so argument boundaries are lost on the way in:
+# a value must be one token, and a stray `*` expands against the caller's cwd. `quote()` would make
+# the whole list one token, which is worse. `set shell` cannot
 # cover them -- just runs a shebang recipe through its own shebang, not this shell.
 set shell := ["bash", "-uc"]
 
@@ -44,9 +53,14 @@ hm_root := flake + "#homeConfigurations."
 os_root := flake + "#nixosConfigurations."
 hm_attr := ".activationPackage"
 os_attr := ".config.system.build.toplevel"
-hm_link := "/tmp/hm-result"
-os_link := "/tmp/nixos-result"
-deploy_link := "/tmp/nixos-deploy-result"
+# Out-links: the name of the symlink, under a directory only this user owns. /tmp is world-writable
+# with the sticky bit, so a predictable name there is another user's symlink on a shared host;
+# XDG_RUNTIME_DIR (/run/user/UID, 0700) is the private one, and /tmp is the fallback for a host
+# without it.
+out_dir := env_var_or_default("XDG_RUNTIME_DIR", "/tmp")
+hm_link := "hm-result"
+os_link := "nixos-result"
+deploy_link := "nixos-deploy-result"
 sys_profile := "/nix/var/nix/profiles/system"
 
 # The NAS lives in its own flake and pulls from its own Cachix cache; these two
@@ -110,42 +124,60 @@ _exec *cmd:
     echo "${keep[*]}"
     "${keep[@]}"
 
-# Generation specs are nix-env's: ids, `old`, `30d`, `+2M`, `1y`. Destructive, so an empty spec
-# is refused rather than deleting whatever `old` would match. Scope decides the client, the
-# profile and whether it needs root; action decides the verb.
-_gens scope="user" action="list" profile=sys_profile *args:
+# Generation verbs for a client's own default profile: `nix-env` for the user, `home-manager`
+# for the home generations. Specs are nix-env's grammar (ids, `old`, `30d`, `+2M`, `1y`), and
+# neither scope needs root. Scope decides the client and the verb.
+_gens scope="user" action="list" *args:
     #!/usr/bin/env bash
     set -uf pipefail
     arr=({{ args }})
-    root=""
-    case "{{ scope }}" in
-    user)    root="" ;;
-    hm)      root="" ;;
-    os)      root=--sudo ;;
-    profile) root="" ;;
-    *) echo "Error: unknown generation scope '{{ scope }}'" >&2; exit 1 ;;
-    esac
+    specs=()
+    for a in "${arr[@]}"; do [[ "$a" == -* ]] || specs+=("$a"); done
+    # An empty spec would delete every generation of the default profile; a flag is not a spec.
+    [[ "{{ action }}" == rm ]] && [[ ${#specs[@]} == 0 ]] && {
+        echo "usage: njust rm-{{ scope }} <id|old|30d|+2M|1y>" >&2
+        exit 1
+    }
     case "{{ scope }}:{{ action }}" in
+    user:list) verb=--list-generations ;;
+    user:rm)   verb=--delete-generations ;;
     hm:list)   verb=generations ;;
     hm:rm)     verb=remove-generations ;;
-    *:list)    verb=--list-generations ;;
-    *:rm)      verb=--delete-generations ;;
-    *) echo "Error: unknown generation action '{{ action }}'" >&2; exit 1 ;;
+    *) echo "Error: unknown generation scope/action '{{ scope }}:{{ action }}'" >&2; exit 1 ;;
     esac
-    [[ "{{ action }}" == rm ]] && [[ ${#arr[@]} == 0 ]] && { echo "usage: njust rm-{{ scope }} <id|old|30d|+2M|1y>" >&2; exit 1; }
-    [[ "{{ scope }}" == os ]] && [[ ! -e "{{ profile }}" ]] && { echo "{{ profile }}: no system profile on this host"; exit 0; }
-    [[ "{{ scope }}" == profile ]] && [[ ! -e "{{ profile }}" ]] && { echo "Error: no profile at {{ profile }}" >&2; exit 1; }
-    case "{{ scope }}" in
-    user) argv=(nix-env "$verb") ;;
-    hm)   argv=(home-manager "$verb") ;;
-    *)    argv=(nix-env --profile "{{ profile }}" "$verb") ;;
-    esac
-    just --justfile "{{ justfile() }}" _exec "${argv[@]}" "${arr[@]}" $root
+    client=nix-env
+    [[ "{{ scope }}" == hm ]] && client=home-manager
+    just --justfile "{{ justfile() }}" _exec "$client" "$verb" "${arr[*]}"
+
+# Generation verbs against an explicit profile (`nix-env --profile`). The system profile is
+# root-owned, so this always elevates; `scope` says which profile you mean, which is what the
+# usage line and the missing-profile guard say back to you.
+_gens_profile action="list" profile=sys_profile scope="os" *args:
+    #!/usr/bin/env bash
+    set -uf pipefail
+    arr=({{ args }})
+    specs=()
+    for a in "${arr[@]}"; do [[ "$a" == -* ]] || specs+=("$a"); done
+    [[ "{{ action }}" == rm ]] && [[ ${#specs[@]} == 0 ]] && {
+        echo "usage: njust rm-{{ scope }} <id|old|30d|+2M|1y>" >&2
+        exit 1
+    }
+    [[ ! -e "{{ profile }}" ]] && {
+        # A non-NixOS host has no system profile: that is not an error, it is nothing to list.
+        [[ "{{ scope }}" == os ]] && { echo "{{ profile }}: no system profile on this host"; exit 0; }
+        echo "Error: no profile at {{ profile }}" >&2
+        exit 1
+    }
+    verb=--list-generations
+    [[ "{{ action }}" == rm ]] && verb=--delete-generations
+    # The system profile is root-owned; a profile you named yourself is not.
+    root=""
+    [[ "{{ scope }}" == os ]] && root=--sudo
+    just --justfile "{{ justfile() }}" _exec nix-env --profile "{{ profile }}" "$verb" "${arr[*]}" $root
 
 # Generations of the user's nix-env profile.
-list-user *args: (_gens "user" "list" sys_profile args)
-rm-user *args: (_gens "user" "rm" sys_profile args)
-
+list-user *args: (_gens "user" "list" args)
+rm-user *args: (_gens "user" "rm" args)
 # The same profile through the new CLI (`nix profile`), which spells history differently.
 history-user *args:
     @just --justfile "{{ justfile() }}" _exec nix profile history {{ nix_opts }} {{ args }}
@@ -153,8 +185,8 @@ wipe-user *args:
     @just --justfile "{{ justfile() }}" _exec nix profile wipe-history {{ nix_opts }} {{ args }}
 
 # Home-manager generations (nix.fish: hmls / hmrm).
-list-hm *args: (_gens "hm" "list" sys_profile args)
-rm-hm *args: (_gens "hm" "rm" sys_profile args)
+list-hm *args: (_gens "hm" "list" args)
+rm-hm *args: (_gens "hm" "rm" args)
 
 # home-manager takes `date -d` grammar ("-30 days"); nix-env's grammar is the one we expose, so
 # the translation lives here once. Deleting *user* generations by duration is `rm-user 30d`.
@@ -169,10 +201,10 @@ expire-hm duration="30d" *args:
 
 # NixOS generations (nix.fish: nhdls / nhdrm); the system profile is root-owned, so `os` always
 # elevates. Pass a profile to list or clean another one.
-list-os profile=sys_profile *args: (_gens "os" "list" profile args)
-rm-os *args: (_gens "os" "rm" sys_profile args)
-list-profile profile *args: (_gens "profile" "list" profile args)
-rm-profile profile *args: (_gens "profile" "rm" profile args)
+list-os profile=sys_profile *args: (_gens_profile "list" profile "os" args)
+rm-os *args: (_gens_profile "rm" sys_profile "os" args)
+list-profile profile *args: (_gens_profile "list" profile "profile" args)
+rm-profile profile *args: (_gens_profile "rm" profile "profile" args)
 
 # Store GC. `nix store gc` is the new CLI and touches no generations; `nix-collect-garbage` is the
 # pre-nix-command spelling that deletes generations too, with its own duration form.
@@ -271,11 +303,6 @@ ccuf *args: (_clean "user" "optf" args)
 cca *args: (_clean "all" "opt" args)
 ccaf *args: (_clean "all" "optf" args)
 
-# nh's subcommands verbatim, no injected defaults and no --ask: `-k 5` is exactly what nh gets.
-clean-all *args: (_exec "nh" "clean" "all" args)
-clean-user *args: (_exec "nh" "clean" "user" args)
-clean-profile profile *args: (_exec "nh" "clean" "profile" profile args)
-
 # --- build -------------------------------------------------------------------
 # nix.fish: _nfb + nix_build + nix_eval + _nix_dry_run, merged so the option set
 # and the eval call exist once. `--sudo` is stripped and prefix-wrapped.
@@ -284,7 +311,7 @@ clean-profile profile *args: (_exec "nh" "clean" "profile" profile args)
 # ~4s saved on one host and *slower* on another. See DESIGN.md "What to run".
 
 # Build a closure (--dry-run evaluates); links live under /tmp so a bare build never litters the cwd.
-build attr out_link="/tmp/nix-result" *args:
+build attr out_link="{{ out_dir }}/nix-result" *args:
     #!/usr/bin/env bash
     set -uf pipefail
     args=()
@@ -297,6 +324,9 @@ build attr out_link="/tmp/nix-result" *args:
         *) args+=("$a") ;;
         esac
     done
+    # `--dry-run` here is a real evaluation, not a printed plan, so this cannot go through _exec
+    # (--dry-run there means "print it, run nothing"). The command is built as an array so the
+    # quoted token in nix_opts stays one argument.
     if [[ "$dry" == true ]]; then
         export GC_INITIAL_HEAP_SIZE=2G
         echo "Evaluating {{ attr }} with nix build --dry-run..."
@@ -307,7 +337,7 @@ build attr out_link="/tmp/nix-result" *args:
     "${sudo[@]}" "${cmd[@]}" "${args[@]}"
 
 # Evaluate a flake attribute (nix.fish: nix_eval).
-eval attr *args: (build attr "/tmp/nix-eval-result" "--dry-run" args)
+eval attr *args: (build attr "{{ out_dir }}/nix-eval-result" "--dry-run" args)
 
 # --- activate / deploy -------------------------------------------------------
 # nix.fish: _nix_switch_bin + _nix_remote_deploy.
@@ -339,7 +369,9 @@ _push out_link cache=xilo_cache:
     command -v xilo-wrapped > /dev/null 2>&1 || { echo "Error: no xilo-wrapped on PATH — enable the hm-xilo feature to push" >&2; exit 1; }
     target="{{ cache }}"
     status=0
-    val=$(CREDS_DIR="${CREDENTIALS_DIRECTORY:-$HOME/.local/share/credentials}" credsctl decrypt XILO_CACHE) || status=$?
+    # credsctl owns the store location (CREDS_DIR, else CREDENTIALS_DIRECTORY, else systemd's
+    # store), so the cache name is looked up with no path spelled here.
+    val=$(credsctl decrypt XILO_CACHE) || status=$?
     # 2 = no such record, and a missing credsctl is the same thing here: the default cache name.
     # Anything else is a real decrypt failure and must not push to the wrong cache.
     [[ "$status" == 3 ]] && { echo "Error: cannot decrypt XILO_CACHE" >&2; exit 1; }
@@ -394,7 +426,9 @@ _deploy scope="hm" mode="switch" *args:
     for ((i = 0; i < ${#arr[@]}; i++)); do
         a="${arr[i]}"
         case "$a" in
-        --dry-run) dry=true; flags+=("$a") ;;
+        # Accepted by every recipe, including the modes that build nothing: activate previews the
+        # activation instead of forwarding a flag it cannot use.
+        --dry-run) dry=true; [[ "{{ mode }}" == activate ]] || flags+=("$a") ;;
         # Helper-level: push the built closure to the xilo cache, never a client flag.
         --with-xilo) push=true ;;
         # `build` strips `--sudo`; `rebuild` is already wrapped in sudo and nixos-rebuild
@@ -414,10 +448,10 @@ _deploy scope="hm" mode="switch" *args:
     host="${tgt:-{{ hn }}}"
     remote=""
     case "{{ scope }}" in
-    hm)        attr="{{ hm_root }}${tgt:-{{ me }}}{{ hm_attr }}"; link="{{ hm_link }}" ;;
-    os)        attr="{{ os_root }}$host{{ os_attr }}"; link="{{ os_link }}" ;;
-    os-deploy) attr="{{ os_root }}$host{{ os_attr }}"; link="{{ deploy_link }}"; remote="deployer@$host" ;;
-    nas)       attr="{{ nas_flake }}#nixosConfigurations.nasty{{ os_attr }}"; link="{{ deploy_link }}"; remote=homenas-deployer ;;
+    hm)        attr="{{ hm_root }}${tgt:-{{ me }}}{{ hm_attr }}"; link="{{ out_dir }}/{{ hm_link }}" ;;
+    os)        attr="{{ os_root }}$host{{ os_attr }}"; link="{{ out_dir }}/{{ os_link }}" ;;
+    os-deploy) attr="{{ os_root }}$host{{ os_attr }}"; link="{{ out_dir }}/{{ deploy_link }}"; remote="deployer@$host" ;;
+    nas)       attr="{{ nas_flake }}#nixosConfigurations.nasty{{ os_attr }}"; link="{{ out_dir }}/{{ deploy_link }}"; remote=homenas-deployer ;;
     rebuild)   attr="{{ flake }}#$host"; link="" ;;
     *) echo "Error: unknown deploy scope '{{ scope }}'" >&2; exit 1 ;;
     esac
@@ -462,7 +496,9 @@ _deploy scope="hm" mode="switch" *args:
         fi
     fi
     if [[ "$dry" == true ]]; then
-        [[ "$push" == true ]] && echo "would push: $link → xilo cache {{ xilo_cache }}"
+        # The cache name is resolved by _push (it can come from the XILO_CACHE credential), so the
+        # preview names the thing it will look up rather than a name it might not use.
+        [[ "$push" == true ]] && echo "would push: $link → xilo cache (the name in the XILO_CACHE credential, else the default)"
         [[ -n "$action" ]] && echo "would activate: $link via $action${remote:+ on $remote}"
         exit 0
     fi
@@ -538,7 +574,11 @@ os-deploy *args: (_deploy "os-deploy" "boot" args)
 # NAS deploy: nasty-config's flake + its Cachix cache via ssh alias homenas-deployer.
 os-deploy-nas *args: (_deploy "nas" "boot" args)
 
-# Plain nixos-rebuild (nixos-justnh / drs); its flags pass through.
+# Plain nixos-rebuild (nixos-justnh / drs); its flags pass through. No mode: how far it goes is
+# nixos-rebuild's own flag (--switch, --boot, --test), and it builds straight into the profile, so
+# there is no out-link to activate or push.
+# `mode` is unused for the rebuild scope — nixos-rebuild takes its own action flag — but just
+# fills named parameters positionally, so a delegation has to supply something.
 rebuild *args: (_deploy "rebuild" "switch" args)
 
 # NixOS generations (nix.fish: nhdls / nhdrm) are `_gens os`: the elevation and the "no system

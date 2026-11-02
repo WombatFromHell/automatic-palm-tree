@@ -24,7 +24,7 @@ for key in XILO_URL XILO_CACHE XILO_TOKEN; do
   fi
 done
 
-if [[ ${#names[@]} -gt 0 ]] && command -v credsctl > /dev/null 2>&1; then
+if [[ ${#names[@]} -gt 0 ]] && command -v credsctl >/dev/null 2>&1; then
   exec credsctl decrypt --env "${names[@]}" -- "$real" "$@"
 fi
 exec "$real" "$@"

@@ -13,7 +13,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 #   --rebind[=DIR]  bind DIR on /nix instead of the planner's /var/home/nix; fresh installs only
 #                   (DIR defaults to $REBIND_SRC, else /mnt/data1/nix)
 rebind_src="${REBIND_SRC:-/mnt/data1/nix}"
-standalone= install= rebind= target=
+# Declared empty because `set -u` would otherwise throw when the argument loop
+# reads `$target` before any flag has been parsed.
+standalone='' install='' rebind='' target=''
 
 usage="usage: ${0##*/} <host> | <user>@<host> | --standalone [--install] [--rebind[=DIR]] [<user>@<host>] | --help"
 die() {
@@ -28,9 +30,14 @@ for a; do
   --standalone) standalone=1 ;;
   --install) install=1 ;;
   --rebind) rebind=1 ;;
-  --rebind=*) rebind=1 rebind_src="${a#*=}"
-    [ -n "$rebind_src" ] || die "--rebind needs a directory" "$usage" ;;
-  --help) printf '%s\n' "$usage"; exit 0 ;;
+  --rebind=*)
+    rebind=1 rebind_src="${a#*=}"
+    [ -n "$rebind_src" ] || die "--rebind needs a directory" "$usage"
+    ;;
+  --help)
+    printf '%s\n' "$usage"
+    exit 0
+    ;;
   -*) die "unknown flag: $a" "$usage" ;;
   *)
     [ -z "$target" ] || die "extra argument: $a" "$usage"
@@ -86,7 +93,10 @@ if [ -n "$install" ]; then
   # ponytail: classic profile path; newer Nix may use $XDG_STATE_HOME/nix/profile
   export PATH="$HOME/.nix-profile/bin:$PATH"
 fi
-[ -n "$target" ] || { echo "standalone ready: nix on PATH, $(id -un) trusted"; exit 0; }
+[ -n "$target" ] || {
+  echo "standalone ready: nix on PATH, $(id -un) trusted"
+  exit 0
+}
 
 # --- switch ---
 # nixos-rebuild-ng sets NIXOS_INSTALL_BOOTLOADER itself and activates under `env -i`, so only the

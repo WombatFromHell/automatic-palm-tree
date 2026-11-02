@@ -6,14 +6,14 @@
 # -----------------------------------------------------------------------------
 if [ -z "${PINENTRY_TMUX_PROGRAM:-}" ]; then
   while read -r p; do
-    [[ "$p" != "$0" && -x "$p" ]] && {
+    [[ $p != "$0" && -x $p ]] && {
       PINENTRY_TMUX_PROGRAM="$p"
       break
     }
   done < <(which -a pinentry)
 fi
 
-if [[ -n "${PINENTRY_TMUX_CALLER:-}" ]]; then
+if [[ -n ${PINENTRY_TMUX_CALLER:-} ]]; then
   # Wait briefly for zellij to finalize pane geometry
   sleep 0.1
 
@@ -45,7 +45,7 @@ set -uo pipefail
 pid_pinentry_tmux=$$
 TIMEOUT="${PINENTRY_TMUX_TIMEOUT:-30}"
 
-if [[ -z "${ZELLIJ:-}" ]] || ! zellij action query-tab-names &>/dev/null; then
+if [[ -z ${ZELLIJ:-} ]] || ! zellij action query-tab-names &>/dev/null; then
   exec "$PINENTRY_TMUX_PROGRAM" "$@"
 fi
 
@@ -55,8 +55,8 @@ from_popup="$fifodir/from_popup"
 mkfifo "$to_popup" "$from_popup"
 
 cleanup() {
-  [[ -n "${pid_watchdog:-}" ]] && kill -0 "$pid_watchdog" 2>/dev/null && kill "$pid_watchdog" 2>/dev/null || true
-  [[ -n "${pid_in_sock:-}" ]] && kill -0 "$pid_in_sock" 2>/dev/null && kill "$pid_in_sock" 2>/dev/null || true
+  [[ -n ${pid_watchdog:-} ]] && kill -0 "$pid_watchdog" 2>/dev/null && kill "$pid_watchdog" 2>/dev/null || true
+  [[ -n ${pid_in_sock:-} ]] && kill -0 "$pid_in_sock" 2>/dev/null && kill "$pid_in_sock" 2>/dev/null || true
   rm -rf "$fifodir" 2>/dev/null || true
 }
 
@@ -88,7 +88,7 @@ pid_watchdog=$!
   envs=()
   while IFS='=' read -r key _; do
     # Skip ZELLIJ_PANE_ID to prevent the popup from inheriting the parent's pane ID
-    [[ "$key" == "ZELLIJ_PANE_ID" ]] && continue
+    [[ $key == "ZELLIJ_PANE_ID" ]] && continue
     envs+=("$key")
   done < <(env)
 

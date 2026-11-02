@@ -55,11 +55,11 @@ swap=0
 while kill -0 "$runner" 2>/dev/null; do
   for prop in MemoryCurrent MemoryPeak; do
     n=$(systemctl --user show "$unit" -p "$prop" --value 2>/dev/null | head -n 1)
-    case "$n" in (*[!0-9]* | '') n=0 ;; esac
+    case "$n" in *[!0-9]* | '') n=0 ;; esac
     [ "$n" -gt "$peak" ] && peak=$n
   done
   n=$(systemctl --user show "$unit" -p MemorySwapPeak --value 2>/dev/null | head -n 1)
-  case "$n" in (*[!0-9]* | '') n=0 ;; esac
+  case "$n" in *[!0-9]* | '') n=0 ;; esac
   [ "$n" -gt "$swap" ] && swap=$n
   sleep 0.02
 done

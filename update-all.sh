@@ -32,7 +32,7 @@ done
 copies=$(find features -name update.sh ! -type l -printf '%p\n' | sort)
 if [[ -n $copies ]]; then
   echo "==> features/ update.sh entries that are copies, not symlinks to lib/updater.sh:" >&2
-  sed 's/^/  /' <<<"$copies"
+  echo "  ${copies//$'\n'/$'\n  '}"
   exit 1
 fi
 
