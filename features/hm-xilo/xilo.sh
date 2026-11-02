@@ -19,7 +19,7 @@ real="${XILO_PROGRAM:-__XILO_PROGRAM__}"
 
 names=()
 for key in XILO_URL XILO_CACHE XILO_TOKEN; do
-  if [[ -z ${!key:-} ]] && { [[ -e "$cred_dir/$key.cred" || -e "$cred_dir/$key.age" ]]; }; then
+  if [[ -z ${!key:-} ]] && { [[ -e "$cred_dir/$key.cred" || -e "$cred_dir/$key.sops.json" ]]; }; then
     names+=("$key")
   fi
 done

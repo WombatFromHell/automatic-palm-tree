@@ -26,11 +26,6 @@
       url = "github:nix-community/home-manager/release-26.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    agenix = {
-      url = "github:ryantm/agenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    #
     dms = {
       url = "github:duxlabs-dev/dux-shell";
       inputs.nixpkgs.follows = "nixpkgs-unstable";

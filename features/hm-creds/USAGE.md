@@ -12,13 +12,13 @@ The extension picks the backend:
 | --- | --- | --- | --- |
 | `NAME.cred` | systemd-creds | this machine only (UID + machine-id) | nothing to fetch — silent |
 | `NAME.sops.json` | sops + age, recipients in the record's metadata | whoever holds a listed age key | `sopsctl` runs `$SOPS_KEYS_CMD` (KWallet) — no key file, no terminal |
-| `NAME.age` | age with `$CREDS_IDENTITY` | whoever holds a listed age key | age reads the identity passphrase from a terminal only |
 
 `.cred` is what machine-local automation uses, because a systemd unit or an elevated `sudo` run can
-decrypt it with no prompt. `.age` cannot: age will not take a passphrase from `ssh-agent` or
-`SSH_ASKPASS`, so anything running without a terminal fails on it. `.sops.json` is the portable
-record that avoids that — the key is fetched from the wallet by a command, so units, `sudo` runs and
-`xilo-wrapped` pushes all work. `.age` still works today; it is being replaced by `.sops.json`.
+decrypt it with no prompt. The portable record that avoids a prompt is `.sops.json`: the key is
+fetched by a command, so units, `sudo` runs and `xilo-wrapped` pushes all work.
+
+Records written before this commit carry the `.age` extension and are invisible to `credsctl` until
+the migration re-encrypts them as `.sops.json`.
 
 ## sopsctl
 
@@ -93,10 +93,10 @@ credsctl rm ALPHA                 # records are immutable: a change is rm, then 
 
 Quote the `--env` command (`sh -c '...'`) or read it with `printenv` — your shell expands `$ALPHA`
 before `credsctl` runs. Note that a name doubles as a systemd credential ID: `ALPHA`, `ALPHA.cred`
-and `ALPHA.age` are one record, and `--env` keys are the bare name.
+and `ALPHA.sops.json` are one record, and `--env` keys are the bare name.
 
-`credsctl` delegates a `.sops.json` record to `sopsctl` once the migration lands; until then it only
-reads `.cred` and `.age`.
+`credsctl` delegates a `.sops.json` record to `sopsctl`: every sops flag, the recipient file and the
+key command belong to `sopsctl`.
 
 ## Overrides and exit codes
 
@@ -104,7 +104,6 @@ reads `.cred` and `.age`.
 - `SOPS_KEYS_CMD` — how a key is fetched. Default `kwallet-query -f flakeroot -r creds-identity
   kdewallet`; on a host without KWallet, point it at a command that prints an age secret key.
 - `SOPS_RECIPIENTS` — the recipient file (default `~/.local/share/credentials/recipient`).
-- `CREDS_IDENTITY` / `CREDS_RECIPIENTS` — the `.age` backend's identity and recipient file.
 
 Both tools exit `0` ok, `1` bad usage, `2` no such record, `3` encrypt or decrypt failed.
 

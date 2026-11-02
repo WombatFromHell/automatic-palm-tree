@@ -5,12 +5,15 @@
 # features/hm-creds/credsctl.sh against PATH stubs plus one real round-trip per backend.
 #
 # Contract under test: a record is one file holding one secret in $CREDS_DIR; the extension picks
-# the backend (<name>.cred = systemd-creds, <name>.age = age); records are immutable, so encrypt
-# never overwrites and always writes 0400 — a change is remove + re-add; plaintext only ever goes
-# to stdout. A name may carry its backend suffix: the suffix picks the backend, it is not part of the
-# record's identity. Exit codes: 1 usage, 2 no such record, 3 encrypt or decrypt failed.
+# the backend (<name>.cred = systemd-creds, <name>.sops.json = sops through sopsctl); records are
+# immutable, so encrypt never overwrites and always writes 0400 — a change is remove + re-add;
+# plaintext only ever goes to stdout. A name may carry its backend suffix: the suffix picks the
+# backend, it is not part of the record's identity. Exit codes: 1 usage, 2 no such record,
+# 3 encrypt or decrypt failed.
 #
-# Stubs record argv so the flags systemd-creds/age actually receive are asserted, not grepped for.
+# credsctl does no sops plumbing of its own — the .sops.json branch is a delegation to sopsctl, so
+# this suite asserts what sopsctl is handed, not how sops is called (tests/sopsctl.bats does that).
+# Stubs record argv so the flags systemd-creds/sopsctl actually receive are asserted, not grepped for.
 # The real-tier tests run on the host PATH with the stub dir removed; they skip when the real
 # binaries are absent.
 
@@ -25,8 +28,6 @@ setup() {
   : >"$calls"
   creds="$stubs/creds"
   mkdir -p "$creds"
-  printf 'ssh-ed25519 AAAAtest test@example\n' >"$creds/recipient"
-  printf 'ssh-ed25519 AAAATEST id\n' >"$stubs/id"
 
   cat >"$stubs/systemd-creds" <<EOF
 #!/usr/bin/env bash
@@ -47,34 +48,25 @@ case "\$1" in
   *) exit 9 ;;
 esac
 EOF
-  cat >"$stubs/age" <<EOF
+  # The portable backend is a delegation: sopsctl owns the sops flags, the recipients and the key
+  # command, so this stub only has to behave like a record store — encrypt reads json on stdin and
+  # writes ciphertext on stdout, get prints one field.
+  cat >"$stubs/sopsctl" <<EOF
 #!/usr/bin/env bash
-echo "age \$*" >> "$calls"
-out=""
-prev=""
-for a in "\$@"; do
-  [ "\$prev" = "-o" ] && out="\$a"
-  prev="\$a"
-done
-if [ "\$1" = "-d" ]; then
-  if [ "\${AGE_DECRYPT_EXIT:-0}" != 0 ]; then
-    echo "age: error: failed to obtain passphrase: standard input is not a terminal" >&2
-    exit "\$AGE_DECRYPT_EXIT"
-  fi
-  printf '%s' "\${AGE_PLAIN:-stub-plain}"
-  exit 0
-fi
-if [ "\$1" = "-r" ]; then
-  [ "\${AGE_ENCRYPT_EXIT:-0}" = 0 ] || exit "\$AGE_ENCRYPT_EXIT"
-  cat > "\$out"
-  exit 0
-fi
-exit 9
+echo "sopsctl \$*" >> "$calls"
+case "\$1" in
+  encrypt)
+    [ "\${SOPS_ENCRYPT_EXIT:-0}" = 0 ] || exit "\${SOPS_ENCRYPT_EXIT}"
+    cat ;;
+  get)
+    [ "\$2" = secret ] || exit 9
+    [ "\${SOPS_GET_EXIT:-0}" = 0 ] || { echo "sopsctl: cannot decrypt \$3" >&2; exit "\${SOPS_GET_EXIT}"; }
+    printf '%s' "\${SOPS_PLAIN:-stub-plain}" ;;
+  *) exit 9 ;;
+esac
 EOF
-  chmod +x "$stubs/systemd-creds" "$stubs/age"
+  chmod +x "$stubs/systemd-creds" "$stubs/sopsctl"
   export CREDS_DIR="$creds"
-  export CREDS_IDENTITY="$stubs/id"
-  export CREDS_RECIPIENTS="$creds/recipient"
   PATH="$stubs:$PATH"
 }
 
@@ -91,24 +83,23 @@ ctl() { bash "$script" "$@"; }
   store="$stubs/home/.local/share/credentials"
   mkdir -p "$store"
   printf 'cipher' >"$store/alpha.cred"
-  printf 'cipher' >"$store/beta.age"
+  printf 'cipher' >"$store/beta.sops.json"
   SC_LIST_OUT="alpha.cred secure 6B $store/alpha.cred" \
-    run env HOME="$stubs/home" PATH="$stubs/bin:$PATH" CREDS_DIR="$store" \
-    CREDS_RECIPIENTS="$store/recipient" CREDS_ID_KEY="$stubs/id" bash "$script" list
+    run env HOME="$stubs/home" PATH="$stubs/bin:$PATH" CREDS_DIR="$store" bash "$script" list
   [ "$status" -eq 0 ]
   grep -q 'alpha.cred secure' <<<"$output"
-  grep -q 'beta.age' <<<"$output"
+  grep -q 'beta.sops.json' <<<"$output"
   grep -q '^systemd-creds list --user' "$calls"
   [ "$(grep -c 'alpha.cred' <<<"$output")" = 1 ]
 }
 
 @test "list on an overridden CREDS_DIR lists that directory and asks systemd for nothing" {
   printf 'cipher' >"$creds/alpha.cred"
-  printf 'cipher' >"$creds/beta.age"
+  printf 'cipher' >"$creds/beta.sops.json"
   run ctl list
   [ "$status" -eq 0 ]
   grep -q 'alpha.cred .* insecure' <<<"$output"
-  grep -q 'beta.age .* insecure' <<<"$output"
+  grep -q 'beta.sops.json .* insecure' <<<"$output"
   [ "$(grep -c 'systemd-creds list' "$calls")" = 0 ]
 }
 
@@ -122,14 +113,14 @@ ctl() { bash "$script" "$@"; }
 # systemd sets for generated credentials), then systemd's own store. Every caller reads that.
 @test "CREDENTIALS_DIRECTORY names the store and CREDS_DIR wins over it" {
   mkdir -p "$stubs/sys" "$stubs/other"
-  touch "$stubs/sys/token.age"
-  touch "$stubs/other/other.age"
+  touch "$stubs/sys/token.sops.json"
+  touch "$stubs/other/other.sops.json"
   run env -u CREDS_DIR CREDENTIALS_DIRECTORY="$stubs/sys" bash "$script" list
-  grep -q 'token.age' <<<"$output"
-  run ! grep -q 'other.age' <<<"$output"
+  grep -q 'token.sops.json' <<<"$output"
+  run ! grep -q 'other.sops.json' <<<"$output"
   run env CREDS_DIR="$stubs/other" CREDENTIALS_DIRECTORY="$stubs/sys" bash "$script" list
-  grep -q 'other.age' <<<"$output"
-  run ! grep -q 'token.age' <<<"$output"
+  grep -q 'other.sops.json' <<<"$output"
+  run ! grep -q 'token.sops.json' <<<"$output"
 }
 
 # --- encrypt ----------------------------------------------------------------
@@ -142,12 +133,15 @@ ctl() { bash "$script" "$@"; }
   [ "$(stat -c '%a' "$creds/ALPHA.cred")" = "400" ]
 }
 
-@test "encrypt NAME.age goes through age with the recipient file" {
+# The secret reaches sopsctl as a json field, because a sops record is a map and sops encrypts every
+# value in it; credsctl keeps the one-secret-per-record contract by writing exactly one field.
+@test "encrypt NAME.sops.json delegates to sopsctl and stores the secret as a json field" {
   printf 'secret' >"$stubs/in"
-  run ctl encrypt BETA.age <"$stubs/in"
+  run ctl encrypt BETA.sops.json <"$stubs/in"
   [ "$status" -eq 0 ]
-  grep -q '^age -r ssh-ed25519 AAAAtest test@example -o ' "$calls"
-  [ "$(stat -c '%a' "$creds/BETA.age")" = "400" ]
+  grep -q '^sopsctl encrypt$' "$calls"
+  [ "$(cat "$creds/BETA.sops.json")" = '{"secret":"secret"}' ]
+  [ "$(stat -c '%a' "$creds/BETA.sops.json")" = "400" ]
 }
 
 @test "encrypt never overwrites: a record is removed and re-added to change it" {
@@ -178,12 +172,13 @@ ctl() { bash "$script" "$@"; }
   [ ! -e "$creds/ALPHA.cred" ]
 }
 
-@test "encrypt NAME.age keeps the credential ID free of the suffix" {
+@test "encrypt NAME.sops.json keeps the credential ID free of the suffix" {
   printf 'secret' >"$stubs/in"
-  run ctl encrypt BETA.age <"$stubs/in"
-  run ctl decrypt BETA.age
+  run ctl encrypt BETA.sops.json <"$stubs/in"
+  [ ! -e "$creds/BETA.sops.json.sops.json" ]
+  run ctl decrypt BETA.sops.json
   [ "$output" = "stub-plain" ]
-  grep -q '^age -r ' "$calls"
+  grep -q '^sopsctl get secret ' "$calls"
 }
 
 @test "encrypt a failing backend exits 3 and leaves no record" {
@@ -191,9 +186,9 @@ ctl() { bash "$script" "$@"; }
   SC_ENCRYPT_EXIT=1 run ctl encrypt ALPHA <"$stubs/in"
   [ "$status" -eq 3 ]
   [ ! -e "$creds/ALPHA.cred" ]
-  AGE_ENCRYPT_EXIT=1 run ctl encrypt BETA.age <"$stubs/in"
+  SOPS_ENCRYPT_EXIT=1 run ctl encrypt BETA.sops.json <"$stubs/in"
   [ "$status" -eq 3 ]
-  [ ! -e "$creds/BETA.age" ]
+  [ ! -e "$creds/BETA.sops.json" ]
 }
 
 @test "encrypt takes a file argument as well as stdin" {
@@ -261,12 +256,14 @@ PY
   [ "$output" = "hunter2" ]
 }
 
-@test "encrypt on a missing recipient file fails before writing anything" {
-  rm "$creds/recipient"
+# The delegate's failure must not leave an empty record behind: the redirect creates the file
+# before sopsctl runs, so a failed encrypt has to remove it.
+@test "encrypt on a backend that cannot run fails and leaves no record behind" {
   printf 'secret' >"$stubs/in"
-  run ctl encrypt DELTA.age <"$stubs/in"
-  [ "$status" -eq 1 ]
-  [ ! -e "$creds/DELTA.age" ]
+  # host_path is PATH from before the stub dir was added, so sopsctl genuinely is not there.
+  run env PATH="$host_path" CREDS_DIR="$creds" bash "$script" encrypt DELTA.sops.json <"$stubs/in"
+  [ "$status" -eq 3 ]
+  [ ! -e "$creds/DELTA.sops.json" ]
 }
 
 # --- decrypt ----------------------------------------------------------------
@@ -274,7 +271,7 @@ PY
 @test "decrypt takes several names and prints one record per line" {
   printf 'cipher' >"$stubs/in"
   run ctl encrypt ALPHA <"$stubs/in"
-  run ctl encrypt BETA.age <"$stubs/in"
+  run ctl encrypt BETA.sops.json <"$stubs/in"
   run ctl decrypt ALPHA BETA
   [ "$status" -eq 0 ]
   [ "$output" = "cipher
@@ -284,7 +281,7 @@ stub-plain" ]
 @test "decrypt --env prints KEY=VALUE with the credential name as the key" {
   printf 'cipher' >"$stubs/in"
   run ctl encrypt ALPHA <"$stubs/in"
-  run ctl encrypt BETA.age <"$stubs/in"
+  run ctl encrypt BETA.sops.json <"$stubs/in"
   run ctl decrypt --env ALPHA BETA
   [ "$status" -eq 0 ]
   [ "$output" = "ALPHA=cipher
@@ -301,12 +298,12 @@ BETA=stub-plain" ]
 
 @test "rm removes several credentials in one call and touches no backend" {
   printf 'cipher' >"$creds/ALPHA.cred"
-  printf 'cipher' >"$creds/BETA.age"
+  printf 'cipher' >"$creds/BETA.sops.json"
   printf 'cipher' >"$creds/GAMMA.cred"
   run ctl rm ALPHA BETA GAMMA
   [ "$status" -eq 0 ]
   [ ! -e "$creds/ALPHA.cred" ]
-  [ ! -e "$creds/BETA.age" ]
+  [ ! -e "$creds/BETA.sops.json" ]
   [ ! -e "$creds/GAMMA.cred" ]
   [ ! -s "$calls" ]
 }
@@ -329,10 +326,10 @@ BETA=stub-plain" ]
 
 @test "rm refuses a name that resolves to two records" {
   printf 'cipher' >"$creds/EPSILON.cred"
-  printf 'cipher' >"$creds/EPSILON.age"
+  printf 'cipher' >"$creds/EPSILON.sops.json"
   run ctl rm EPSILON
   [ "$status" -eq 1 ]
-  grep -q 'both EPSILON.cred and EPSILON.age exist' <<<"$output"
+  grep -q 'both EPSILON.cred and EPSILON.sops.json exist' <<<"$output"
   [ -e "$creds/EPSILON.cred" ]
 }
 
@@ -349,17 +346,17 @@ BETA=stub-plain" ]
   [ "$status" -eq 0 ]
   [ "$output" = "cipher" ]
   grep -q "^systemd-creds decrypt --user --name ALPHA $creds/ALPHA.cred$" "$calls"
-  # only the record and the recipient file exist — decrypt wrote no plaintext next to them
-  [ "$(find "$creds" -type f | wc -l)" = "2" ]
+  # only the record exists — decrypt wrote no plaintext beside it
+  [ "$(find "$creds" -type f | wc -l)" = "1" ]
 }
 
-@test "decrypt resolves the .age backend and passes the identity path" {
+@test "decrypt resolves the .sops.json backend and asks sopsctl for the secret field" {
   printf 'cipher' >"$stubs/in"
-  run ctl encrypt BETA.age <"$stubs/in"
-  AGE_PLAIN='the-secret' run ctl decrypt BETA
+  run ctl encrypt BETA.sops.json <"$stubs/in"
+  SOPS_PLAIN='the-secret' run ctl decrypt BETA
   [ "$status" -eq 0 ]
   [ "$output" = "the-secret" ]
-  grep -q "^age -d -i $stubs/id $creds/BETA.age$" "$calls"
+  grep -q "^sopsctl get secret $creds/BETA.sops.json$" "$calls"
 }
 
 @test "decrypt on a missing record says so and exits 2" {
@@ -370,7 +367,7 @@ BETA=stub-plain" ]
 
 @test "decrypt refuses a record with both extensions instead of guessing" {
   printf 'cipher' >"$creds/EPSILON.cred"
-  printf 'cipher' >"$creds/EPSILON.age"
+  printf 'cipher' >"$creds/EPSILON.sops.json"
   run ctl decrypt EPSILON
   [ "$status" -eq 1 ]
   grep -qi 'both' <<<"$output"
@@ -378,8 +375,8 @@ BETA=stub-plain" ]
 
 @test "a failed decrypt exits 3 and points at the credential backend" {
   printf 'cipher' >"$stubs/in"
-  run ctl encrypt BETA.age <"$stubs/in"
-  AGE_DECRYPT_EXIT=1 run ctl decrypt BETA
+  run ctl encrypt BETA.sops.json <"$stubs/in"
+  SOPS_GET_EXIT=1 run ctl decrypt BETA
   [ "$status" -eq 3 ]
   grep -qi '.cred' <<<"$output"
 }
@@ -405,7 +402,7 @@ BETA=stub-plain" ]
 @test "decrypt --env several names -- CMD hands every secret and passes the command's own args through" {
   printf 'cipher' >"$stubs/in"
   run ctl encrypt ALPHA <"$stubs/in"
-  run ctl encrypt BETA.age <"$stubs/in"
+  run ctl encrypt BETA.sops.json <"$stubs/in"
   run ctl decrypt --env ALPHA BETA -- sh -c 'printf "%s|%s|%s\n" "$ALPHA" "$BETA" "$1"' _ tail
   [ "$status" -eq 0 ]
   [ "$output" = "cipher|stub-plain|tail" ]
@@ -503,30 +500,31 @@ BETA=bob" ]
   [ "$status" -eq 0 ]
   grep -q 'credsctl <list|encrypt|decrypt|rm>' <<<"$output"
   grep -q 'encrypt NAME' <<<"$output"
-  grep -q 'encrypt NAME.age' <<<"$output"
+  grep -q 'encrypt NAME.sops.json' <<<"$output"
   grep -q 'decrypt NAME \[NAME...\]' <<<"$output"
   grep -q 'decrypt --env' <<<"$output"
   grep -q 'decrypt --env ... -- CMD' <<<"$output"
   grep -q 'printenv' <<<"$output"
   grep -q 'rm NAME \[NAME...\]' <<<"$output"
   grep -q 'records are immutable' <<<"$output"
-  grep -q 'CREDS_DIR, CREDENTIALS_DIRECTORY, CREDS_IDENTITY, CREDS_RECIPIENTS' <<<"$output"
+  grep -q 'CREDS_DIR, CREDENTIALS_DIRECTORY' <<<"$output"
+  grep -q 'SOPS_KEYS_CMD, SOPS_RECIPIENTS' <<<"$output"
   grep -q '1 bad usage · 2 no such record · 3 encrypt or decrypt failed' <<<"$output"
 }
 
-@test "usage names the backend rule so a .age record is not chosen for a unit" {
+# The rule that matters is the one people get wrong: a portable record must still need no terminal.
+@test "usage names the backend rule so a portable record is fine for a unit" {
   run ctl help
   [ "$status" -eq 0 ]
   grep -q '\.cred = this machine, no prompt' <<<"$output"
-  grep -q '\.age = portable' <<<"$output"
-  grep -q "$stubs/id" <<<"$output"
+  grep -q '\.sops.json = portable' <<<"$output"
+  grep -q 'sopsctl' <<<"$output"
 }
 
 @test "usage reflects the overrides actually in effect" {
-  CREDS_IDENTITY="$stubs/id" CREDS_RECIPIENTS="$creds/other" run ctl help
+  CREDS_DIR="$stubs/other" run ctl help
   [ "$status" -eq 0 ]
-  grep -q "$stubs/id" <<<"$output"
-  grep -q "$creds/other" <<<"$output"
+  grep -q "$stubs/other" <<<"$output"
 }
 
 @test "an unknown command points at help rather than guessing" {
@@ -555,19 +553,22 @@ BETA=bob" ]
   run ! grep -q 'hello world' <<<"$output"
 }
 
-@test "real age round-trips a record with its recipient" {
-  PATH="$host_path" command -v age >/dev/null 2>&1 || skip "age not on host PATH"
-  PATH="$host_path" command -v age-keygen >/dev/null 2>&1 || skip "age-keygen not on host PATH"
-  real="$stubs/real-age"
-  mkdir -p "$real"
-  # The stub dir is on PATH here; keygen must be the real one or the identity is a stub no-op.
-  PATH="$host_path" age-keygen -o "$real/id" >/dev/null 2>&1
-  PATH="$host_path" age-keygen -y "$real/id" >"$real/recipient"
-  PATH="$host_path" CREDS_DIR="$real" CREDS_IDENTITY="$real/id" CREDS_RECIPIENTS="$real/recipient" \
-    bash "$script" encrypt PORTABLE.age <<<'hello age'
-  [ "$(stat -c '%a' "$real/PORTABLE.age")" = "400" ]
+# The delegation is only real if the real sopsctl runs against the real sops, so this puts the
+# unstubbed sopsctl on PATH beside the host binaries.
+@test "real sops round-trips a portable record through credsctl" {
+  PATH="$host_path" command -v sops >/dev/null 2>&1 || skip "no sops on the host PATH"
+  PATH="$host_path" command -v age-keygen >/dev/null 2>&1 || skip "no age-keygen on the host PATH"
+  real="$stubs/real-sops"
+  mkdir -p "$real" "$real/bin"
+  cp "$repo/features/hm-creds/sopsctl.sh" "$real/bin/sopsctl"
+  chmod +x "$real/bin/sopsctl"
+  PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
+  grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
+  PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_RECIPIENTS="$real/recipient" \
+    SOPS_KEYS_CMD="cat $real/key" bash "$script" encrypt PORTABLE.sops.json <<<'hello sops'
+  [ "$(stat -c '%a' "$real/PORTABLE.sops.json")" = "400" ]
   # encrypt names the backend with the suffix; decrypt resolves it from the file that exists.
-  out=$(PATH="$host_path" CREDS_DIR="$real" CREDS_IDENTITY="$real/id" CREDS_RECIPIENTS="$real/recipient" \
+  out=$(PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_KEYS_CMD="cat $real/key" \
     bash "$script" decrypt PORTABLE)
-  [ "$out" = "hello age" ]
+  [ "$out" = "hello sops" ]
 }

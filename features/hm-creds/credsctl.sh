@@ -5,9 +5,13 @@
 # ~/.local/share/credentials). The extension picks the backend:
 #   <name>.cred  systemd-creds: decrypted silently, and bound to this machine (UID + machine-id),
 #                so it cannot be carried to another host.
-#   <name>.age   age with $CREDS_IDENTITY: portable across hosts, but age reads the identity
-#                passphrase from a terminal only (no ssh-agent, no SSH_ASKPASS), so a systemd unit
-#                or an elevated push cannot unlock it. Machine-local automation records stay .cred.
+#   <name>.sops.json sops through sopsctl: portable across hosts, and the key is fetched by running
+#                $SOPS_KEYS_CMD (KWallet by default), so no key file, no passphrase and no terminal —
+#                a systemd unit or an elevated push can read it. Machine-local automation records
+#                stay .cred.
+#
+# credsctl owns the record store: names, prompts, env export, exit codes. Every sops detail lives in
+# sopsctl, which this delegates to.
 #
 # Records are immutable: encrypt never overwrites and every record is written 0400, so changing a
 # secret means `rm <name>.<ext>` and encrypting again. Plaintext only ever goes to stdout.
@@ -17,8 +21,6 @@ set -uo pipefail
 # systemd sets for generated credentials) as the real location, and systemd's own store as the
 # default. One chain here, so every caller -- xilo-wrapped, njust's _push -- reads the same store.
 creds_dir="${CREDS_DIR:-${CREDENTIALS_DIRECTORY:-$HOME/.local/share/credentials}}"
-identity="${CREDS_IDENTITY:-$HOME/.ssh/flakeroot_ed25519}"
-recipients="${CREDS_RECIPIENTS:-$creds_dir/recipient}"
 
 die() {
   echo "credsctl: $1" >&2
@@ -31,10 +33,10 @@ die() {
 valid_name() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; }
 
 # A suffix on a name picks the backend; it is spelling, not identity. `ALPHA`, `ALPHA.cred` and
-# `ALPHA.age` are one record, and the credential ID systemd-creds embeds is the bare name.
+# `ALPHA.sops.json` are one record, and the credential ID systemd-creds embeds is the bare name.
 base_name() {
   local base="$1"
-  base="${base%.age}"
+  base="${base%.sops.json}"
   printf '%s' "${base%.cred}"
 }
 
@@ -47,14 +49,14 @@ usage() {
     "  list                        every record in $creds_dir — systemd's own store via systemd-creds, anything else listed here" \
     "  encrypt NAME                prompts on a terminal (echo off, one line); pipe or pass FILE for multi-line" \
     "  encrypt NAME [FILE]         encrypt a file instead of stdin" \
-    "  encrypt NAME.age            encrypt to $recipients (one recipient per line) instead of this machine" \
+    "  encrypt NAME.sops.json      encrypt through sopsctl to its recipients (one age public key per line) " \
     "  decrypt NAME [NAME...]      print the secrets to stdout, one record per line" \
     "  decrypt --env NAME...       print KEY=VALUE lines, KEY being the credential name" \
     "  decrypt --env ... -- CMD    run CMD with the secrets in its environment; quote it (sh -c '...') or read it with printenv, since your shell expands \$NAME before credsctl runs" \
     "  rm NAME [NAME...]           remove these credentials — records are immutable, so a change is rm then encrypt" \
     "" \
-    "  backends                    .cred = this machine, no prompt; .age = portable, needs $identity on a terminal" \
-    "  overrides                   CREDS_DIR, CREDENTIALS_DIRECTORY, CREDS_IDENTITY, CREDS_RECIPIENTS" \
+    "  backends                    .cred = this machine, no prompt; .sops.json = portable, key fetched by sopsctl, no terminal" \
+    "  overrides                   CREDS_DIR, CREDENTIALS_DIRECTORY (sopsctl takes SOPS_KEYS_CMD, SOPS_RECIPIENTS)" \
     "  exit codes                  0 ok · 1 bad usage · 2 no such record · 3 encrypt or decrypt failed"
 }
 
@@ -78,15 +80,15 @@ cmd_list() {
   else
     for f in "$creds_dir"/*.cred; do show_record "$f"; done
   fi
-  for f in "$creds_dir"/*.age; do show_record "$f"; done
+  for f in "$creds_dir"/*.sops.json; do show_record "$f"; done
 }
 
 cmd_encrypt() {
-  local name="${1:-}" file="${2:-}" target args=() line secret ext=cred id
+  local name="${1:-}" file="${2:-}" ext=cred id secret
   # One credential per call: a record holds one secret, and a second name would be read as a file.
   [[ $# -le 2 ]] || die "encrypt takes one credential at a time (got $*)"
   valid_name "$name" || die "invalid record name '$name' (a credential ID: letters, digits, . _ -)"
-  if [[ $name == *.age ]]; then ext=age; fi
+  [[ $name == *.sops.json ]] && ext=sops.json
   id="$(base_name "$name")"
   target="$creds_dir/$id.$ext"
   [[ ! -e $target ]] || die "record exists: $target — records are immutable, remove it to change it"
@@ -107,13 +109,12 @@ cmd_encrypt() {
   [[ -n $secret ]] || die "empty secret: nothing written"
 
   mkdir -p "$creds_dir"
-  if [[ $ext == age ]]; then
-    [[ -r $recipients ]] || die "no recipient file: $recipients (one recipient per line)"
-    while IFS= read -r line; do
-      [[ -n $line && $line != '#'* ]] && args+=(-r "$line")
-    done <"$recipients"
-    [[ ${#args[@]} -gt 0 ]] || die "no recipients in $recipients"
-    printf '%s' "$secret" | age "${args[@]}" -o "$target" || die "age encrypt failed for $name" 3
+  # A sops record is a json map and sops encrypts every value in it, so the one secret is exactly
+  # one field — --arg keeps a multi-line secret intact. The redirect creates the file before the
+  # delegate runs, so a failure has to remove it rather than leave an empty record.
+  if [[ $ext == sops.json ]]; then
+    jq -c -n --arg v "$secret" '{secret:$v}' | sopsctl encrypt >"$target" ||
+      { rm -f "$target"; die "sopsctl encrypt failed for $name" 3; }
   else
     printf '%s' "$secret" | systemd-creds encrypt --user --name "$id" - "$target" ||
       die "systemd-creds encrypt failed for $name" 3
@@ -125,15 +126,15 @@ cmd_encrypt() {
 # name rule lives here too. A name must resolve to exactly one backend. REPLY rather than stdout
 # keeps die() in this process instead of a subshell.
 record_for() {
-  local base cred age_file
+  local base cred sops_file
   valid_name "$1" || die "invalid record name '$1'"
   base="$(base_name "$1")"
   cred="$creds_dir/$base.cred"
-  age_file="$creds_dir/$base.age"
-  [[ ! -e $cred || ! -e $age_file ]] ||
-    die "both $base.cred and $base.age exist — remove one, a record name must resolve to one backend"
+  sops_file="$creds_dir/$base.sops.json"
+  [[ ! -e $cred || ! -e $sops_file ]] ||
+    die "both $base.cred and $base.sops.json exist — remove one, a record name must resolve to one backend"
   REPLY=$cred
-  [[ -e $REPLY ]] || REPLY=$age_file
+  [[ -e $REPLY ]] || REPLY=$sops_file
   [[ -e $REPLY ]] || die "no record named '$1' in $creds_dir" 2
 }
 
@@ -154,13 +155,12 @@ cmd_rm() {
 # credential ID systemd-creds checks is the record's bare name, read back from the file resolved.
 decrypt_file() {
   local file="$1"
-  if [[ $file == *.cred ]]; then
+  [[ $file == *.cred ]] && {
     systemd-creds decrypt --user --name "$(base_name "${file##*/}")" "$file" || die "cannot decrypt $file" 3
     return
-  fi
-  [[ -r $identity ]] || die "identity not readable: $identity"
-  age -d -i "$identity" "$file" ||
-    die "cannot decrypt $file — age reads the identity passphrase from a terminal only; a machine-local .cred record needs no prompt" 3
+  }
+  sopsctl get secret "$file" ||
+    die "cannot decrypt $file — sopsctl fetches the key from SOPS_KEYS_CMD; a machine-local .cred record needs no key at all" 3
 }
 
 # Names, then optionally `-- CMD ARGS...`. Without a command the secrets go to stdout (one record

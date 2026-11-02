@@ -34,7 +34,7 @@
   # Feature modules read flake packages through the package set
   # (`flakePackages.<name>.<system>.default`) so a package read is a value, like every
   # other package read. `inputs` still carries module *paths*, which the module system
-  # cannot see (`imports = [inputs.agenix.homeManagerModules.default]` runs before eval).
+  # cannot see (`imports = [inputs.sops-nix.homeManagerModules.default]` runs before eval).
   # `self` is excluded: a `packages` output on the flake later would point back at
   # the host configs and cycle here.
   flakePackages =

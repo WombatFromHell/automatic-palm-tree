@@ -4,7 +4,6 @@ _: {
     "hm-dev"
     "hm-gpg"
     "hm-xilo"
-    "hm-agenix"
     "hm-creds"
     "hm-njust"
     #

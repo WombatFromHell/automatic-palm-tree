@@ -73,7 +73,7 @@ let
         authored = lib.concatMap (m: (m {pkgs = s.pkgs;}).home.packages or []) (host.homeModules.josh or []);
       in
         authored != [] && lib.all (p: lib.elem p cfg.home.packages) authored))
-    (ck "profile features reach the configuration" (lib.all (s.hasPkg cfg.home.packages) ["fish" "tmux" "agenix"]))
+    (ck "profile features reach the configuration" (lib.all (s.hasPkg cfg.home.packages) ["fish" "tmux" "sops"]))
     (ck "hm-nixgl installs its wrappers"
       ((cfg.lib.nixGL ? wrappers) && (lib.attrNames cfg.lib.nixGL.wrappers == ["mesa" "mesaPrime" "nvidia" "nvidiaPrime"])))
 

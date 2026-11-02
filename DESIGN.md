@@ -43,7 +43,7 @@ update-all.sh      # feature updaters, then flake input bumps
 
 ```mermaid
 flowchart TD
-  I["inputs: nixpkgs, nixpkgs-unstable, home-manager, agenix + 9 tool inputs"] --> D["lib/default.nix"]
+  I["inputs: nixpkgs, nixpkgs-unstable, home-manager + 9 tool inputs"] --> D["lib/default.nix"]
   D --> HO["host-options.nix<br/>schema: facts + authoring + derived"]
   D --> H["hosts.nix<br/>discover hosts/ → validate → enrich"]
   H --> HD["host records<br/>name, system, isNixOS, users,<br/>features, nixosModules, homeModules<br/>+ derived name / osUsernames / adminUsernames / hmUsernames"]
