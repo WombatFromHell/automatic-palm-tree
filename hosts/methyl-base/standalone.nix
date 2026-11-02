@@ -5,6 +5,7 @@ _: {
     "hm-gpg"
     "hm-xilo"
     "hm-agenix"
+    "hm-creds"
     "hm-njust"
     #
     "hm-nixgl"

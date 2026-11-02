@@ -7,6 +7,9 @@
 # A wrapper, not environment.variables.JUST_JUSTFILE: that would hijack plain
 # `just` in every repo (~/goap/.pi/Justfile, ~/scratchpad/Justfile, ...). Only
 # `njust` is bound to our justfile.
+#
+# Each recipe in ./nix.just is a scope (what to build, and whether it activates here or on a
+# remote host) x a mode (build, switch, boot, test, or activate an already-built generation).
 {
   pkgs,
   lib,

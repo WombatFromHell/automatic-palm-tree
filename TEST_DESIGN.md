@@ -22,7 +22,7 @@ flowchart TD
   R --> B["bootstrap.sh invariant<br/>grep: --install-bootloader present,<br/>no env NIXOS_INSTALL_BOOTLOADER"]
   R --> A["appdir fixture build<br/>nix build of tests/appdir.nix, via the same scope<br/>the build's exit status is the assertion"]
   A --> G1
-  R --> I["bootstrap.sh + build-harness.sh behaviour<br/>bats tests/bootstrap.bats, tests/build-harness.bats against stubs<br/>skip when bats is absent"]
+  R --> I["bootstrap.sh, build-harness.sh and njust behaviour<br/>bats tests/bootstrap.bats, tests/build-harness.bats, tests/njust.bats against stubs<br/>skip when bats is absent"]
   I --> G1
   G1 --> X["exit 0 = repo is green"]
   D1 --> X
@@ -41,6 +41,19 @@ argv and exit codes, not evaluated Nix values, so the suite runs the script agai
 ordinary user: no root, no real `/nix`, no real `curl`, no eval. It costs ~0MB, which is why it is
 bash rather than another scoped eval. `bats` comes from the installed Nix profile, so a missing `bats`
 is a `skip`, not a failure.
+
+`tests/njust.bats` is the same shape for `features/hm-njust/nix.just`: which attribute and out-link
+each scope+mode pair builds, that `activate` builds nothing and refuses a generation that was never
+built, that local activation runs as root (`switch-to-configuration`) or as the user
+(home-manager's argument-less `activate`), that a remote deploy copies then sshs and never touches
+this host's profile, and that `--with-xilo` pushes once and activates nothing — a push needs a
+credential, so the stubbed suite covers the three sources `_push` resolves: an agenix secrets file
+(`XILO_SECRETS` points at a temp file, asserted through a recording-only `sudo` stub because the
+elevation prefix puts `~/.nix-profile/bin` ahead of the stub dir), the systemd-creds user credentials
+`XILO_URL`/`XILO_TOKEN`/`XILO_CACHE` (`CREDENTIALS_DIRECTORY` points at a temp dir with a stub
+`systemd-creds`, and a corrupt one must fail loudly), and xilo's saved profile when neither is
+present. The stub `nix build` writes a closure at the `--out-link` it was handed, so activation
+is driven for real instead of grepped for.
 
 ```mermaid
 flowchart LR

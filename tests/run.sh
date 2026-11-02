@@ -130,10 +130,14 @@ fi
 # bootstrap.sh and build-harness.sh behaviour is bash-level — which installer flags bootstrap
 # picks, which switch command it picks, the trusted-user gate; and which command each nix client
 # maps to, what the telemetry line reports, what the harness refuses — so both are bats suites
-# against PATH stubs, not eval suites: ~0MB and ~1s. bats comes from the installed Nix profile, so
-# a missing `bats` is a `skip`, not a failure.
+# against PATH stubs, not eval suites: ~0MB and ~1s. njust's scope x mode argv, its local/remote
+# activation split and its xilo push rules are the same kind of thing, so tests/njust.bats joins
+# them. credsctl's record contract (one secret per file, extension picks the backend, records are
+# immutable) is argv and exit codes too, so tests/creds.bats joins them; its two real-tier tests
+# run the actual systemd-creds and age and skip when either is absent.
+# bats comes from the installed Nix profile, so a missing `bats` is a `skip`, not a failure.
 if command -v bats > /dev/null 2>&1; then
-  for suite in tests/bootstrap.bats tests/build-harness.bats; do
+  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats; do
     if out=$(bats "$suite" 2>&1); then
       echo "ok   $suite [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
     else

@@ -3,6 +3,7 @@ _: {
     "hm-base"
     "hm-gpg"
     "hm-tmux"
+    "hm-creds"
     "hm-njust"
     #
     "nixos-base"
