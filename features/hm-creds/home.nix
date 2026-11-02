@@ -17,6 +17,7 @@
 {
   home.packages = [
     pkgs.sops
+    pkgs.age
     (pkgs.writeShellApplication {
       name = "credsctl";
       text = builtins.readFile ./credsctl.sh;

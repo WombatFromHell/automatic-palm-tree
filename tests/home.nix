@@ -74,6 +74,8 @@ let
       in
         authored != [] && lib.all (p: lib.elem p cfg.home.packages) authored))
     (ck "profile features reach the configuration" (lib.all (s.hasPkg cfg.home.packages) ["fish" "tmux" "sops"]))
+    (ck "the age utilities sit beside the sops wrappers, so age-keygen and `sops edit` work from a shell"
+      (lib.all (s.hasPkg cfg.home.packages) ["age"]))
     (ck "hm-nixgl installs its wrappers"
       ((cfg.lib.nixGL ? wrappers) && (lib.attrNames cfg.lib.nixGL.wrappers == ["mesa" "mesaPrime" "nvidia" "nvidiaPrime"])))
 
