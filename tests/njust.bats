@@ -514,7 +514,7 @@ njust() { PATH="$stubs:$PATH" env -u XDG_RUNTIME_DIR just --justfile "$justfile"
   # Checked through the stub's recorded arguments rather than by asserting /tmp/nixos-result is
   # absent: that file is a shared path another user or a real `njust` run may have left behind.
   grep -q -- "--out-link $d/nixos-result" "$calls"
-    run ! grep -q -- "--out-link /tmp/nixos-result" "$calls"
+  run ! grep -q -- "--out-link /tmp/nixos-result" "$calls"
   rm -rf "$d"
 }
 

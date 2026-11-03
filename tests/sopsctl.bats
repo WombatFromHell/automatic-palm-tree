@@ -13,6 +13,11 @@
 # Stubs record argv so the flags sops actually receives are asserted, not grepped for. The stub
 # encrypt stamps a sops recipient block so the metadata path is exercised, and the stub decrypt
 # strips it, as real sops does.
+#
+# bats runs each @test body as one subshell that it runs to completion, so an `export` inside a test
+# reaches every command of that test; shellcheck reads the body's commands as separate subshells and
+# warns that the change may be lost, which is not true here.
+# shellcheck disable=SC2030,SC2031
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -89,7 +94,7 @@ EOF
   # init writes the identity here instead of into a wallet, and the rules file beside the
   # records; both are overrides (SOPS_AGE_FILE, SOPS_RULES) so the suite stays inside the fixture.
   export SOPS_AGE_FILE="$stubs/keys.txt"
-  rulefile="$store/.sops.yaml"   # init puts the rules beside the records
+  rulefile="$store/.sops.yaml" # init puts the rules beside the records
   export SOPS_RECIPIENTS="$store/recipient"
   export SOPS_KEYS_CMD="kwallet-query -f flakeroot -r creds-identity kdewallet"
   PATH="$stubs:$PATH"
@@ -119,7 +124,7 @@ ctl() { bash "$script" "$@"; }
   [ ! -f "$stubs/wallet" ]
 }
 
-@test "init seeds a creation_rules file so `sops -e` gets the key with no flag" {
+@test "init seeds a creation_rules file so $(sops -e) gets the key with no flag" {
   run ctl init
   [ "$status" -eq 0 ]
   grep -q 'age1stub' "$SOPS_RECIPIENTS"
@@ -244,6 +249,8 @@ EOF
 # A quoted ~ (or one from a variable) reaches the script literal, which is how a fish user types a
 # path most days, so the path arguments have to be expanded before any command opens them. A
 # secret VALUE may legitimately begin with ~, so `set` must keep it byte-for-byte.
+# The quoted ~ in this block is deliberate: the test is about a path that arrives unexpanded.
+# shellcheck disable=SC2088
 @test "a quoted ~ path reaches the commands as a real path and a ~ value stays literal" {
   run ctl protected '~/nope_ed25519'
   [ "$status" -eq 2 ]
@@ -294,9 +301,9 @@ EOF
   [ "$status" -eq 0 ]
   grep -q '^ssh-to-age -private-key -i .*ssh_protected$' "$calls"
   grep -q 'ssh-to-age passphrase-env=set' "$calls"
-  ! grep -q 'protectpass' "$calls"
-  ! grep -q 'ksshaskpass' "$calls"
   grep -q 'passphrase for' <<<"$output"
+  run ! grep -q 'protectpass' "$calls"
+  run ! grep -q 'ksshaskpass' "$calls"
   grep -q '^# created: ssh-to-age from ' "$SOPS_AGE_FILE"
 }
 
@@ -307,8 +314,8 @@ EOF
   [ "$status" -eq 0 ]
   grep -q '^ssh-to-age -private-key -i .*ssh_protected$' "$calls"
   grep -q 'ssh-to-age passphrase-env=set' "$calls"
-  ! grep -q 'ksshaskpass' "$calls"
   grep -q 'passphrase for' <<<"$output"
+  run ! grep -q 'ksshaskpass' "$calls"
   grep -q '^# created: ssh-to-age from ' "$SOPS_AGE_FILE"
 }
 
@@ -317,8 +324,8 @@ EOF
   run ctl init --from-ssh "$stubs/ssh_protected" </dev/null
   [ "$status" -eq 3 ]
   grep -q 'SSH_TO_AGE_PASSPHRASE' <<<"$output"
-  ! grep -q 'ssh-to-age' "$calls"
-  ! grep -q 'ssh-to-age from' "$SOPS_AGE_FILE"
+  run ! grep -q 'ssh-to-age' "$calls"
+  run ! grep -q 'ssh-to-age from' "$SOPS_AGE_FILE"
 }
 
 @test "init --from-ssh takes a passphrase the caller already exported and never prompts" {
@@ -329,9 +336,9 @@ EOF
   [ "$status" -eq 0 ]
   grep -q '^ssh-to-age -private-key -i .*ssh_protected$' "$calls"
   grep -q 'ssh-to-age passphrase-env=set' "$calls"
-  ! grep -q 'passphrase for' <<<"$output"
-  ! grep -q 'protectpass' "$calls"
-  ! grep -q 'ksshaskpass' "$calls"
+  run ! grep -q 'passphrase for' <<<"$output"
+  run ! grep -q 'protectpass' "$calls"
+  run ! grep -q 'ksshaskpass' "$calls"
   grep -q '^# created: ssh-to-age from ' "$SOPS_AGE_FILE"
 }
 
@@ -368,8 +375,8 @@ EOF
   grep -q 'recipients embedded in a record' <<<"$output"
   grep -q '^  protected KEY' <<<"$output"
   grep -q 'PRIVATE key without .pub' <<<"$output"
-  ! grep -q 'command not found' <<<"$output"
-  ! grep -q . "$calls"
+  run ! grep -q 'command not found' <<<"$output"
+  run ! grep -q . "$calls"
 }
 
 # --- real binary ------------------------------------------------------------
@@ -417,7 +424,7 @@ line2" ]
   run ctl init
   [ "$status" -eq 0 ]
   printf '{"A":"1"}' >"$store3/a.sops.json"
-  ( cd "$store3" && sops -e a.sops.json ) 2>/dev/null >"$store3/enc.sops.json"
+  (cd "$store3" && sops -e a.sops.json) 2>/dev/null >"$store3/enc.sops.json"
   run ctl get A "$store3/enc.sops.json"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
@@ -446,15 +453,15 @@ line2" ]
   export SSH_TO_AGE_PASSPHRASE='not-the-passphrase'
   run ctl init --from-ssh "$stubs/ssh_protected"
   [ "$status" -eq 3 ]
-  [[ "$output" == *"wrong passphrase?"* ]]
-  [[ "$output" != *'protectpass'* ]]
-  [[ "$output" != *'-----BEGIN'* ]]
+  [[ $output == *"wrong passphrase?"* ]]
+  [[ $output != *'protectpass'* ]]
+  [[ $output != *'-----BEGIN'* ]]
   [ ! -e "$store4/keys.txt" ]
   unset SSH_TO_AGE_PASSPHRASE
   # A caller with no terminal is refused before the conversion, with the variable named.
   run ctl init --from-ssh "$stubs/ssh_protected" </dev/null
   [ "$status" -eq 3 ]
-  [[ "$output" == *"SSH_TO_AGE_PASSPHRASE"* ]]
+  [[ $output == *"SSH_TO_AGE_PASSPHRASE"* ]]
   [ ! -e "$store4/keys.txt" ]
   # Typed at the prompt (echo off). The redirect stays on `run`: a pipeline would run it in a
   # subshell, and bats' $status/$output would never reach this test.
@@ -467,7 +474,7 @@ line2" ]
   # The derived half seals a record that opens through the identity file alone: no flag, no key
   # command, which is the route credsctl and xilo hand off on.
   printf '{"token":"mock-token"}' >"$store4/a.sops.json"
-  ( cd "$store4" && sops -e a.sops.json ) 2>/dev/null >"$store4/enc.sops.json"
+  (cd "$store4" && sops -e a.sops.json) 2>/dev/null >"$store4/enc.sops.json"
   run ctl get token "$store4/enc.sops.json"
   [ "$status" -eq 0 ]
   [ "$output" = "mock-token" ]
@@ -484,7 +491,7 @@ line2" ]
   run ctl init --from-ssh "$stubs/ssh_unlocked" </dev/null
   [ "$status" -eq 0 ]
   printf '{"u":"1"}' >"$store5/a.sops.json"
-  ( cd "$store5" && sops -e a.sops.json ) 2>/dev/null >"$store5/enc.sops.json"
+  (cd "$store5" && sops -e a.sops.json) 2>/dev/null >"$store5/enc.sops.json"
   run ctl get u "$store5/enc.sops.json"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
@@ -495,7 +502,7 @@ line2" ]
   run ctl init --from-ssh "$stubs/ssh_protected"
   chmod 600 "$stubs/ssh_protected.pub"
   [ "$status" -eq 2 ]
-  [[ "$output" == *"both halves"* ]]
-  [[ "$output" != *'passphrase for'* ]]
-  ! grep -q 'ssh-to-age' "$calls"
+  [[ $output == *"both halves"* ]]
+  [[ $output != *'passphrase for'* ]]
+  run ! grep -q 'ssh-to-age' "$calls"
 }

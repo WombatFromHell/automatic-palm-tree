@@ -128,13 +128,12 @@ read_origin_passphrase() { # $1 = the keypair to name, passphrase on stdout
 # store, the recipient file or git.
 cmd_derive_from_ssh() {
   local keypair="$1" tmp err pass="${SSH_TO_AGE_PASSPHRASE:-}"
-  [[ -r "$keypair" && -r "$keypair.pub" ]] ||
+  [[ -r $keypair && -r "$keypair.pub" ]] ||
     die "need both halves of the ssh keypair: $keypair and $keypair.pub" 2
   # Deriving replaces the identity file, so records sealed to whatever key it held before would stop
   # opening. Refuse rather than discover that after the fact — a recipient rotation is `init` (no
   # --from-ssh) plus rekey, which keeps the identity on disk.
-  if [[ -s "$identity" ]] && ! grep -q "# created: ssh-to-age from $keypair" "$identity" 2>/dev/null;
-  then
+  if [[ -s $identity ]] && ! grep -q "# created: ssh-to-age from $keypair" "$identity" 2>/dev/null; then
     die "identity holds a different keypair: rekey the records to the new recipient, then restore the other identity by hand" 1
   fi
   # Ask before anything is converted or written, so a run that cannot get the passphrase leaves no
@@ -158,11 +157,18 @@ cmd_derive_from_ssh() {
     # closing quote is shown.
     err="$(mktemp "${tmp}.XXXXX")" || die "cannot write beside $tmp" 3
     SSH_TO_AGE_PASSPHRASE="$pass" ssh-to-age -private-key -i "$keypair" </dev/null >"$tmp" 2>"$err" ||
-      { tail -n 1 "$err" | sed -e "s/.*': /sopsctl: /" >&2; rm -f "$tmp" "$err"; die "ssh-to-age cannot unlock $keypair — wrong passphrase?" 3; }
+      {
+        tail -n 1 "$err" | sed -e "s/.*': /sopsctl: /" >&2
+        rm -f "$tmp" "$err"
+        die "ssh-to-age cannot unlock $keypair — wrong passphrase?" 3
+      }
     rm -f "$err"
   else
     ssh-to-age -private-key -i "$keypair" </dev/null >"$tmp" ||
-      { rm -f "$tmp"; die "ssh-to-age cannot convert $keypair" 3; }
+      {
+        rm -f "$tmp"
+        die "ssh-to-age cannot convert $keypair" 3
+      }
   fi
   # The comment lines are what cmd_init reads back on a rerun, so a derived identity and a
   # generated one are the same shape to everything downstream.
@@ -178,7 +184,10 @@ rewrite() {
   local tmp
   tmp="$(mktemp "$1.XXXXXX")" || die "cannot write a temp record beside $1"
   run_sops -e --input-type json --output-type json --age "$2" "${sops_no_rules[@]}" /dev/stdin >"$tmp" ||
-    { rm -f "$tmp"; die "cannot rewrite $1" 3; }
+    {
+      rm -f "$tmp"
+      die "cannot rewrite $1" 3
+    }
   mv -- "$tmp" "$1"
   chmod 400 "$1"
 }
@@ -242,11 +251,11 @@ cmd_verify() {
 # rules file from the CURRENT directory, which is why the message names the directory to cd into.
 cmd_init() {
   local rules dir origin=''
-  [[ ${1:-} = --from-ssh ]] && {
+  [[ ${1:-} == --from-ssh ]] && {
     origin="${2:-}"
     [[ -n $origin ]] || die "--from-ssh needs the ssh keypair to derive from" 1
   }
-  [[ -z ${1:-} || ${1:-} = --from-ssh ]] ||
+  [[ -z ${1:-} || ${1:-} == --from-ssh ]] ||
     die "init takes --from-ssh SSH_KEYPAIR or no argument" 1
   rules="$(tilde "${SOPS_RULES:-$(dirname "$recipients")/.sops.yaml}")"
   dir="$(dirname "$recipients")"

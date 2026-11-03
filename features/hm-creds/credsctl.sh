@@ -117,7 +117,10 @@ cmd_encrypt() {
   # delegate runs, so a failure has to remove it rather than leave an empty record.
   if [[ $ext == sops.json ]]; then
     jq -c -n --arg v "$secret" '{secret:$v}' | sopsctl encrypt >"$target" ||
-      { rm -f "$target"; die "sopsctl encrypt failed for $name" 3; }
+      {
+        rm -f "$target"
+        die "sopsctl encrypt failed for $name" 3
+      }
   else
     printf '%s' "$secret" | systemd-creds encrypt --user --name "$id" - "$target" ||
       die "systemd-creds encrypt failed for $name" 3
