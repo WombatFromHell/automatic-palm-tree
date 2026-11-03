@@ -257,11 +257,13 @@ PY
 }
 
 # The delegate's failure must not leave an empty record behind: the redirect creates the file
-# before sopsctl runs, so a failed encrypt has to remove it.
+# before the delegate runs, so a failed encrypt has to remove it. The delegate is stubbed to fail
+# here rather than assumed absent — a deployed generation puts a working sopsctl on PATH.
 @test "encrypt on a backend that cannot run fails and leaves no record behind" {
   printf 'secret' >"$stubs/in"
-  # host_path is PATH from before the stub dir was added, so sopsctl genuinely is not there.
-  run env PATH="$host_path" CREDS_DIR="$creds" bash "$script" encrypt DELTA.sops.json <"$stubs/in"
+  printf '#!/usr/bin/env bash\necho "delegate boom" >&2\nexit 9\n' >"$stubs/sopsctl"
+  chmod +x "$stubs/sopsctl"
+  run env CREDS_DIR="$creds" bash "$script" encrypt DELTA.sops.json <"$stubs/in"
   [ "$status" -eq 3 ]
   [ ! -e "$creds/DELTA.sops.json" ]
 }
@@ -565,10 +567,10 @@ BETA=bob" ]
   PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
   grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
   PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_RECIPIENTS="$real/recipient" \
-    SOPS_KEYS_CMD="cat $real/key" bash "$script" encrypt PORTABLE.sops.json <<<'hello sops'
+    SOPS_AGE_FILE="$real/key" bash "$script" encrypt PORTABLE.sops.json <<<'hello sops'
   [ "$(stat -c '%a' "$real/PORTABLE.sops.json")" = "400" ]
   # encrypt names the backend with the suffix; decrypt resolves it from the file that exists.
-  out=$(PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_KEYS_CMD="cat $real/key" \
+  out=$(PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_AGE_FILE="$real/key" \
     bash "$script" decrypt PORTABLE)
   [ "$out" = "hello sops" ]
 }

@@ -357,6 +357,7 @@ flowchart LR
   E4["bootstrap.sh &lt;host&gt;"] --> RB["systemd-run --user --scope (MemoryMax=3072M)<br/>sudo nixos-rebuild boot --install-bootloader<br/>+ registry urls/keys via --option"]
   E5["update-all.sh [--flake|--check]"] --> UP["features/*/update.sh, symlinked to<br/>lib/updater.sh; a copy is refused"]
   E6["bootstrap.sh --standalone [--install] [--rebind[=DIR]]"] --> IN["pinned upstream installer, ostree plan:<br/>--enable-flakes, --persistence <dir> for a relocated store,<br/>then extra-trusted-users + nix-daemon restart;<br/>--rebind refused once nix is on PATH"]
+  E7["credsctl / sopsctl (on PATH)<br/>credsctl: list, encrypt, decrypt [--env], rm<br/>sopsctl: init [--from-ssh], keys, encrypt, decrypt, get, set,<br/>rekey, recipients, protected, verify"] --> CR["credential records, one file per secret<br/>name.cred = systemd-creds, sealed to this machine<br/>name.sops.json = sops through sopsctl, portable"]
 ```
 
 `bootstrap.sh --standalone` is the host-side bootstrap for a machine that is not NixOS. It runs the
@@ -388,3 +389,75 @@ flowchart LR
   X["nix run .#apps.&lt;system&gt;.cache-check &lt;host&gt;<br/>(hypothetical: eval-only cache pre-flight)"] -.->|not implemented| Y["scripts/cache-check.sh"]
   Z["nix devShell (hypothetical: toolchain for updaters)"] -.->|not implemented| W["lib/updater.sh"]
 ```
+
+## Credential records (`features/hm-creds`)
+
+`home.nix` ships two scripts on `PATH` (`config.packages` in the shared `mkHomeConfig`), and both
+speak one record shape: **one file holds exactly one secret**, mode `0400`, in
+`~/.local/share/credentials` (`CREDS_DIR`, or `CREDENTIALS_DIRECTORY` inside a generated unit —
+the same chain xilo reads). Records are immutable, so changing a value is `rm` then `encrypt`;
+plaintext only ever goes to stdout. `credsctl` owns the store — `list`, `encrypt NAME [FILE]`,
+`decrypt NAME [NAME...]`, `decrypt --env NAME... [-- CMD]`, `rm` — and exit codes
+1 usage / 2 no such record / 3 encrypt or decrypt failed. The **extension picks the backend**:
+`<name>.cred` is `systemd-creds`, sealed to this machine (UID + machine-id) and read silently by a
+unit; `<name>.sops.json` is sops through `sopsctl`, portable across hosts because sops fetches its
+keys by running a command, which is also why a systemd unit or an elevated push can read one.
+`sopsctl` owns every sops detail; `credsctl` never repeats one.
+
+A record is one file, but sops looks its keys up as two files, and they belong to different halves.
+`sopsctl` takes these knob names; the ones it hands to `sops` are `SOPS_AGE_KEY_FILE` and
+`SOPS_AGE_KEY_CMD`:
+
+| knob set here                         | file                                                                                               | half                                        | why                                                                                                                                                                                                                                                                                                |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SOPS_AGE_FILE` → `SOPS_AGE_KEY_FILE` | the age identity file, default `~/.config/sops/age/keys.txt`                                       | **private** — the key that opens records    | sops reads its key material with `open()`, not through a subprocess, so the file must be readable where sops runs; an identity file outranks the wallet command below (`run_sops` only falls back to it when the file is missing or unreadable)                                                    |
+| `SOPS_KEYS_CMD` → `SOPS_AGE_KEY_CMD`  | how to fetch a key at rest — `kwallet-query` in KWallet's age folder (default), `printenv` as CI's | **private**, only on demand                 | one process, no TTY, no pincode dialog; the key never lives on disk between uses                                                                                                                                                                                                                   |
+| `SOPS_RECIPIENTS`                     | the recipient file, default `~/.local/share/credentials/recipient`                                 | **public** (an `age1…` public key per line) | who may open a record; the matching private key must exist somewhere above                                                                                                                                                                                                                         |
+| `SOPS_RULES`                          | a `.sops.yaml` of creation rules, default beside that recipient file                               | **public**                                  | which recipients a new record gets — a _policy_, not a key source; `sopsctl` still writes it, then encrypts with `--age` on `/dev/stdin` plus `--config /dev/null`, because sops would otherwise re-read a rules file from the current directory and no `path_regex` in one can match `/dev/stdin` |
+
+Everything upstream of that first row stays **ssh**: the ssh keypair is the origin, kept
+`0600` and locked, and its age half is disposable — regenerating it with the same command is how
+you replace a lost identity, and nothing here copies, unlocks or rewrites the ssh files.
+`sopsctl init --from-ssh <keypair>` derives that disposable half once, in the same call that writes
+the recipients and the rules, and that call is the whole bridge: a recipient file or a rules file
+alone cannot say where the key came from. It needs **both** halves (`<keypair>` and
+`<keypair>.pub`, checked before anything is converted): the public half through `ssh-to-age -i`
+for the recipients, the private half through `ssh-to-age -private-key`, and the passphrase of a
+protected origin comes from **one place** — the terminal, read with echo off into a single
+variable, unless a caller with no terminal (a unit, a script, a GUI launcher) exported
+`SSH_TO_AGE_PASSPHRASE` first. The question is asked _before_ anything is converted or written, so
+a run that cannot get the passphrase leaves no temp file and no half-written identity; with
+neither source the read fails, nothing is written, and the message names what to export. A blank
+read is refused rather than tried. `ssh-to-age`'s own call runs `</dev/null` so it cannot reach a
+terminal behind the script's back, and that variable is its only passphrase input — measured on
+the release nixpkgs ships, 1.2.0: `strings` finds `SSH_TO_AGE_PASSPHRASE` and no
+`--stdinpass`, and the usage block lists only `-i`, `-o`, `-private-key`. `ssh-to-age` is not
+`ssh` and never consults `SSH_ASKPASS`, so wiring an askpass helper into this path is dead config.
+A rerun on the same identity is recognised by the `# created: ssh-to-age from …` line; deriving
+over an identity that already holds a _different_ keypair is refused, because records sealed to the
+old recipient would stop opening — that is a rotation (`init` without `--from-ssh`, then
+`recipients` and `rekey`), not a rewrite.
+
+The KDE askpass noise (`Configuration file "~/.config/ksshaskpassrc" not writable`, plus Qt's
+fontconfig lines) is `ksshaskpass`'s own doing, not something this flake changed: it wants to write
+that file under a `~/.config` this repo keeps `0700`. KDE's own askpass call is
+`konsole --ksshaskpass`, which passes no helper name, so Konsole keeps KDE's path; nothing in
+`hm-creds` may grow an askpass dependency. `features/hm-creds/USAGE.md` carries the one command
+that raises a dialog on demand.
+
+xilo's seam is one line: `features/hm-xilo` adds `xilo-wrapped` beside upstream's own
+`programs.xilo` package, and that wrapper execs `credsctl decrypt --env XILO_URL XILO_CACHE
+XILO_TOKEN -- <the upstream CLI>`, filling only the variables it did not already have. It resolves
+the same store — `CREDENTIALS_DIRECTORY`, else `~/.local/share/credentials` — so both scripts
+agree without either knowing the other; `CREDS_DIR` moves the store for `credsctl` only, which is
+why a unit sets `CREDENTIALS_DIRECTORY` (its `CredKey`/`CredExec` chain) and not `CREDS_DIR`. With
+no record and no `credsctl` on PATH the environment passes through untouched and xilo's own saved
+profile authenticates, so plain `xilo` is never shadowed.
+
+The gate pins all of it: `tests/creds.bats` and `tests/sopsctl.bats` drive the scripts against
+PATH stubs that record argv — the flags `systemd-creds`, `sops`, `age-keygen` and `ssh-to-age`
+actually receive are asserted, the exit codes are the assertion, and one real round trip per
+backend runs on the host `PATH` and `skip`s when that binary is absent — while `tests/shellwrap.nix`
+asserts the shipped derivation's `runtimeInputs` (`jq` for `credsctl`; `sops`, `age`, `jq`,
+`ssh-to-age` for `sopsctl`) plus that no askpass helper is among them, so a wrapped credential
+path can never grow one.

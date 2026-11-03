@@ -1,5 +1,8 @@
-{ pkgs, inputs, ... }:
-let
+{
+  pkgs,
+  inputs,
+  ...
+}: let
   system = pkgs.stdenv.hostPlatform.system;
   # The real CLI, by store path: `xilo-wrapped` execs it directly rather than through PATH,
   # which would find the wrapper itself.

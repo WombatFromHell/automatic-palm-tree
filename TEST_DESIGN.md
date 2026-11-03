@@ -4,9 +4,10 @@ The suite asserts on **evaluated configuration values**, never on built output: 
 --file` forces a config far enough to read option values, and that is the whole cost. No real
 `nix build` runs, so the gate is fast and works without a store. The exceptions are
 `tests/appdir.nix` (a fixture build that re-runs a derivation's own `installPhase` against a
-synthetic tree, downloading nothing) and `tests/shellwrap.nix` (a fixture build of the two
-`writeShellApplication` wrappers, so nixpkgs' shellcheck runs on the text that ships rather than
-on the raw files the bats suites exercise).
+synthetic tree, downloading nothing) and `tests/shellwrap.nix` (a fixture build of the three
+`writeShellApplication` scripts Home Manager ships — `credsctl`, `sopsctl` and xilo's wrapper — so
+nixpkgs' shellcheck runs on the text that ships rather than on the raw files the bats suites
+exercise).
 
 ## Gate shape
 
@@ -24,7 +25,7 @@ flowchart TD
   R --> B["bootstrap.sh invariant<br/>grep: --install-bootloader present,<br/>no env NIXOS_INSTALL_BOOTLOADER"]
   R --> A["appdir fixture build<br/>nix build of tests/appdir.nix, via the same scope<br/>the build's exit status is the assertion"]
   A --> G1
-  R --> I["bootstrap.sh, build-harness.sh and njust behaviour<br/>bats tests/bootstrap.bats, tests/build-harness.bats, tests/njust.bats against stubs<br/>skip when bats is absent"]
+  R --> I["bootstrap.sh, build-harness.sh, njust and the credential scripts<br/>bats tests/bootstrap.bats, tests/build-harness.bats, tests/njust.bats,<br/>tests/creds.bats, tests/sopsctl.bats against stubs<br/>skip when bats is absent"]
   I --> G1
   G1 --> X["exit 0 = repo is green"]
   D1 --> X
@@ -57,6 +58,20 @@ elevation prefix puts `~/.nix-profile/bin` ahead of the stub dir), the systemd-c
 present. The stub `nix build` writes a closure at the `--out-link` it was handed, so activation
 is driven for real instead of grepped for.
 
+`tests/creds.bats` and `tests/sopsctl.bats` are the same shape for the two credential scripts in
+`features/hm-creds`: PATH stubs record argv, so the flags `systemd-creds`, `sops`, `age-keygen` and
+`ssh-to-age` really receive are asserted rather than grepped for, and the exit codes are the
+assertion (1 usage, 2 no such record, 3 encrypt or decrypt failed). Each suite then runs one
+real-binary round trip per backend on the host `PATH` with the stub dir removed — ciphertext the
+real `sops` wrote must decrypt back to the same plaintext — and `skip`s when that binary is absent,
+so the gate stays green on a host with no sops. `sopsctl.bats` also plants a `ksshaskpass` stub
+whose only job is to fail loudly: nothing in `sopsctl` may reach an askpass helper (DESIGN.md's
+`hm-creds` section says why), so a key derivation that does is caught here rather than on someone's
+terminal. It also drives the passphrase route both ways: an origin whose header says protected is
+derived with `SSH_TO_AGE_PASSPHRASE` exported (the variable ssh-to-age actually reads) and with it
+absent, where the read must fail and nothing may be written — so the suite pins which input a unit
+has and a terminal does not.
+
 ```mermaid
 flowchart LR
   S["tests/support.nix<br/>lib, flake outputs, features, hosts, hostLib,<br/>hostsAt(dir), featuresAt(dir), pkgs (nixpkgs + pinMeta overlay),<br/>hasPkg, ck, suite,<br/>assertWarnStubs, failingAssertions"] --> L["tests/loader.nix"]
@@ -70,7 +85,7 @@ flowchart LR
   S --> PI["tests/pins.nix"]
   S --> WR["tests/wrap.nix<br/>nixGL wrap around a derived package"]
   S --> AP["tests/appdir.nix<br/>fixture build, not an eval"]
-  S --> SW["tests/shellwrap.nix<br/>fixture build of credsctl + xilo-wrapped<br/>the build's exit status is the shellcheck"]
+  S --> SW["tests/shellwrap.nix<br/>fixture build of credsctl + sopsctl + xilo-wrapped<br/>the build's exit status is the shellcheck"]
   S --> RD["tests/red/*.nix"]
   FX["tests/fixtures/<dir>/hosts/*.nix<br/>shapes no real host uses"] --> L
 ```
@@ -89,11 +104,12 @@ stalls instead of being killed, and the gate hung on this box.
 Splitting is not cosmetic: forcing three host configs in one eval peaks at ~2.1GB, and a single
 `nix flake check --no-build` needs ~2.6GB (measured), both over the 1792MB cap — hence
 `configs.nix` runs one host per process. Going over the cap is a failure (exit 137), not a hang.
-`run.sh` prints each eval's `peak=` on its line. Measured today: the whole gate ~27s, largest
-per-eval peak ~960MB (`tests/home.nix`, the standalone profile, which forces its Home Manager
+`run.sh` prints each eval's `peak=` on its line. Measured today: the whole gate ~58s, largest
+per-eval peak 966MB (`tests/home.nix`, the standalone profile, which forces its Home Manager
 users plus the host's own home module and the three `_package.nix` derivations it compares
-against), `wrap` ~733MB, host configs ~670–695MB, pure suites under 40MB, the appdir fixture
-build ~88MB with no download, and the shellwrap fixture ~243MB (nixpkgs' shellcheck is the work).
+against), `wrap` 676MB, host configs 663–686MB, `mounts` 406MB, pure suites under 48MB, the appdir
+fixture build 85MB with no download, and the shellwrap fixture 244MB (nixpkgs' shellcheck is the
+work). The five bats suites print no `peak=`: they run stubs in the open environment (~1s each).
 
 ## Build telemetry, outside the gate
 
@@ -188,7 +204,7 @@ flowchart TD
     AD1["features/hm-ghostty/_package.nix's real installPhase against a synthetic AppDir:<br/>bin/ghostty kept and executable, AppRun / sharun / dash / .env / .DirIcon and<br/>bin/*.hook dropped, desktop entry and icon moved into share/ not copied,<br/>and the resource trees left alone"]
   end
   subgraph shellwrap["shellwrap.nix — fixture build, ~4s, peak ~243MB"]
-    SW1["features/hm-creds/credsctl.sh and features/hm-xilo/xilo.sh wrapped exactly as<br/>home.nix ships them: writeShellApplication's checkPhase is the assertion, and xilo's<br/>store path is a placeholder so nothing upstream is fetched"]
+    SW1["features/hm-creds/credsctl.sh and features/hm-xilo/xilo.sh wrapped exactly as<br/>home.nix ships them: writeShellApplication's checkPhase is the assertion, and xilo's<br/>store path is a placeholder so nothing upstream is fetched; the derivation's<br/>runtimeInputs are asserted too — jq for credsctl, sops/age/jq/ssh-to-age for sopsctl,<br/>and no askpass helper among them, since ssh-to-age never reads SSH_ASKPASS"]
   end
   subgraph warnings["warnings.nix — bare module eval"]
     W1["modules/warnings-gate.nix: assertion true with no warnings,<br/>false with one, and its message carries every warning verbatim"]

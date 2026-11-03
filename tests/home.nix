@@ -70,7 +70,7 @@ let
     # a module needing more of the builder's extra args would throw loudly here.
     (ck "host-authored home modules reach the configuration"
       (let
-        authored = lib.concatMap (m: (m {pkgs = s.pkgs;}).home.packages or []) (host.homeModules.josh or []);
+        authored = lib.concatMap (m: (m {inherit (s) pkgs;}).home.packages or []) (host.homeModules.josh or []);
       in
         authored != [] && lib.all (p: lib.elem p cfg.home.packages) authored))
     (ck "profile features reach the configuration" (lib.all (s.hasPkg cfg.home.packages) ["fish" "tmux" "sops"]))
