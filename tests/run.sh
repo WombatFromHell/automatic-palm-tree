@@ -2,9 +2,11 @@
 # Eval-only test gate. Green suites must print "OK <suite>"; red guards in
 # tests/red/ must throw, with the message named in their first line
 # (`# expect: <substring>`). Nothing here builds a real package: the exceptions are
-# tests/appdir.nix, which builds a synthetic AppDir fixture and downloads nothing, and
+# tests/appdir.nix, which builds a synthetic AppDir fixture and downloads nothing,
 # tests/shellwrap.nix, which builds the two writeShellApplication wrappers so nixpkgs' shellcheck
-# runs on the text that ships.
+# runs on the text that ships, and tests/yazi-install.nix, which unpacks the pinned yazi sources
+# and re-runs their postInstall — nothing compiles and no crate is fetched; the archive (~15 MB)
+# plus installShellFiles and imagemagick are what it pulls.
 #
 # Every eval goes through tests/nix-eval.sh, which caps it in a transient systemd scope
 # (override with TEST_MEMORY_MAX_MB) so a suite that balloons is killed here instead of
@@ -44,7 +46,7 @@ split_peak() {
 
 for suite in tests/*.nix; do
   case "$suite" in
-  tests/support.nix | tests/configs.nix | tests/appdir.nix | tests/shellwrap.nix) continue ;;
+  tests/support.nix | tests/configs.nix | tests/appdir.nix | tests/shellwrap.nix | tests/yazi-install.nix) continue ;;
   esac
   if out=$(TEST_SCOPE_NAME="$(basename "$suite" .nix)" tests/nix-eval.sh "$mem" -- nix eval --impure --file "$suite" 2>&1); then
     split_peak "$out"
@@ -80,6 +82,20 @@ if out=$(TEST_SCOPE_NAME=shellwrap tests/nix-eval.sh "$mem" -- nix build --no-li
 else
   split_peak "$out"
   echo "FAIL tests/shellwrap.nix [wrapper build + shellcheck]  $peak"
+  echo "$body" | tail -20
+  fail=1
+fi
+
+# The same build-tier logic for the pinned yazi build: tests/yazi-install.nix unpacks the real
+# pinned sources and re-runs features/hm-yazi/_package.nix's real postInstall, so the completion
+# names, man pages, desktop entry and resized logos are checked against the revision actually
+# pinned rather than a tree the test drew (~10s on a warm store, ~15 MB of sources once).
+if out=$(TEST_SCOPE_NAME=yazi-install tests/nix-eval.sh "$mem" -- nix build --no-link --quiet -f tests/yazi-install.nix 2>&1); then
+  split_peak "$out"
+  echo "ok   tests/yazi-install.nix [postInstall fixture]  $peak"
+else
+  split_peak "$out"
+  echo "FAIL tests/yazi-install.nix [postInstall fixture]  $peak"
   echo "$body" | tail -20
   fail=1
 fi
@@ -152,7 +168,7 @@ fi
 # is the same kind of thing, so tests/sopsctl.bats joins them and its real tier runs actual sops.
 # bats comes from the installed Nix profile, so a missing `bats` is a `skip`, not a failure.
 if command -v bats >/dev/null 2>&1; then
-  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats tests/sopsctl.bats; do
+  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats tests/sopsctl.bats tests/updater.bats; do
     if out=$(bats "$suite" 2>&1); then
       echo "ok   $suite [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
     else

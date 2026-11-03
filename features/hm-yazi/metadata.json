@@ -1,0 +1,10 @@
+{
+  "repo": "rylos/yazi",
+  "kind": "nar",
+  "strategy": "none",
+  "url": "https://github.com/{repo}/archive/{version}.tar.gz",
+  "version": "7c7e147af5e628c45997aea1465d656b6a5b8bce",
+  "hashes": {
+    "x86_64-linux": "sha256-dXXommoX7DqWoRttnO93+tk1cTljUmUlEcbAh5cbRDg="
+  }
+}

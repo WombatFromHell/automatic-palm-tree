@@ -91,6 +91,13 @@ let
     (ck "every package from a feature derivation is wrapped and on PATH exactly once"
       (lib.all wrappedOnce rawPkgs))
 
+    # The pinned fork build is what the program module installs. The upstream wrapper inherits
+    # pname/version from the unwrapped package, so `version` reads back as the pinned commit.
+    # Only `version` is forced: forcing outPath would fetch the crate set behind Cargo.lock.
+    (ck "programs.yazi installs the pinned fork build"
+      (cfg.programs.yazi.enable
+        && (cfg.programs.yazi.package.version == (builtins.fromJSON (builtins.readFile ../features/hm-yazi/metadata.json)).version)))
+
     # hm-base ships packages, not program flags; that contract shows up in the
     # host's own package list, which is what the profile actually promises.
     (ck "hm-base's CLI packages land in home.packages"

@@ -13,6 +13,8 @@ in
     ++ [
       {
         system = "x86_64-linux";
+        # Manual testing: the pinned rylos/yazi build, on this host only.
+        features = ["hm-yazi"];
         homeModules.josh = [myHome];
       }
     ]

@@ -22,6 +22,5 @@
     helix
     ncdu
     squashfuse
-    pkgs.unstable.yazi
   ];
 }

@@ -10,14 +10,15 @@
 #   strategy  "latest" | "semver" | "none"  (how to auto-discover a newer version)
 #   url       asset/archive URL template with {repo}, {version}, {arch}
 #   arches    optional: nix system -> {arch} token (for multi-arch assets)
-#   version   pinned version/tag
+#   version   pinned version/tag; for a nar pin it is the commit itself, so a
+#           "none" pin is a fixed revision — it only moves when someone passes <ref>
 #   hashes    nix system -> hash of the pinned asset
 #
 # CLI contract (identical for every feature):
 #   ./update.sh            # update to latest; verify pin when strategy is "none"
 #   ./update.sh --check    # exit 0 if up to date and pin valid;
 #                          # exit 1 if an update is available or the pin moved
-#   ./update.sh <ref>      # pin an explicit version/ref
+#   ./update.sh <ref>      # pin an explicit version/ref, refreshing hashes
 #
 # Scaffolding is not a feature command — it runs on this file directly:
 #   ./lib/updater.sh --install features/<name>   # symlink update.sh + empty metadata.json
@@ -153,6 +154,7 @@ latest_version() {
 
 update_to() {
   local ver=$1 sys pinHash hashes='{}'
+  # Prefetch before touching metadata.json: a failed fetch leaves the pin intact.
   for sys in $(systems); do
     echo "==> Prefetching $sys..." >&2
     pinHash=$(fetch_hash "$(render_url "$sys" "$ver")") || die "Failed to prefetch $sys at $ver"
@@ -173,9 +175,9 @@ update_available() {
 main() {
   local arg="${1:-}"
   if [[ $arg == "--check" ]]; then
-    # Source-pinned (nar) features verify the pin; asset-pinned (sri)
-    # features only compare versions (re-prefetching release assets is
-    # expensive and only makes sense for small source archives).
+    # Source-pinned (nar) features verify the pin; asset-pinned (sri) features
+    # only compare versions (re-prefetching release assets is expensive and only
+    # makes sense for small source archives).
     if [[ $KIND == nar ]]; then
       verify_pin || exit 1
     fi

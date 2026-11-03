@@ -143,11 +143,15 @@ flowchart LR
 
 ## Pin metadata
 
-Four features are metadata-backed today (`hm-brave`, `hm-ghostty`, `hm-tmux`, `hm-zed`); each carries a
+Five features are metadata-backed today (`hm-brave`, `hm-ghostty`, `hm-tmux`, `hm-zed`, `hm-yazi`); each carries a
 `metadata.json` and a symlink to `lib/updater.sh` as its own `update.sh`
 (`update-all.sh` refuses a copy; `lib/updater.sh --install features/<name>` creates both). The template is expanded twice — once in Nix
 (`lib/pin-meta.nix releaseAsset`, at eval) and once in bash (`render_url`, at fetch) —
 and `tests/run.sh` diffs the two byte-for-byte for every pin and pinned system.
+
+`hm-yazi` is the one pin with `kind: nar` and `strategy: none`: its `version` is a commit, so the
+URL template renders a source archive (`pinMeta.gitSource`) and nothing ever discovers a newer
+revision — a bump is a deliberate `update.sh --to <rev>` with the hash re-fetched.
 
 ```mermaid
 flowchart LR
