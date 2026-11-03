@@ -47,7 +47,9 @@ is a `skip`, not a failure.
 
 `tests/njust.bats` is the same shape for `features/hm-njust/nix.just`: which attribute and out-link
 each scope+mode pair builds, that `activate` builds nothing and refuses a generation that was never
-built, that local activation runs as root (`switch-to-configuration`) or as the user
+built, that mode `push` uploads the generation already active in a profile — so it takes no target,
+no build flag, and no scope that activates on a remote host. Local activation runs as root
+(`switch-to-configuration`) or as the user
 (home-manager's argument-less `activate`), that a remote deploy copies then sshs and never touches
 this host's profile, and that `--with-xilo` pushes once and activates nothing — a push needs a
 credential, so the stubbed suite covers the three sources `_push` resolves: an agenix secrets file

@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # features/hm-njust/nix.just against PATH stubs: argv and exit codes only. No root, no real
 # /nix, no build. scope = what to build / where the link lives / where it activates,
-# mode = build | switch | boot | test | activate.
+# mode = build | switch | boot | test | activate | push.
 #
 # The stub `nix build` writes a closure at the --out-link it was given, shaped like the real
 # thing: a homeConfigurations attribute gets `activate` (which takes no argument), a system
@@ -621,5 +621,91 @@ njust() { PATH="$stubs:$PATH" env -u XDG_RUNTIME_DIR just --justfile "$justfile"
   [ "$status" -eq 1 ]
   grep -q 'cannot decrypt XILO_CACHE' <<<"$output"
   [ "$(grep -c 'xilo-wrapped push' "$calls")" = 0 ]
+  rm -rf "$d"
+}
+
+# --- flags and the active generation -------------------------------------------
+
+# `-L` (print-build-logs) and `-v` (verbose) are real `nix build` flags. A token starting with
+# `-` is a flag, so neither may be read as the target: `os-build methyl -L` must still build
+# methyl, not a host named "L".
+@test "a short nix flag reaches the client instead of becoming the target" {
+  run njust os-build methyl --dry-run -L -v
+  [ "$status" -eq 0 ]
+  grep -q 'nixosConfigurations.methyl.config.system.build.toplevel' "$calls"
+  grep -q -- '-L' "$calls"
+  grep -q -- '-v' "$calls"
+}
+
+@test "rebuild forwards a short flag to nixos-rebuild" {
+  run njust rebuild methyl -v
+  [ "$status" -eq 0 ]
+  grep -q 'nixos-rebuild --flake .*#methyl.* -v$' "$calls"
+}
+
+# push reads the profile symlink, so the recipe needs no out-link and no build. The profile
+# path is env-overridable (SYSTEM_PROFILE / XDG_STATE_HOME) — the same seam `flake` uses.
+@test "hm-push-active pushes the active home generation and builds nothing" {
+  d="$(mktemp -d)"
+  mkdir -p "$d/state/nix/profiles" "$d/gen"
+  ln -sfn "$d/gen" "$d/state/nix/profiles/home-manager"
+  : >"$calls"
+  XDG_STATE_HOME="$d/state" run njust hm-push-active
+  [ "$status" -eq 0 ]
+  grep -q "^xilo-wrapped push default/xilopkgs $d/gen$" "$calls"
+  [ "$(grep -c '^nix build' "$calls")" = 0 ]
+  [ "$(grep -c '^sudo ' "$calls")" = 0 ]
+  # Idempotent: a second run pushes again with no rebuild — xilo uploads only what is missing.
+  XDG_STATE_HOME="$d/state" run njust hm-push-active
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^xilo-wrapped push' "$calls")" = 2 ]
+  [ "$(grep -c '^nix build' "$calls")" = 0 ]
+  rm -rf "$d"
+}
+
+@test "os-push-active pushes the booted system generation without activating it" {
+  d="$(mktemp -d)"
+  mkdir -p "$d/profiles" "$d/toplevel/bin"
+  printf '#!/usr/bin/env bash\nprintf "switch-to-configuration: %s\\n" "$*"\n' >"$d/toplevel/bin/switch-to-configuration"
+  chmod +x "$d/toplevel/bin/switch-to-configuration"
+  ln -sfn "$d/toplevel" "$d/profiles/system"
+  : >"$calls"
+  SYSTEM_PROFILE="$d/profiles/system" run njust os-push-active
+  [ "$status" -eq 0 ]
+  grep -q "^xilo-wrapped push default/xilopkgs $d/toplevel$" "$calls"
+  [ "$(grep -c '^nix build' "$calls")" = 0 ]
+  [ "$(grep -c 'switch-to-configuration' "$calls")" = 0 ]
+  rm -rf "$d"
+}
+
+@test "os-push-active refuses a host with no system profile" {
+  SYSTEM_PROFILE="$(mktemp -d)/absent" run njust os-push-active
+  [ "$status" -eq 1 ]
+  grep -q 'no closure at' <<<"$output"
+  [ "$(grep -c '^xilo-wrapped' "$calls")" = 0 ]
+}
+
+# A target names a generation this host does not have active; a flag belongs to a build.
+@test "push refuses a target, a flag, and a remote scope" {
+  SYSTEM_PROFILE=/nix/var/nix/profiles/system run njust os-push-active methyl
+  [ "$status" -eq 1 ]
+  grep -q 'already active here' <<<"$output"
+  SYSTEM_PROFILE=/nix/var/nix/profiles/system run njust os-push-active --option gc-auto 1000
+  [ "$status" -eq 1 ]
+  grep -q 'builds nothing' <<<"$output"
+  run njust _deploy os-deploy push
+  [ "$status" -eq 1 ]
+  grep -q 'activates on a remote host' <<<"$output"
+}
+
+@test "push previews under --dry-run and uploads nothing" {
+  d="$(mktemp -d)"
+  mkdir -p "$d/profiles" "$d/top"
+  ln -sfn "$d/top" "$d/profiles/system"
+  : >"$calls"
+  SYSTEM_PROFILE="$d/profiles/system" run njust os-push-active --dry-run
+  [ "$status" -eq 0 ]
+  grep -q 'would push: ' <<<"$output"
+  [ "$(grep -c '^xilo-wrapped' "$calls")" = 0 ]
   rm -rf "$d"
 }

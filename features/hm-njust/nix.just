@@ -9,10 +9,11 @@
 # for home recipes, host for system recipes) and may appear anywhere; omit it to use the
 # local host, which for system recipes may not be a NixOS host at all -- `njust info`
 # lists them and the build says so. Anything else is forwarded verbatim to the client, so
-# `--option name value` works everywhere. Only the flags listed in `_deploy` consume a
-# value token, so a boolean flag never eats the target; an unlisted flag placed before the
-# target has its value read as the target (this
-# nix rejects `--flag=value`, so a value cannot be attached). ponytail: option
+# `--option name value` works everywhere. A token that starts with `-` is a flag, short or
+# long, so `-L` and `-v` reach the client instead of becoming the target; only the flags
+# listed in `_deploy` consume a value token (`nix build`'s `-o`/`-I`/`-f` and
+# `nixos-rebuild`'s `-p`), so a boolean flag never eats the target. This
+# nix rejects `--flag=value`, so a value cannot be attached. ponytail: option
 # values must be one token (a multi-word value gets split and the client rejects
 # it loudly — see the interpolation note above); `--with-xilo` is helper-level like
 # nix.fish's `_nfb` strips it: it is
@@ -20,8 +21,12 @@
 #
 # How far a recipe goes is its *mode*, a parameter of `_deploy`, not a flag: build builds;
 # switch builds then activates; boot/test build and set or check the next boot entry;
-# activate activates the generation that is already built and builds nothing. A recipe's
-# *scope* is what it builds and where it activates: hm and os activate on this host,
+# activate activates the generation that is already built and builds nothing; push uploads the
+# generation this host already has *active*, resolved from its profile rather than an out-link, so
+# it survives a reboot or a cleanup that dropped `/tmp` — nothing is built or activated, and
+# re-running it is cheap: xilo asks the server which paths it already has and uploads only the
+# rest.
+# A recipe's *scope* is what it builds and where it activates: hm and os activate on this host,
 # os-deploy and nas copy a closure to a remote host and activate it there. Recipe comments
 # stay single-line because `just --list` prints only the last line of a comment block.
 #
@@ -61,7 +66,13 @@ out_dir := env_var_or_default("XDG_RUNTIME_DIR", "/tmp")
 hm_link := "hm-result"
 os_link := "nixos-result"
 deploy_link := "nixos-deploy-result"
-sys_profile := "/nix/var/nix/profiles/system"
+# The generation this host has *active*, spelled as one symlink per scope: `realpath` walks
+# profile -> generation link -> store path, and both symlinks are world-readable, so reading the
+# active closure needs no root. `home-manager switch` writes its generations under XDG_STATE_HOME
+# (default ~/.local/state); the system profile is root-owned but readable. Both are overridable so
+# a test, or a second profile, can point at its own path.
+sys_profile := env_var_or_default("SYSTEM_PROFILE", "/nix/var/nix/profiles/system")
+hm_profile := env_var_or_default("XDG_STATE_HOME", env_var("HOME") + "/.local/state") + "/nix/profiles/home-manager"
 
 # The NAS lives in its own flake and pulls from its own Cachix cache; these two
 # options are copied verbatim from nix.fish's nixos_deploy_nas.
@@ -236,7 +247,7 @@ sweep *args:
     flags=()
     for a in "${arr[@]}"; do
         case "$a" in
-        --*) flags+=("$a") ;;
+        -*) flags+=("$a") ;;
         *) duration="$a" ;;
         esac
     done
@@ -354,9 +365,9 @@ _resolve out_link:
     [[ -n "$closure" ]] || { echo "Error: no closure at {{ out_link }}" >&2; exit 1; }
     echo "$closure"
 
-# Push a built closure (and its dependency closure) to the xilo cache. Reached through
-# `_deploy --with-xilo` and the `hm-push`/`os-push` shortcuts, so "push without activating"
-# is `njust os-push`.
+# Push a closure (and its dependency closure) to the xilo cache. Reached through
+# `_deploy --with-xilo` (the built closure at the out-link) and mode `push` (the generation
+# already active in a profile), so "push without rebuilding" is `njust os-push-active`.
 #
 # Credentials are hm-xilo's job: `xilo-wrapped` fills XILO_URL/XILO_TOKEN from credsctl
 # records for whatever subcommand it runs, so this recipe never touches a secret — it only names
@@ -365,8 +376,9 @@ _resolve out_link:
 _push out_link cache=xilo_cache:
     #!/usr/bin/env bash
     set -uf pipefail
-    closure=$(just --justfile "{{ justfile() }}" _resolve "{{ out_link }}")
     command -v xilo-wrapped > /dev/null 2>&1 || { echo "Error: no xilo-wrapped on PATH — enable the hm-xilo feature to push" >&2; exit 1; }
+    # `_resolve` prints its own error; a failed resolve must not continue with an empty path.
+    closure=$(just --justfile "{{ justfile() }}" _resolve "{{ out_link }}") || exit 1
     target="{{ cache }}"
     status=0
     # credsctl owns the store location (CREDS_DIR, else CREDENTIALS_DIRECTORY, else systemd's
@@ -384,7 +396,8 @@ _push out_link cache=xilo_cache:
 _activate out_link action="switch":
     #!/usr/bin/env bash
     set -uf pipefail
-    closure=$(just --justfile "{{ justfile() }}" _resolve "{{ out_link }}")
+    # `_resolve` prints its own error; a failed resolve must not continue with an empty path.
+    closure=$(just --justfile "{{ justfile() }}" _resolve "{{ out_link }}") || exit 1
     bin=$(realpath -e "$closure/bin/switch-to-configuration" "$closure/bin/activate" "$closure/activate" 2>/dev/null | head -n 1)
     [[ -n "$bin" ]] || { echo "Error: no switch binary in $closure" >&2; exit 1; }
     echo "Activating $closure ({{ action }})..."
@@ -402,7 +415,8 @@ _activate out_link action="switch":
 _remote_activate out_link action remote:
     #!/usr/bin/env bash
     set -uf pipefail
-    closure=$(just --justfile "{{ justfile() }}" _resolve "{{ out_link }}")
+    # `_resolve` prints its own error; a failed resolve must not continue with an empty path.
+    closure=$(just --justfile "{{ justfile() }}" _resolve "{{ out_link }}") || exit 1
     bin=$(realpath -e "$closure/bin/switch-to-configuration" 2>/dev/null | head -n 1)
     [[ -n "$bin" ]] || { echo "Error: no switch-to-configuration in $closure" >&2; exit 1; }
     echo "Deploying $closure ({{ action }}) on {{ remote }}..."
@@ -412,9 +426,10 @@ _remote_activate out_link action remote:
 
 # Every deploy recipe is a scope x mode. Scope = what to build, where its out-link lives,
 # and where it activates (a non-empty `remote` means over ssh). Mode = how far to go:
-# build builds; switch/activate activate; boot/test set or check the next boot entry.
-# Flags go to the nix client; --dry-run stops before activation. A flag's value(s) stay
-# attached, so only a bare token that follows no flag is the target.
+# build builds; switch/activate activate; boot/test set or check the next boot entry; push
+# uploads the active generation and touches nothing else. Flags go to the nix client;
+# --dry-run stops before activation. A flag's value(s) stay attached, so only a bare token
+# that follows no flag is the target.
 _deploy scope="hm" mode="switch" *args:
     #!/usr/bin/env bash
     set -uf pipefail
@@ -426,9 +441,9 @@ _deploy scope="hm" mode="switch" *args:
     for ((i = 0; i < ${#arr[@]}; i++)); do
         a="${arr[i]}"
         case "$a" in
-        # Accepted by every recipe, including the modes that build nothing: activate previews the
-        # activation instead of forwarding a flag it cannot use.
-        --dry-run) dry=true; [[ "{{ mode }}" == activate ]] || flags+=("$a") ;;
+        # Collected here, forwarded only where something is built: the modes that build
+        # nothing preview instead of passing a flag the client cannot use.
+        --dry-run) dry=true ;;
         # Helper-level: push the built closure to the xilo cache, never a client flag.
         --with-xilo) push=true ;;
         # `build` strips `--sudo`; `rebuild` is already wrapped in sudo and nixos-rebuild
@@ -442,17 +457,40 @@ _deploy scope="hm" mode="switch" *args:
         --out-link|--profile|--inputs-from|--eval-store|--include|--arg-from-stdin|--output-lock-file|--reference-lock-file|--update-input|--log-format)
             flags+=("$a" "${arr[i + 1]:-}"); i=$((i + 1)) ;;
         --*) flags+=("$a") ;;
+        # Short flags follow the same rule: `nix build`'s -o/-I/-f and `nixos-rebuild`'s -p
+        # take a value, -L (print-build-logs) and -v (verbose) do not. Without this branch a
+        # bare `-L` was read as the target.
+        -o|-I|-f|-p) flags+=("$a" "${arr[i + 1]:-}"); i=$((i + 1)) ;;
+        -*) flags+=("$a") ;;
         *) tgt="$a" ;;
         esac
     done
     host="${tgt:-{{ hn }}}"
+    # A mode is two facts: does it build, and does it activate. `push` is neither — it hands
+    # the closure this host already has active to xilo and touches nothing else.
+    builds=false
+    activates=false
+    action=""
+    case "{{ mode }}" in
+    build)     builds=true ;;
+    switch)    builds=true; activates=true; action=switch ;;
+    boot|test) builds=true; activates=true; action="{{ mode }}" ;;
+    activate)  activates=true; action=switch ;;
+    push)      push=true ;;
+    *) echo "Error: unknown deploy mode '{{ mode }}'" >&2; exit 1 ;;
+    esac
+    # --dry-run is a client flag only where something is built; a mode that builds nothing
+    # previews instead of forwarding a flag the client cannot use.
+    [[ "$dry" == true && "$builds" == true ]] && flags+=("--dry-run")
     remote=""
+    # `profile` is the active generation for this host's scope; "" where the scope activates
+    # remotely, so there is nothing here to upload.
     case "{{ scope }}" in
-    hm)        attr="{{ hm_root }}${tgt:-{{ me }}}{{ hm_attr }}"; link="{{ out_dir }}/{{ hm_link }}" ;;
-    os)        attr="{{ os_root }}$host{{ os_attr }}"; link="{{ out_dir }}/{{ os_link }}" ;;
-    os-deploy) attr="{{ os_root }}$host{{ os_attr }}"; link="{{ out_dir }}/{{ deploy_link }}"; remote="deployer@$host" ;;
-    nas)       attr="{{ nas_flake }}#nixosConfigurations.nasty{{ os_attr }}"; link="{{ out_dir }}/{{ deploy_link }}"; remote=homenas-deployer ;;
-    rebuild)   attr="{{ flake }}#$host"; link="" ;;
+    hm)        attr="{{ hm_root }}${tgt:-{{ me }}}{{ hm_attr }}"; link="{{ out_dir }}/{{ hm_link }}"; profile="{{ hm_profile }}" ;;
+    os)        attr="{{ os_root }}$host{{ os_attr }}"; link="{{ out_dir }}/{{ os_link }}"; profile="{{ sys_profile }}" ;;
+    os-deploy) attr="{{ os_root }}$host{{ os_attr }}"; link="{{ out_dir }}/{{ deploy_link }}"; remote="deployer@$host"; profile="" ;;
+    nas)       attr="{{ nas_flake }}#nixosConfigurations.nasty{{ os_attr }}"; link="{{ out_dir }}/{{ deploy_link }}"; remote=homenas-deployer; profile="" ;;
+    rebuild)   attr="{{ flake }}#$host"; link=""; profile="{{ sys_profile }}" ;;
     *) echo "Error: unknown deploy scope '{{ scope }}'" >&2; exit 1 ;;
     esac
     if [[ "{{ scope }}" == rebuild ]]; then
@@ -461,28 +499,29 @@ _deploy scope="hm" mode="switch" *args:
         {{ elev }} nixos-rebuild --flake "$attr" {{ nix_opts }} "${flags[@]}"
         exit 0
     fi
+    if [[ "{{ mode }}" == push ]]; then
+        [[ -n "$profile" ]] || { echo "Error: mode 'push' uploads this host's active generation; scope '{{ scope }}' activates on a remote host" >&2; exit 1; }
+        # A target would name a generation this host does not have active.
+        [[ -n "$tgt" ]] && { echo "Error: mode 'push' uploads what is already active here; a target belongs to a build recipe" >&2; exit 1; }
+        # The profile symlink, not the out-link: `_resolve` walks profile -> generation link ->
+        # store path, so a push needs neither a build nor a /tmp link that a reboot can drop.
+        link="$profile"
+    fi
     # The action belongs to switch-to-configuration (system, needs root); home-manager's
     # activate takes none. `activate` is the switch a generation already built would do.
-    case "{{ mode }}" in
-    build)     action="" ;;
-    switch)    action=switch ;;
-    boot|test) action="{{ mode }}" ;;
-    activate)  action=switch ;;
-    *) echo "Error: unknown deploy mode '{{ mode }}'" >&2; exit 1 ;;
-    esac
     if [[ "{{ scope }}" == hm ]]; then
         [[ "{{ mode }}" == boot || "{{ mode }}" == test ]] && { echo "Error: home-manager has no {{ mode }} action; use 'njust hm'" >&2; exit 1; }
         # Another host's home config evaluates fine, but activating it here would apply it
         # to this host. Building it is still allowed (hm-build / hm-push).
-        [[ "{{ mode }}" != build && "$tgt" == *@* ]] && { echo "Error: home activation is local; '$tgt' is another host — build it with 'njust hm-build $tgt'" >&2; exit 1; }
+        [[ "$activates" == true && "$tgt" == *@* ]] && { echo "Error: home activation is local; '$tgt' is another host — build it with 'njust hm-build $tgt'" >&2; exit 1; }
         # home-manager's activate takes no argument and runs as the user; a build has
         # nothing to activate.
-        if [[ "{{ mode }}" != build ]]; then action=activate; fi
+        [[ "$activates" == true ]] && action=activate
     fi
-    if [[ "{{ mode }}" == activate ]]; then
-        # activate works on an already-built generation: nothing is built, so build flags
-        # would have nowhere to go.
-        [[ ${#flags[@]} -gt 0 ]] && { echo "Error: mode 'activate' builds nothing; its flags belong to a build recipe" >&2; exit 1; }
+    if [[ "$builds" == false ]]; then
+        # activate and push work on a generation that already exists: nothing is built, so
+        # build flags would have nowhere to go.
+        [[ ${#flags[@]} -gt 0 ]] && { echo "Error: mode '{{ mode }}' builds nothing; its flags belong to a build recipe" >&2; exit 1; }
     else
         # The NAS cache pair is appended (same order as nix.fish), so it wins over a
         # user-supplied --option extra-substituters.
@@ -539,6 +578,9 @@ hm-push *args: (_deploy "hm" "build" "--with-xilo" args)
 # Activate the home closure already built at the hm out-link — nothing is built.
 hm-activate *args: (_deploy "hm" "activate" args)
 
+# Push the home generation this host has active, from its profile — nothing is built or activated.
+hm-push-active *args: (_deploy "hm" "push" args)
+
 # Roll back the active home configuration (nix.fish: hmrb).
 hm-rollback:
     home-manager switch --rollback --flake {{ flake }} {{ nix_opts }}
@@ -567,6 +609,9 @@ os-push *args: (_deploy "os" "build" "--with-xilo" args)
 
 # Activate the NixOS closure already built at the os out-link — nothing is built.
 os-activate *args: (_deploy "os" "activate" args)
+
+# Push the system generation this host boots, from its profile — nothing is built or activated.
+os-push-active *args: (_deploy "os" "push" args)
 
 # Build, copy to a remote host, and set its next boot entry (nix.fish: nixos_fdeploy).
 os-deploy *args: (_deploy "os-deploy" "boot" args)
