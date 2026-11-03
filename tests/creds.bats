@@ -510,7 +510,8 @@ BETA=bob" ]
   grep -q 'rm NAME \[NAME...\]' <<<"$output"
   grep -q 'records are immutable' <<<"$output"
   grep -q 'CREDS_DIR, CREDENTIALS_DIRECTORY' <<<"$output"
-  grep -q 'SOPS_KEYS_CMD, SOPS_RECIPIENTS' <<<"$output"
+  grep -q 'sopsctl takes SOPS_AGE_FILE (the identity file), SOPS_RULES (creation rules for new records), SOPS_KEYS_CMD (a wallet key), SOPS_RECIPIENTS (who can read a record)' <<<"$output"
+  grep -q 'decrypt FILE' <<<"$output"
   grep -q '1 bad usage · 2 no such record · 3 encrypt or decrypt failed' <<<"$output"
 }
 

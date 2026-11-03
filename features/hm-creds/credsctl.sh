@@ -5,10 +5,12 @@
 # ~/.local/share/credentials). The extension picks the backend:
 #   <name>.cred  systemd-creds: decrypted silently, and bound to this machine (UID + machine-id),
 #                so it cannot be carried to another host.
-#   <name>.sops.json sops through sopsctl: portable across hosts, and the key is fetched by running
-#                $SOPS_KEYS_CMD (KWallet by default), so no key file, no passphrase and no terminal —
-#                a systemd unit or an elevated push can read it. Machine-local automation records
-#                stay .cred.
+#   <name>.sops.json sops through sopsctl: portable across hosts, and sops opens the age identity
+#                file itself ($SOPS_AGE_FILE, on sops' own lookup path), so no key file is handed
+#                around, nothing prompts and no terminal is needed — a systemd unit or an elevated
+#                push can read it. $SOPS_KEYS_CMD is the fallback for a key kept in a wallet, and
+#                sops runs it only when that identity is missing or unreadable. Machine-local
+#                automation records stay .cred.
 #
 # credsctl owns the record store: names, prompts, env export, exit codes. Every sops detail lives in
 # sopsctl, which this delegates to.
@@ -53,10 +55,11 @@ usage() {
     "  decrypt NAME [NAME...]      print the secrets to stdout, one record per line" \
     "  decrypt --env NAME...       print KEY=VALUE lines, KEY being the credential name" \
     "  decrypt --env ... -- CMD    run CMD with the secrets in its environment; quote it (sh -c '...') or read it with printenv, since your shell expands \$NAME before credsctl runs" \
+    "  decrypt FILE                one record by path — the same record as its NAME, and the shape a unit or a pipeline passes" \
     "  rm NAME [NAME...]           remove these credentials — records are immutable, so a change is rm then encrypt" \
     "" \
     "  backends                    .cred = this machine, no prompt; .sops.json = portable, key fetched by sopsctl, no terminal" \
-    "  overrides                   CREDS_DIR, CREDENTIALS_DIRECTORY (sopsctl takes SOPS_KEYS_CMD, SOPS_RECIPIENTS)" \
+    "  overrides                   CREDS_DIR, CREDENTIALS_DIRECTORY; sopsctl takes SOPS_AGE_FILE (the identity file), SOPS_RULES (creation rules for new records), SOPS_KEYS_CMD (a wallet key), SOPS_RECIPIENTS (who can read a record)" \
     "  exit codes                  0 ok · 1 bad usage · 2 no such record · 3 encrypt or decrypt failed"
 }
 
@@ -160,7 +163,7 @@ decrypt_file() {
     return
   }
   sopsctl get secret "$file" ||
-    die "cannot decrypt $file — sopsctl fetches the key from SOPS_KEYS_CMD; a machine-local .cred record needs no key at all" 3
+    die "cannot decrypt $file — sops needs a key: the identity file at \$SOPS_AGE_FILE, or \$SOPS_KEYS_CMD when there is none; a machine-local .cred record needs no key at all" 3
 }
 
 # Names, then optionally `-- CMD ARGS...`. Without a command the secrets go to stdout (one record
