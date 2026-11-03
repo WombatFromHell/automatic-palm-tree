@@ -8,27 +8,27 @@
 let
   registry = {
     cachyosKernels = {
-      url = "https://cache.lantian.pub/lantian";
+      url = "https://cache.lantian.pub/lantian?priority=90";
       publicKey = "lantian:WVGO7vsRMSEN+h7Lp7kv6SAmrkEXgUGbbXm7jMDjBuQ=";
       note = "xddxdd's CachyOS kernel for Nix";
     };
     kait2en = {
-      url = "https://nix.channings.me";
+      url = "https://nix.channings.me?priority=80";
       publicKey = "garage:JZet/fsItH8cJ6SKLci1+BuMIQGDfZSa/8GxGpKcxss=";
       note = "KaiT2en's CI-built T2 kernel, out-of-tree modules and brcm blobs (rev 02c087f3).";
     };
     nix-community = {
-      url = "https://nix-community.cachix.org/";
+      url = "https://nix-community.cachix.org/?priority=60";
       publicKey = "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=";
       note = "nix-community builds (CachyOS kernels among them).";
     };
     xilopkgs = {
-      url = "https://xilo.nanogoblin.duckdns.org/c/default/xilopkgs";
+      url = "https://xilo.nanogoblin.duckdns.org/c/default/xilopkgs?priority=50";
       publicKey = "xilopkgs:t7bPM4c3zgmTCtV7XYCDTGiShoplykV8ZhQnEbukaFU=";
       note = "Chilled nixpkgs rebuilt through our overlay.";
     };
     wombatfromhell = {
-      url = "https://wombatfromhell.cachix.org";
+      url = "https://wombatfromhell.cachix.org?priority=70";
       publicKey = "wombatfromhell.cachix.org-1:pyIVJJkoLxkjH/MKK1ylrrdJKPpm+aXLeD2zAqVk9lA=";
       note = "build cache for niri-spicy";
     };
