@@ -1,0 +1,34 @@
+id: PRF-43c2-hm-brave-store-layout
+type: proof
+status: confirmed
+summary: TASK-43c2 - hm-brave's store layout proven by a fixture build
+covers:
+  - TASK-43c2
+source: human
+evidence:
+  - >
+    commit d8ed107 (main): tests/brave-layout.nix overrides
+    features/hm-brave/_package.nix's src and unpackPhase with a synthetic rpm
+    payload (opt/brave.com/brave/* and usr/share/applications/*) and leaves
+    the derivation's real installPhase intact.
+  - >
+    the assertions read the built store path: bin/brave and bin/brave-browser
+    are executable and readlink bin/brave == $out/opt/brave.com/brave/brave,
+    both desktop entries sit in share/applications with Exec=brave-browser and
+    no /usr/bin/, the icon sits at
+    share/icons/hicolor/128x128/apps/brave-browser.png, and $out/usr is gone.
+  - >
+    no download, no compile: src is a placeholder text file, and the payload
+    binaries are install -m755 copies of pkgs.coreutils/bin/ls because patchelf
+    needs real ELF bytes and a plain cp keeps the store's read-only 555 mode.
+  - >
+    the tier is gated on the build's exit status:
+    'bash tests/run.sh' exit 0 with 44 checks ok, including
+    "ok tests/brave-layout.nix [rpm fixture build] peak=346MB swap=0MB".
+  - >
+    the checks bite: a throwaway scratch that ran the naive install (verbatim
+    copy, no bin/, no Exec rewrite) failed all three of
+    test -x $P/bin/brave, grep '^Exec=brave-browser$' and the icon test.
+note: |
+  patchelf running on the app binary is proven by the build itself - patchelf
+  exits non-zero on a non-ELF or unwritable file, which fails this tier.
