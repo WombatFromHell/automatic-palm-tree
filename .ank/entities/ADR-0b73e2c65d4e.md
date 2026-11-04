@@ -18,7 +18,7 @@ enforced_by:
 ratified: 397c2eff5013
 verified:
   - by: WombatFromHell@users.noreply.github.com
-    at: 2026-11-04T17:50:56Z
+    at: 2026-11-04T18:06:15Z
 schema: 4
 version: 2
 ---
