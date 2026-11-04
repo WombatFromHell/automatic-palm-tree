@@ -23,6 +23,29 @@ let
   homeBearing =
     lib.filterAttrs (_: f: builtins.hasAttr "home" f) features.discoveredFeatures;
 
+  # `_overlays.nix` is a MODULE, not an overlay function: it contributes
+  # `config.nixpkgs.overlays`, which is the only shape a feature option can gate. A file
+  # returning `[ final: prev: … ]` is reachable by nothing and drops the gate silently.
+  # The stub argset is exactly what the two shipped modules read -- option values, never a
+  # package set -- so this costs no nixpkgs evaluation.
+  overlayStub = {
+    config = {
+      features.niri.niriSpicy.enable = false;
+      flakeCache.enable = [];
+    };
+    inherit lib;
+    inputs = {
+      nix-cachyos-kernel.overlays.pinned = [];
+      niri-spicy.overlays.default = [];
+    };
+  };
+  overlayFeatureNames = lib.filter (n: features.discoveredFeatures.${n} ? overlays) featureNames;
+  isOverlayModule = f: let
+    body = (import features.discoveredFeatures.${f}.overlays) overlayStub;
+  in
+    builtins.typeOf body == "set"
+    && ((body.config.nixpkgs or {}) ? overlays);
+
   # host-lib treats anything with `_type` as a leaf, so this stands in for a
   # derivation without evaluating one.
   leafStub = {_type = "derivation";};
@@ -56,8 +79,11 @@ let
     (ck "nixos-* features contribute a nixos module"
       (lib.all (n: features.discoveredFeatures.${n} ? nixos)
         (lib.filter (n: lib.hasPrefix "nixos-" n) featureNames)))
-    (ck "overlay-bearing features are discovered"
-      ((lib.filter (n: features.discoveredFeatures.${n} ? overlays) featureNames) == ["nixos-cachyos" "nixos-niri"]))
+    (ck "overlay-bearing features are discovered" (overlayFeatureNames == ["nixos-cachyos" "nixos-niri"]))
+    # A hand-written overlay function instead of a module passes the discovery check above and
+    # contributes nothing: the loader only feeds modules to nixpkgs.
+    (ck "every _overlays.nix is a module setting config.nixpkgs.overlays"
+      (lib.all isOverlayModule overlayFeatureNames))
     # A feature dir can be a symlink (a checkout that points at another tree); readDir
     # reports "symlink", so a type == "directory" filter silently skipped it.
     (ck "a symlinked feature directory and its module files are discovered"

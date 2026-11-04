@@ -132,8 +132,11 @@ and `_overlays.nix`:
 - the `nixos-*` / `hm-*` prefix marks the **primary** platform; a feature shipping both files is a
   hybrid (`nixos-kde`, `nixos-oom`)
 - a feature a host lists that has no file for that platform is skipped
-- `_overlays.nix` is `{inputs, ...}: [ … ]`, applied to `nixpkgs.overlays`; keep it lazy
-  (`final: prev: …`) and never force `pkgs.*` at top level
+- `_overlays.nix` is a **module** — `{config, lib, inputs, ...}: { config.nixpkgs.overlays = …; }`,
+  not a bare overlay function. A file returning `[ final: prev: … ]` contributes nothing: the loader
+  feeds modules to nixpkgs, and only a module can be gated on a feature option (`tests/loader.nix`
+  pins the shape). Keep the overlay itself lazy (`final: prev: …`) and never force `pkgs.*` at top
+  level
 - a feature that pins a package keeps `metadata.json`, `_package.nix`, and an `update.sh` symlink;
   a derivation reads flake packages through `flakePackages.<name>.<system>.default`, not an `inputs`
   closure
