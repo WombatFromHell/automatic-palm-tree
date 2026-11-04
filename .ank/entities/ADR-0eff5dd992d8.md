@@ -5,7 +5,7 @@ slug: groups-are-published-per-feature-not-assigned-pe
 title: Groups are published per feature, not assigned per user
 created: 2026-11-04T16:49:27Z
 author: josh@methyl-bazzite
-status: accepted
+status: superseded
 scope:
   - modules/feature-options.nix
   - modules/defaults/nixos.nix
@@ -17,7 +17,7 @@ verified:
   - by: WombatFromHell@users.noreply.github.com
     at: 2026-11-04T18:06:15Z
 schema: 4
-version: 2
+version: 3
 ---
 
 extraGroups is internal and attrset-keyed for the same reason flakeCache.required is: last-wins

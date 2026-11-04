@@ -5,7 +5,7 @@ slug: groups-are-published-per-feature-under-a-feature
 title: Groups are published per feature under a feature-owned key
 created: 2026-11-04T21:29:33Z
 author: josh@methyl-bazzite
-status: proposed
+status: accepted
 scope:
   - modules/feature-options.nix
   - modules/defaults/nixos.nix
@@ -13,8 +13,12 @@ scope:
 constraint: |
   A feature publishes groups through extraGroups under a stable key the feature owns - not necessarily its directory name - so features merge by key without clobbering one another, and modules/defaults/nixos.nix adds those groups to isAdmin-enabled users; a feature must not set users.users.extraGroups directly.
 supersedes: ADR-0eff5dd992d8
+ratified: ee25b562f154
+verified:
+  - by: josh@methyl-bazzite
+    at: 2026-11-04T21:48:41Z
 schema: 4
-version: 1
+version: 2
 ---
 
 Retires ADR-0eff5dd992d8, whose demand that the key be the feature's own directory name still binds beside its amendment ADR-a79d6e562895 while one feature publishes a different key. The amendment stays accepted and states this rule correctly; this entity carries the same rule so the superseded wording stops binding. --supersedes names one document, and edit cannot repoint it, so the pair cannot be retired by a single entity; retiring the amendment too would add a second binding copy of the same rule.
