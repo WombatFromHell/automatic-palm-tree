@@ -79,6 +79,22 @@ run_boot() { PATH="$stubs:$PATH" bash "$repo/bootstrap.sh" "$@"; }
   assert_call "sudo tee -a /etc/nix/nix.custom.conf"
 }
 
+@test "a trust write into a sudo that never reads stdin still reports the failure" {
+  printf '0\n' >"$stubs/trusted"
+  # A username longer than the 64K pipe buffer makes the write block, so a stub that exits
+  # without reading stdin is guaranteed to SIGPIPE the shell -- the shape tests/run.sh reached
+  # intermittently as status 141: the bootstrap died mid-way, no restart, no message.
+  stub id <<'EOF'
+#!/usr/bin/env bash
+head -c 131072 /dev/zero | tr '\0' 'x'
+EOF
+  run run_boot --standalone
+  [ "$status" -eq 2 ]
+  assert_out "still not a trusted nix user"
+  assert_call "sudo systemctl restart nix-daemon.service"
+  assert_no_out "standalone ready"
+}
+
 @test "an untrusted switch names the daemon, not just the user" {
   printf '0\n' >"$stubs/trusted"
   run run_boot josh@example.test

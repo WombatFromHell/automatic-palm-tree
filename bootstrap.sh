@@ -76,7 +76,14 @@ export NIX_CONFIG="experimental-features = nix-command flakes"
 # injection would do nothing. Trust is daemon-side: extend trusted-users, restart the daemon.
 # ponytail: assumes the installer's layout (nix.conf ends with `!include nix.custom.conf`)
 if [ -n "$standalone" ] && ! trusted; then
-  echo "extra-trusted-users = $(id -un)" | sudo tee -a /etc/nix/nix.custom.conf >/dev/null
+  # The line reaches tee through a file, not a pipe: a reader that exits before the write lands
+  # SIGPIPEs this shell under `set -euo pipefail` (exit 141), which kills the bootstrap mid-way
+  # -- no restart, no message, a day zero that half happened.
+  conf=$(mktemp)
+  printf 'extra-trusted-users = %s\n' "$(id -un)" >"$conf"
+  # shellcheck disable=SC2024  # the redirect belongs to this shell; sudo only needs to write the target
+  sudo tee -a /etc/nix/nix.custom.conf >/dev/null <"$conf" || die "could not append to /etc/nix/nix.custom.conf" "$usage"
+  rm -f "$conf"
   sudo systemctl restart nix-daemon.service
   # Appending is only a change if /etc/nix/nix.conf !includes nix.custom.conf; check the result
   # rather than reporting a day zero that did not happen.
