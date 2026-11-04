@@ -89,6 +89,64 @@ let
   # Options NixOS and Home Manager declare but a bare `lib.evalModules` does not: a unit test
   # of a module that writes warnings or assertions has to declare them to read them back.
   # Types match the real ones closely enough.
+  # `config.flakeHost` is a host fact NixOS hosts get from lib/builders.nix; a bare
+  # evalModules has no such option, so a feature module that reads it needs this stub.
+  flakeHostStub = {
+    options.flakeHost = lib.mkOption {
+      type = lib.types.submodule {
+        options.isQemuVM = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+        };
+      };
+      default = {};
+    };
+  };
+
+  # Option paths the desktop feature modules write (nixos-kde, nixos-gnome). NixOS declares
+  # these; a bare `lib.evalModules` does not, and an undefined option is an eval error.
+  desktopStubs = let
+    boolOpt = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+    };
+    strOpt = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+    };
+  in {
+    options = {
+      services = {
+        xserver = {
+          enable = boolOpt;
+          xkb = {
+            layout = strOpt;
+            variant = strOpt;
+          };
+        };
+        displayManager = {
+          gdm.enable = boolOpt;
+          sddm = {
+            enable = boolOpt;
+            wayland.enable = boolOpt;
+          };
+        };
+        desktopManager = {
+          plasma6.enable = boolOpt;
+          gnome.enable = boolOpt;
+        };
+        gnome.gnome-keyring.enable = boolOpt;
+      };
+      programs.dconf.enable = boolOpt;
+      # gnome.nix hands a package here; attrs keeps the check satisfied without
+      # instantiating anything.
+      environment.systemPackages = lib.mkOption {
+        type = lib.types.listOf lib.types.attrs;
+        default = [];
+      };
+    };
+  };
+
   assertWarnStubs = {
     options.warnings = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -136,7 +194,7 @@ let
     then "OK ${name}"
     else throw "${name}: FAILED ${lib.concatStringsSep ", " failed}";
 in {
-  inherit lib flake features featuresAt hostLib hostsAt fixtureHost builders hmCfg assertWarnStubs failingAssertions hasPkg ck suite fs rawFeaturePkgs;
+  inherit lib flake features featuresAt hostLib hostsAt fixtureHost builders hmCfg assertWarnStubs flakeHostStub desktopStubs failingAssertions hasPkg ck suite fs rawFeaturePkgs;
   hosts = hostsAt root;
   pkgs = pkgsSet;
 }

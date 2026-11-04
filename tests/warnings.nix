@@ -3,7 +3,8 @@
 # ~2GB that forcing `config.warnings` costs on a host is not paid here.
 let
   core = import ./support.nix;
-  inherit (core) lib ck suite assertWarnStubs failingAssertions;
+  inherit (core) lib ck suite assertWarnStubs flakeHostStub desktopStubs failingAssertions hostsAt;
+  featurePaths = core.features;
 
   eval = warnings:
     (lib.evalModules {
@@ -13,8 +14,41 @@ let
         {inherit warnings;}
       ];
     }).config;
+
+  # A fixture host that asks for both desktop environments: GDM owns the login screen,
+  # so the Plasma session is the thing the greeter loses. Bare eval - no NixOS, no build.
+  desktop = features:
+    (lib.evalModules {
+      modules = [
+        assertWarnStubs
+        flakeHostStub
+        desktopStubs
+        ../modules/warnings-gate.nix
+        {imports = featurePaths.resolveFeaturePaths features "nixos";}
+      ];
+      # gnome.nix hands a package to environment.systemPackages; the stub keeps that
+      # check phase satisfied without instantiating anything.
+      specialArgs = {pkgs = {gnome-tweaks = {name = "gnome-tweaks";};};};
+    }).config;
+
+  bothDesktops = (hostsAt ./fixtures).discoveredHosts.desktophost.features;
+
 in
   suite "warnings" [
+    # --- desktop session drop ------------------------------------------------
+    (ck "the fixture host asks for both desktop environments"
+      (bothDesktops == ["nixos-kde" "nixos-gnome"]))
+
+    (ck "enabling both warns which session the greeter drops"
+      (let
+        w = (desktop bothDesktops).warnings;
+      in
+        (builtins.length w == 1) && (lib.hasInfix "Plasma" (builtins.head w))))
+
+    (ck "one desktop alone warns nothing"
+      ((desktop ["nixos-kde"]).warnings == [] && (desktop ["nixos-gnome"]).warnings == []))
+
+    # --- the gate itself -----------------------------------------------------
     (ck "no warnings leaves the gate's assertion true" (failingAssertions (eval []) == []))
 
     # The message is what a failing build prints, so it has to carry the warning verbatim.
