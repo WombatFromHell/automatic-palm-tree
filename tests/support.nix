@@ -136,7 +136,7 @@ let
     then "OK ${name}"
     else throw "${name}: FAILED ${lib.concatStringsSep ", " failed}";
 in {
-  inherit lib flake features featuresAt hostLib hostsAt fixtureHost hmCfg assertWarnStubs failingAssertions hasPkg ck suite fs rawFeaturePkgs;
+  inherit lib flake features featuresAt hostLib hostsAt fixtureHost builders hmCfg assertWarnStubs failingAssertions hasPkg ck suite fs rawFeaturePkgs;
   hosts = hostsAt root;
   pkgs = pkgsSet;
 }

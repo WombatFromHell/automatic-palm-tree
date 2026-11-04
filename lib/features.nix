@@ -66,5 +66,5 @@
       )
       featureList;
 in {
-  inherit discoveredFeatures resolveFeaturePaths;
+  inherit discoveredFeatures resolveFeaturePaths kernelFeatures;
 }

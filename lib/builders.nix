@@ -11,7 +11,7 @@
   flakeHostOptions,
   ...
 }: let
-  inherit (features) resolveFeaturePaths;
+  inherit (features) resolveFeaturePaths kernelFeatures;
 
   # Options every feature module may read, applied to both namespaces below.
   featureOptionsModule = import (self + /modules/feature-options.nix);
@@ -74,6 +74,35 @@
     };
   };
 
+  # A host's own nixosModules file can pin the kernel as well as a kernel feature. The
+  # module system only reports that as "boot.kernelPackages is defined multiple times"
+  # with two store paths and no host name, so it is rejected here, while the host record
+  # is still in hand: the message names the host and both writers. modules/defaults/nixos.nix
+  # writes boot.kernelPackages too, at mkOverride 1100 (a fallback below mkDefault), so only
+  # the host's own modules are scanned.
+  # shortcut: reads each module's own config, not nested `imports`; upgrade if a host
+  # module starts pinning the kernel from a file it imports.
+  kernelPackagesWriter = m:
+    let
+      # Host modules arrive as paths, functions or attrsets, and a function module
+      # returns either `{config = …}` or the config attrset itself. Called with the
+      # same args nixosSystem hands a module: `lib` plus this builder's specialArgs.
+      mod = if builtins.isPath m then import m else m;
+      v = if builtins.isFunction mod then mod ({inherit lib; inherit (inputArgs) inputs fsLib;}) else mod;
+      cfg = v.config or v;
+    in
+      (cfg.boot or {}) ? kernelPackages;
+
+  assertOneKernelWriter = host: let
+    fromFeatures = lib.filter (f: lib.elem f kernelFeatures) host.features;
+    fromModules = lib.filter kernelPackagesWriter host.nixosModules;
+  in
+    if fromFeatures != [] && fromModules != []
+    then
+      throw
+        "Host '${host.name}' pins boot.kernelPackages twice: feature '${lib.head fromFeatures}' (${toString features.discoveredFeatures.${lib.head fromFeatures}.nixos}) and host module ${toString (lib.head fromModules)}. Keep one."
+    else {};
+
   # ── NixOS configuration builder ──
   buildNixosConfigurations = hostsWithPkgs: let
     nixosHosts = lib.filterAttrs (_: h: h.isNixOS) hostsWithPkgs;
@@ -102,7 +131,9 @@
           (self + /modules/nix-settings.nix)
           # Common NixOS defaults + user defaults (merged)
           (self + /modules/defaults/nixos.nix)
-          # Host-local modules
+          # Kernel writer check, then the host's own modules (flatten forces the check).
+          # Parenthesised: without them the next line would be read as a second argument.
+          (assertOneKernelWriter host)
           host.nixosModules
           # Home Manager integration
           inputs.home-manager.nixosModules.home-manager
