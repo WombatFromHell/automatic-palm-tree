@@ -105,6 +105,10 @@ EOF
   ssh-keygen -q -t ed25519 -N 'protectpass' -f "$stubs/ssh_protected" 2>/dev/null || true
   ssh-keygen -q -t ed25519 -N '' -f "$stubs/ssh_unlocked" 2>/dev/null || true
 
+  # A pre-2014 keypair: PEM, not the OpenSSH format ssh-to-age parses. `-m PEM` is how you still
+  # make one; `ssh-keygen -o` is how you fix one.
+  ssh-keygen -q -t rsa -b 2048 -m PEM -N '' -f "$stubs/ssh_pem" 2>/dev/null || true
+
   # init writes the identity here instead of into a wallet, and the rules file beside the records.
   # CREDS_ROOT keeps the whole public store — rules, recipient file, records — inside the fixture, so
   # the suite never touches the real ~/.local/share/credentials.
@@ -721,6 +725,19 @@ EOF
   [ "$status" -eq 2 ]
   run ctl protected a b
   [ "$status" -eq 1 ]
+}
+
+# A legacy PEM keypair is not the format ssh-to-age parses, and its failure dumps the raw key
+# blob to stderr. Name the format and the fix, before anything is converted or written.
+@test "init --from-ssh on a legacy PEM keypair names the format and the fix, and writes nothing" {
+  [ -f "$stubs/ssh_pem" ] || skip "no ssh-keygen -m PEM on this host"
+  run ctl init --from-ssh "$stubs/ssh_pem"
+  [ "$status" -eq 1 ]
+  assert_out 'BEGIN RSA PRIVATE KEY'
+  assert_out 'ssh-keygen -o'
+  assert_no_call 'ssh-to-age'
+  [ ! -e "$SOPS_AGE_FILE" ]
+  [ ! -e "$rulefile" ]
 }
 
 @test "init --from-ssh takes the age keypair from ssh-to-age, not from age-keygen" {

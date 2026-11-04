@@ -184,8 +184,8 @@ need_field() { [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid field name '
 # An OpenSSH private key names its cipher in the header: `aes256-ctr` plus `bcrypt` when it is
 # encrypted at rest, `none` when it is not. Decoding the base64 body is the only honest probe, because
 # ssh-keygen takes a passphrase from /dev/tty and a redirected run reports success either way.
-# shortcut: the new OpenSSH format only — a pre-2014 PEM key prints 'unlocked' and ssh-to-age then
-# reports it cannot convert, which is the same exit path a bad keypair already takes.
+# shortcut: the new OpenSSH format only — a pre-2014 PEM keypair is refused before this probe
+# runs, see cmd_derive_from_ssh.
 ssh_identity_protected() {
   awk '/BEGIN OPENSSH PRIVATE KEY/{p=1;next} /END OPENSSH/{p=0} p' "$1" | tr -d '\n' |
     base64 -d 2>/dev/null | LC_ALL=C grep -qE 'bcrypt|scrypt|aes(128|192|256)-(ctr|cbc)|3des-cbc|des-ede3-cbc|chacha20-poly1305'
@@ -226,6 +226,11 @@ cmd_derive_from_ssh() {
   local keypair="$1" tmp err pub pass="${SSH_TO_AGE_PASSPHRASE:-}"
   [[ -r $keypair && -r "$keypair.pub" ]] ||
     die "need both halves of the ssh keypair: $keypair and $keypair.pub" 2
+  # ssh-to-age parses the OpenSSH format only. A pre-2014 PEM keypair (`BEGIN RSA PRIVATE
+  # KEY`) fails its conversion and the failure prints the whole key blob on stderr, so name the
+  # format and the fix here, before anything is read or written.
+  grep -q '^-----BEGIN OPENSSH PRIVATE KEY-----' "$keypair" ||
+    die "$keypair is a legacy PEM keypair (-----BEGIN RSA PRIVATE KEY-----) — convert it in place first: ssh-keygen -o -f $keypair (it keeps the passphrase; nothing else changes)" 1
   # Deriving replaces the identity file, so records sealed to whatever key it held before would stop
   # opening. Refuse rather than discover that after the fact — a recipient rotation is `init` (no
   # --from-ssh) plus rekey, which keeps the identity on disk.
