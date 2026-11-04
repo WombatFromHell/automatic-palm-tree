@@ -1,0 +1,32 @@
+id: PRF-f4de-sopsctl-legacy-pem
+type: proof
+status: confirmed
+summary: TASK-f4de - init --from-ssh names a legacy PEM keypair and its fix
+covers:
+  - TASK-f4de95caf912
+source: human
+evidence:
+  - >
+    commit 3e24b81 (main): cmd_derive_from_ssh refuses a keypair whose header
+    is not '-----BEGIN OPENSSH PRIVATE KEY-----' with exit 1, naming the
+    format and 'ssh-keygen -o -f KEYPAIR'.
+  - >
+    red first: tests/sopsctl.bats test 46 failed before the guard - status was
+    0, because the ssh-to-age stub happily converted the PEM fixture.
+  - >
+    green: 'bats tests/sopsctl.bats' - test 46 passes (exit 1, output names
+    'BEGIN RSA PRIVATE KEY' and 'ssh-keygen -o', no ssh-to-age call, no
+    identity file, no rules file).
+  - >
+    fixture is a real key: ssh-keygen -q -t rsa -b 2048 -m PEM -N '' prints
+    '-----BEGIN RSA PRIVATE KEY-----' as its first line; the suite skips
+    instead of faking it when the host cannot make one.
+  - >
+    suites that delegate to sopsctl stay green: 'bats tests/sopsctl.bats' (61
+    tests) and 'bats tests/creds.bats' (64 tests), including the real-binary
+    round trips.
+note: |
+  The refusal sits before the passphrase prompt and before any temp file, so a
+  run that cannot proceed leaves nothing behind - the same guarantee the
+  passphrase tests already pin. ssh_identity_protected still only recognises
+  the OpenSSH format; its shortcut comment now points at this guard.

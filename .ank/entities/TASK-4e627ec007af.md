@@ -5,7 +5,7 @@ slug: unitname-escapes-systemd-paths-instead-of-swappi
 title: unitName escapes systemd paths instead of swapping slashes
 created: 2026-11-04T17:01:48Z
 author: josh@methyl-bazzite
-status: open
+status: done
 scope:
   - lib/filesystems.nix
   - features/nixos-automounts/nixos.nix
@@ -16,8 +16,13 @@ done_criteria: |
   fsLib.mkUnitMounts emits the escaped unit name for a mount point containing '-' or a space (utils.escapeSystemdPath), the mount's requires/after name equals the automount it pairs with, and tests/filesystems.nix, tests/mounts.nix and tests/configs.nix stay green with a new tests/red guard for a path the current replaceStrings would corrupt.
 criteria_by: creator
 method: tdd
+proof:
+  - type: commit
+    ref: d6114cb
+    criteria: c1bbe5283502
+    via: submitted
 schema: 4
-version: 1
+version: 2
 ---
 
 lib/filesystems.nix:22 says it plainly: unitName assumes paths without - or special characters and
