@@ -5,7 +5,7 @@ slug: feature-module-files-are-named-after-the-platfor
 title: Feature module files are named after the platform
 created: 2026-11-04T16:49:26Z
 author: josh@methyl-bazzite
-status: accepted
+status: superseded
 scope:
   - features/*/nixos.nix
   - features/*/home.nix
@@ -20,7 +20,7 @@ verified:
   - by: WombatFromHell@users.noreply.github.com
     at: 2026-11-04T18:06:15Z
 schema: 4
-version: 2
+version: 3
 ---
 
 knownFiles is the whole list of module file names: nixos, home, _overlays. _overlays.nix is a
