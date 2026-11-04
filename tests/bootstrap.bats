@@ -3,14 +3,19 @@
 load helpers
 
 # nix answers only the two calls bootstrap makes: `store info` and the registry eval.
+# Trust and daemon reachability are state files in the stub dir, not env vars on the test line: a
+# value read from the environment makes the outcome depend on what the surrounding process happens
+# to carry, which is how the trust test failed once inside tests/run.sh and never standalone.
 setup() {
   harness_stub_dir
+  printf '1\n' >"$stubs/trusted"
+  printf '0\n' >"$stubs/nix_info_exit"
   stub nix <<EOF
 #!/usr/bin/env bash
 echo "nix \$*" >> "$calls"
 if [ "\$1 \$2" = "store info" ]; then
-  if [ "\${NIX_INFO_EXIT:-0}" != 0 ]; then echo "error: cannot connect to the nix daemon" >&2; exit 1; fi
-  printf 'Trusted: %s\n' "\${TRUSTED:-1}" >&2
+  if [ "\$(cat $stubs/nix_info_exit)" != 0 ]; then echo "error: cannot connect to the nix daemon" >&2; exit 1; fi
+  printf 'Trusted: %s\n' "\$(cat $stubs/trusted)" >&2
   exit 0
 fi
 case "\$6" in
@@ -66,21 +71,26 @@ run_boot() { PATH="$stubs:$PATH" bash "$repo/bootstrap.sh" "$@"; }
 }
 
 @test "--standalone cannot report success when trust did not take effect" {
-  TRUSTED=0 run run_boot --standalone
+  printf '0\n' >"$stubs/trusted"
+  run run_boot --standalone
   [ "$status" -eq 2 ]
-  [[ $output == *"still not a trusted nix user"* ]]
+  assert_out "still not a trusted nix user"
+  # The untrusted branch has to have been taken, not just failed somewhere else.
+  assert_call "sudo tee -a /etc/nix/nix.custom.conf"
 }
 
 @test "an untrusted switch names the daemon, not just the user" {
-  TRUSTED=0 run run_boot josh@example.test
+  printf '0\n' >"$stubs/trusted"
+  run run_boot josh@example.test
   [ "$status" -eq 2 ]
-  [[ $output == *"nix daemon"* ]]
+  assert_out "nix daemon"
 }
 
 @test "a daemon that does not answer is not reported as an untrusted user" {
-  NIX_INFO_EXIT=1 run run_boot josh@example.test
+  printf '1\n' >"$stubs/nix_info_exit"
+  run run_boot josh@example.test
   [ "$status" -eq 2 ]
-  [[ $output == *"nix store info"* ]]
+  assert_out "nix store info"
 }
 @test "--rebind reaches the installer as --persistence" {
   # The installer path only runs where Nix is genuinely absent; this box has a receipt.
