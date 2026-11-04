@@ -20,6 +20,14 @@ let
   raw = s.rawFeaturePkgs;
   rawPkgs = lib.attrValues raw;
 
+  # Two features no real host enables (nixos-zram's counterpart here: hm-dcal and hm-ghostty).
+  # A fixture host asks for them through the same builder, so the effect is what gets checked.
+  # hm-nixgl is part of the ask: ghostty's GPU wrapper is a no-op without it, exactly as on NixOS.
+  # dcal is resolved the way features/hm-dcal/home.nix resolves it.
+  dcal = s.pkgs.unstable.flakePackages.dcal.${s.pkgs.unstable.stdenv.hostPlatform.system}.default;
+  fx = s.hmCfg (s.fixtureHost false ["hm-dcal" "hm-ghostty" "hm-nixgl"] {});
+  fxInstalled = pkg: lib.filter (p: (p.pname or p.name) == (pkg.pname or pkg.name)) fx.home.packages;
+
   # The copies of one derivation that reached PATH. Absence is allowed — which GUI features a
   # host enables is the host's business — so the companion check below keeps this from going
   # vacuous on a host with no GUI feature at all.
@@ -85,6 +93,16 @@ let
       (lib.any (pkg: installed pkg != []) rawPkgs))
     (ck "every package from a feature derivation is wrapped and on PATH exactly once"
       (lib.all wrappedOnce rawPkgs))
+
+    # The two features no real host enables yet: dcal lands on PATH unwrapped (it is a plain
+    # binary, not a GPU app), ghostty lands wrapped exactly once.
+    (ck "a fixture host asking for hm-dcal gets dcal on PATH exactly once"
+      ((lib.length (fxInstalled dcal)) == 1 && (lib.head (fxInstalled dcal)).outPath == dcal.outPath))
+    (ck "its desktop entry points at that binary"
+      (lib.hasPrefix "${dcal.outPath}/bin/dcal" fx.xdg.desktopEntries."com.danklinux.dankcalendar".exec))
+    (ck "a fixture host asking for hm-ghostty gets the wrapped package exactly once"
+      ((lib.length (fxInstalled raw.ghostty)) == 1
+        && (lib.head (fxInstalled raw.ghostty)).outPath != raw.ghostty.outPath))
 
     # The pinned fork build is what the program module installs. The upstream wrapper inherits
     # pname/version from the unwrapped package, so `version` reads back as the pinned commit.

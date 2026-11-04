@@ -82,7 +82,7 @@ gate() {
 # support.nix is a fixture library, configs.nix evaluates one host per process, and
 # appdir/shellwrap/yazi-install build (below).
 eval_suites=(tests/caches.nix tests/filesystems.nix tests/home.nix tests/loader.nix tests/mounts.nix
-  tests/outputs.nix tests/pins.nix tests/warnings.nix tests/wrap.nix)
+  tests/outputs.nix tests/pins.nix tests/warnings.nix tests/wrap.nix tests/zram.nix)
 for suite in "${eval_suites[@]}"; do
   gate "$suite" "$(basename "$suite" .nix)" nix eval --impure --file "$suite"
 done
