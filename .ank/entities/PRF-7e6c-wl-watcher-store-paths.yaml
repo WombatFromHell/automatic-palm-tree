@@ -1,0 +1,31 @@
+id: PRF-7e6c-wl-watcher-store-paths
+type: proof
+status: confirmed
+summary: TASK-7e6c - the watcher unit names store paths, its tools are installed
+covers:
+  - TASK-7e6c4dc15747
+source: human
+evidence:
+  - >
+    commit 1629f6a (main): features/nixos-niri/_wl-watcher.nix adds pkgs.procps
+    and pkgs.nvtopPackages.full to home.packages; tests/configs.nix asserts the
+    unit's presence matches features.niri.wl-watcher.enable and that every
+    ExecStartPre/ExecStart/ExecStop matches ^-?/nix/store/.
+  - >
+    red first: the new check failed on methyl before the module change (no
+    procps, no nvtop in the user's packages).
+  - >
+    nix eval of the real methyl config lists the three exec lines as
+    '/nix/store/...systemctl', '/nix/store/...beryl-utils/bin/wl-watcher' and
+    '-/nix/store/...procps/bin/pkill', and hasPkg finds procps-4.0.6 and
+    nvtop-3.3.2 in home.packages.
+  - >
+    absence is asserted too: methyl-nixos and propyl enable niri but not the
+    watcher, and both still print OK configs - the unit is absent there, so a
+    misspelled option cannot pass vacuously.
+  - "bash tests/run.sh: exit 0, 39 checks ok, every host config green."
+note: |
+  bare `niri` still resolves from the system PATH (features.niri's
+  systemPackages); the unit never names it. The check reads the option rather
+  than the host's feature list, because enabling the niri feature without the
+  watcher is legal and is what methyl-nixos and propyl actually do.
