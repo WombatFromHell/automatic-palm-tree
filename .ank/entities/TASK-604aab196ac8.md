@@ -5,7 +5,7 @@ slug: bootstrap-sh-resolves-the-nix-profile-it-puts-on
 title: bootstrap.sh resolves the Nix profile it puts on PATH
 created: 2026-11-04T17:01:48Z
 author: josh@methyl-bazzite
-status: open
+status: done
 scope:
   - bootstrap.sh
   - tests/bootstrap.bats
@@ -14,8 +14,13 @@ done_criteria: |
   bootstrap.sh --standalone --install <user>@<host> puts the profile nix actually installed on PATH before running home-manager, and tests/bootstrap.bats asserts both /home/josh/.nix-profile/bin and /home/josh/.local/state/nix/profile/bin against stubs.
 criteria_by: creator
 method: diagnose
+proof:
+  - type: commit
+    ref: 5db5e95
+    criteria: c623bdd223c3
+    via: submitted
 schema: 4
-version: 1
+version: 2
 ---
 
 bootstrap.sh:93 assumes the classic profile path; newer Nix may use $XDG_STATE_HOME/nix/profile.

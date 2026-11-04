@@ -1,0 +1,31 @@
+id: PRF-c78a-pin-second-arch-boundary
+type: proof
+status: confirmed
+summary: TASK-c78a - pin-meta's per-system boundary exercised for aarch64
+covers:
+  - TASK-c78a9688a6bc
+source: human
+evidence:
+  - >
+    commit 56caf6a (main): two fixture metadata.json files drive both branches
+    of lib/pin-meta.nix pinnedSystems - tests/fixtures/pin-two-arch.json
+    (aarch64-linux declared in arches, no hash) and
+    tests/fixtures/pin-hash-only-arch.json (aarch64-linux hashed, not
+    declared).
+  - >
+    'nix eval -f tests/red/pin-second-arch-without-hash.nix' errors
+    "metadata for 'fixture-two-arch' declares 'aarch64-linux' in arches but no
+    hash is pinned for it. Pinned systems: x86_64-linux."
+  - >
+    'nix eval -f tests/red/pin-hash-for-undeclared-arch.nix' errors
+    "metadata for 'fixture-hash-only-arch' pins 'aarch64-linux' in hashes but
+    arches declares only 'x86_64-linux'. Known systems: ..."
+  - >
+    'nix eval -f tests/pins.nix' prints OK pins - the real pins still resolve,
+    and tests/run.sh's byte-for-byte expander diff over
+    features/*/metadata.json is untouched by the fixtures.
+  - "bash tests/run.sh: exit 0, 41 checks ok (two new guards, nothing removed)."
+note: |
+  Nothing was fetched or built: the fixtures are synthetic. No production code
+  changed - the criterion asks that the boundary be exercised, and both
+  branches were already implemented for a second system.
