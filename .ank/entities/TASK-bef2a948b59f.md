@@ -5,7 +5,7 @@ slug: readme-s-overlays-nix-shape-matches-the-shipped
 title: README's _overlays.nix shape matches the shipped module
 created: 2026-11-04T17:01:48Z
 author: josh@methyl-bazzite
-status: open
+status: done
 scope:
   - README.md
   - features/*/_overlays.nix
@@ -14,8 +14,13 @@ blocked_by: []
 done_criteria: |
   README states _overlays.nix is a module that sets config.nixpkgs.overlays (not {inputs,...}: [..]), and tests/loader.nix asserts every features/*/_overlays.nix evaluates as a module whose config carries nixpkgs.overlays.
 criteria_by: creator
+proof:
+  - type: commit
+    ref: 2c135cd
+    criteria: 9acd4511bd54
+    via: submitted
 schema: 4
-version: 1
+version: 2
 ---
 
 README describes _overlays.nix as `{inputs, ...}: [ … ]`, an overlay function. The shipped one
