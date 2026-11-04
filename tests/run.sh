@@ -78,9 +78,9 @@ gate() {
   fi
 }
 
-# Eval-only suites, listed explicitly. The five .nix files not here are not eval-only:
+# Eval-only suites, listed explicitly. The six .nix files not here are not eval-only:
 # support.nix is a fixture library, configs.nix evaluates one host per process, and
-# appdir/shellwrap/yazi-install build (below).
+# appdir/brave-layout/shellwrap/yazi-install build (below).
 eval_suites=(tests/caches.nix tests/filesystems.nix tests/home.nix tests/loader.nix tests/mounts.nix
   tests/outputs.nix tests/pins.nix tests/warnings.nix tests/wrap.nix tests/zram.nix)
 for suite in "${eval_suites[@]}"; do
@@ -92,6 +92,13 @@ done
 # reads the build's exit status. src is a placeholder, so no AppImage is ever fetched; this is
 # the only build the gate performs (~8s on a warm store).
 gate "tests/appdir.nix [fixture build]" appdir nix build --no-link --quiet -f tests/appdir.nix
+
+# The same build-tier logic for hm-brave's store layout: tests/brave-layout.nix re-runs the
+# derivation's real installPhase over a synthetic rpm payload, where a copy of a store ELF stands
+# in for the patched binary (patchelf needs real ELF bytes). bin/ symlinks, the desktop-entry Exec
+# rewrite and the icon placement are checked against the tree that ships (~5s on a warm store,
+# and the rpm is never fetched).
+gate "tests/brave-layout.nix [rpm fixture build]" brave-layout nix build --no-link --quiet -f tests/brave-layout.nix
 
 # The same build-tier logic for the shipped shell wrappers: writeShellApplication shellchecks the
 # text it wraps, so the thing that ships is the thing that is linted (~4s on a warm store, and no
