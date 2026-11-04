@@ -1,0 +1,38 @@
+id: PRF-4e62-unitname-escape
+type: proof
+status: confirmed
+summary: TASK-4e62 - unitName escapes systemd paths; bad paths throw
+covers:
+  - TASK-4e627ec007af
+source: human
+evidence:
+  - >
+    commit d6114cb (main): lib/filesystems.nix unitName is nixpkgs'
+    utils.escapeSystemdPath; lib/builders.nix and tests/support.nix pass the
+    pinned nixpkgs in.
+  - >
+    red-before-green on one fixture: pre-fix fsLib silently produced
+    'mnt-..-x.automount' for '/mnt/../x' (nix eval of lib/filesystems.nix at
+    2c135cd); post-fix it errors 'escapeSystemdPath: /mnt/../x is not a
+    normalized path'.
+  - >
+    tests/red/unit-mount-path-not-normalized.nix forces the mount's requires so
+    the deferred error surfaces; eval of that file errors with 'not a
+    normalized path'.
+  - >
+    tests/filesystems.nix asserts the escaped name for a path containing '-'
+    and a space, and that an automount at '/mnt/a-b' pairs with
+    'mnt-a\x2db.automount'; eval prints 'OK filesystems'.
+  - >
+    bash tests/run.sh: exit 0, 39 checks ok (filesystems, mounts, configs,
+    loader).
+note: |
+  Deviation from the criterion's wording, same substance. A red guard must throw
+  for the gate to pass, so it cannot assert the escape itself - the positive
+  assertions live in tests/filesystems.nix. The guard pins what the old
+  slash-swap violated silently: a mount point systemd cannot normalise now
+  throws instead of writing mnt-..-x.mount.
+
+  fsLib is not a module, so the module argset's `utils` is unavailable; it
+  imports nixpkgs' nixos/lib/utils.nix with empty config/pkgs, which its
+  escaping never touches.
