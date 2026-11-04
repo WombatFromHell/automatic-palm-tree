@@ -5,7 +5,7 @@ slug: the-cache-registry-is-the-only-place-a-cache-is
 title: The cache registry is the only place a cache is written; gating reads the registry
 created: 2026-11-04T21:29:33Z
 author: josh@methyl-bazzite
-status: proposed
+status: accepted
 scope:
   - modules/cache-registry.nix
   - modules/caches.nix
@@ -15,8 +15,12 @@ constraint: |
 enforced_by:
   - modules/caches.nix#requiredNames
 supersedes: ADR-844789f84321
+ratified: 1dee0bb5a302
+verified:
+  - by: josh@methyl-bazzite
+    at: 2026-11-04T21:48:41Z
 schema: 4
-version: 1
+version: 2
 ---
 
 Retires ADR-844789f84321, whose "gating reads config.flakeCache.ready" still binds beside its amendment ADR-549e856f8e4e while two features gate on membership. The amendment stays accepted and states this rule correctly; this entity carries the same rule so the superseded wording stops binding. --supersedes names one document, and edit cannot repoint it, so the pair cannot be retired by a single entity; retiring the amendment too would add a second binding copy of the same rule.
