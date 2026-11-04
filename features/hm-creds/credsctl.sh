@@ -28,9 +28,18 @@
 set -uo pipefail
 
 # The store: CREDS_DIR for a record store you point somewhere else, CREDENTIALS_DIRECTORY (what
-# systemd sets for generated credentials) as the real location, and systemd's own store as the
-# default. One chain here, so every caller -- xilo-wrapped, njust's _push -- reads the same store.
-creds_dir="${CREDS_DIR:-${CREDENTIALS_DIRECTORY:-$HOME/.local/share/credentials}}"
+# systemd sets for generated credentials) as the real location, CREDS_ROOT as the whole store a flake
+# deploys (./secrets — records beside the rules file sopsctl reads from the same root), and systemd's
+# root), and systemd's own store as the default. One chain here, so every caller -- xilo-wrapped,
+# njust's _push -- reads the same store.
+creds_dir="${CREDS_DIR:-${CREDENTIALS_DIRECTORY:-${CREDS_ROOT:-$HOME/.local/share/credentials}}}"
+# A leading ~ arrives literal when it is quoted or comes from a variable, so a root expands here too:
+# the same expansion sopsctl does for AGE_ROOT and CREDS_ROOT, so one CREDS_ROOT means the same
+# directory in both tools. shortcut: the current user's home only, as sopsctl's tilde() does.
+case $creds_dir in
+'~') creds_dir="$HOME" ;;
+\~/*) creds_dir="$HOME/${creds_dir:2}" ;;
+esac
 
 die() {
   echo "credsctl: $1" >&2
@@ -61,7 +70,7 @@ usage() {
     "  list                        every record in $creds_dir — systemd's own store via systemd-creds, anything else listed here" \
     "  encrypt NAME                prompts on a terminal (echo off, one line); pipe or pass FILE for multi-line" \
     "  encrypt NAME [FILE]         encrypt a file instead of stdin" \
-    "  encrypt NAME.sops.json      encrypt through sopsctl to its recipients (one age public key per line) " \
+    "  encrypt NAME.sops.json      encrypt through sopsctl to its recipients (the rules file, plus a recipient file if you made one) " \
     "  encrypt NAME.sops.yaml      the same record in sops' yaml shape — the suffix is the shape, the backend is the same" \
     "  encrypt NAME.sops.json --fields [FILE]  several secrets in one record, its field names being the environment variables they get handed to; json piped or from FILE, never typed (NAME.sops.yaml --fields too)" \
     "  decrypt NAME [NAME...]      print the secrets to stdout, one record per line (a bundle has no single secret to print)" \
@@ -71,7 +80,7 @@ usage() {
     "  rm NAME [NAME...]           remove these credentials — records are immutable, so a change is rm then encrypt" \
     "" \
     "  backends                    .cred = this machine, no prompt, one secret per record; .sops.json and .sops.yaml = portable, key fetched by sopsctl, no terminal, and one record may hold several fields" \
-    "  overrides                   CREDS_DIR, CREDENTIALS_DIRECTORY; sopsctl takes SOPS_AGE_FILE (the identity file), SOPS_RULES (creation rules for new records), SOPS_KEYS_CMD (a wallet key), SOPS_RECIPIENTS (who can read a record)" \
+    "  overrides                   CREDS_DIR, CREDENTIALS_DIRECTORY, CREDS_ROOT (a whole store: records, rules, and a recipient file only if you made one — e.g. CREDS_ROOT=./secrets for a flake-deployed store); sopsctl takes AGE_ROOT (where the age identity lives, its own age/keys.txt), CREDS_ROOT (that store), SOPS_AGE_FILE (one identity file), SOPS_RULES (creation rules for new records), SOPS_KEYS_CMD (a wallet key), SOPS_RECIPIENTS (an optional recipient file whose keys join the rules)" \
     "  exit codes                  0 ok · 1 bad usage · 2 no such record · 3 encrypt or decrypt failed"
 }
 

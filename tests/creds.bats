@@ -138,6 +138,26 @@ ctl() { bash "$script" "$@"; }
   run ! grep -q 'token.sops.json' <<<"$output"
 }
 
+# CREDS_ROOT is the third rung of that chain: it names the whole store for a flake-deployed secrets
+# dir (./secrets in a flake checkout), and sopsctl's recipient and rules files follow the same root,
+# so records, recipients and rules stay in one place. CREDS_DIR and CREDENTIALS_DIRECTORY still win.
+@test "CREDS_ROOT names the store for a flake-deployed secrets dir, and the vars above it win" {
+  mkdir -p "$stubs/flake" "$stubs/sys" "$stubs/other"
+  touch "$stubs/flake/token.sops.json"
+  touch "$stubs/sys/sys.sops.json"
+  touch "$stubs/other/other.sops.json"
+  # A host session may carry CREDENTIALS_DIRECTORY of its own, so the root tests clear it.
+  run env -u CREDS_DIR -u CREDENTIALS_DIRECTORY CREDS_ROOT="$stubs/flake" bash "$script" list
+  grep -q 'token.sops.json' <<<"$output"
+  run ! grep -q 'other.sops.json' <<<"$output"
+  run env -u CREDS_DIR CREDS_ROOT="$stubs/flake" CREDENTIALS_DIRECTORY="$stubs/sys" bash "$script" list
+  grep -q 'sys.sops.json' <<<"$output"
+  run ! grep -q 'token.sops.json' <<<"$output"
+  run env CREDS_DIR="$stubs/other" CREDS_ROOT="$stubs/flake" bash "$script" list
+  grep -q 'other.sops.json' <<<"$output"
+  run ! grep -q 'token.sops.json' <<<"$output"
+}
+
 # --- encrypt ----------------------------------------------------------------
 
 @test "encrypt writes a .cred record and passes --user --name, not a derived name" {
@@ -168,6 +188,34 @@ ctl() { bash "$script" "$@"; }
   grep -q '^sopsctl encrypt --format yaml$' "$calls"
   [ "$(cat "$creds/GAMMA.sops.yaml")" = '{"secret":"secret"}' ]
   [ "$(stat -c '%a' "$creds/GAMMA.sops.yaml")" = "400" ]
+}
+
+# Both backends land inside the root, so a flake-deployed store is one directory, not two: a .cred
+# here and a sops record next to the recipient file sopsctl reads.
+@test "encrypt with CREDS_ROOT writes both backends into that store" {
+  printf 'secret' >"$stubs/in"
+  run env -u CREDS_DIR -u CREDENTIALS_DIRECTORY CREDS_ROOT="$stubs/flake" bash "$script" encrypt ALPHA <"$stubs/in"
+  [ "$status" -eq 0 ]
+  grep -q "^systemd-creds encrypt --user --name ALPHA - $stubs/flake/ALPHA.cred$" "$calls"
+  [ "$(stat -c '%a' "$stubs/flake/ALPHA.cred")" = "400" ]
+  run env -u CREDS_DIR -u CREDENTIALS_DIRECTORY CREDS_ROOT="$stubs/flake" bash "$script" encrypt DELTA.sops.json <"$stubs/in"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$stubs/flake/DELTA.sops.json")" = '{"secret":"secret"}' ]
+  [ "$(stat -c '%a' "$stubs/flake/DELTA.sops.json")" = "400" ]
+  run ! [ -e "$creds/ALPHA.cred" ] # the CREDS_DIR store was never written to
+}
+
+# One CREDS_ROOT means one directory in both tools: a quoted ~ reaches credsctl literal, exactly as
+# it reaches sopsctl, so it expands here the same way. The quoted ~ is deliberate.
+# shellcheck disable=SC2088
+@test "a quoted CREDS_ROOT reaches the store as a real path" {
+  home="$stubs/home2"
+  mkdir -p "$home"
+  printf 'secret' >"$stubs/in"
+  run env -u CREDS_DIR -u CREDENTIALS_DIRECTORY HOME="$home" CREDS_ROOT='~/secrets' bash "$script" encrypt ALPHA <"$stubs/in"
+  [ "$status" -eq 0 ]
+  [ -f "$home/secrets/ALPHA.cred" ]
+  run ! [ -e "$stubs/secrets" ]
 }
 
 @test "encrypt never overwrites: a record is removed and re-added to change it" {
@@ -625,9 +673,9 @@ BETA=bob" ]
   jq -n --arg u 'https://xilo.test' --arg c 'acme/pkgs' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_CACHE:$c,XILO_TOKEN:$t}' >"$stubs/fields"
   run ctl encrypt XILO.sops.json --fields "$stubs/fields"
   [ "$status" -eq 0 ]
-  SOPS_JSON="$bundle"
-  export SOPS_JSON
-  run ctl decrypt --env XILO -- sh -c 'printf "[%s][%s][%s]\n" "$XILO_URL" "$XILO_TOKEN" "$XILO_CACHE"'
+  # The payload goes into the environment of the run, which is how credsctl hands it to sopsctl.
+  # An `export` inside a @test body is local to that subshell — SC2030/SC2031 — so never export here.
+  SOPS_JSON="$bundle" run ctl decrypt --env XILO -- sh -c 'printf "[%s][%s][%s]\n" "$XILO_URL" "$XILO_TOKEN" "$XILO_CACHE"'
   [ "$status" -eq 0 ]
   [ "$output" = "$(printf '[https://xilo.test][tok\nmulti\nline][acme/pkgs]')" ]
   [ "$(grep -c '^sopsctl decrypt ' "$calls")" = "1" ]
@@ -638,14 +686,14 @@ BETA=bob" ]
 # never printed. `secret` is the record's own secret, so it takes the record's name.
 @test "decrypt --env on a bundle record maps a secret field to the record name and skips what a shell cannot name" {
   printf 'cipher' >"$creds/PACK.sops.json"
-  # One line, export and value together: the payload is literal JSON for the stub, and shellcheck's
-  # SC2089/SC2090 only fire when a quoted assignment is exported on a separate line.
-  export SOPS_JSON='{"secret":"alice","TOKEN":"bob","host.unencrypted":"leak","count":3,"empty":""}'
-  run ctl decrypt --env PACK
+  # Literal JSON for the stub, in the environment of each run: an `export` inside a @test body is
+  # local to that subshell (SC2030/SC2031), and credsctl passes SOPS_JSON to sopsctl from the env.
+  payload='{"secret":"alice","TOKEN":"bob","host.unencrypted":"leak","count":3,"empty":""}'
+  SOPS_JSON="$payload" run ctl decrypt --env PACK
   [ "$status" -eq 0 ]
   [ "$output" = "PACK=alice
 TOKEN=bob" ]
-  run ctl decrypt --env PACK -- sh -c 'printf "%s\n" "$(printenv host.unencrypted || echo unset)"'
+  SOPS_JSON="$payload" run ctl decrypt --env PACK -- sh -c 'printf "%s\n" "$(printenv host.unencrypted || echo unset)"'
   [ "$output" = "unset" ]
   run ! grep -q 'leak' <<<"$output"
 }
@@ -657,9 +705,7 @@ TOKEN=bob" ]
   jq -n --arg u 'https://xilo.test' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$stubs/fields"
   run ctl encrypt XILO.sops.yaml --fields "$stubs/fields"
   [ "$status" -eq 0 ]
-  SOPS_JSON="$bundle"
-  export SOPS_JSON
-  run ctl decrypt --env XILO -- sh -c 'printf "[%s][%s]\n" "$XILO_URL" "$XILO_TOKEN"'
+  SOPS_JSON="$bundle" run ctl decrypt --env XILO -- sh -c 'printf "[%s][%s]\n" "$XILO_URL" "$XILO_TOKEN"'
   [ "$status" -eq 0 ]
   [ "$output" = "$(printf '[https://xilo.test][tok\nmulti\nline]')" ]
   [ "$(grep -c '^sopsctl decrypt ' "$calls")" = "1" ]
@@ -751,8 +797,9 @@ TOKEN=bob" ]
   grep -q 'printenv' <<<"$output"
   grep -q 'rm NAME \[NAME...\]' <<<"$output"
   grep -q 'records are immutable' <<<"$output"
-  grep -q 'CREDS_DIR, CREDENTIALS_DIRECTORY' <<<"$output"
-  grep -q 'sopsctl takes SOPS_AGE_FILE (the identity file), SOPS_RULES (creation rules for new records), SOPS_KEYS_CMD (a wallet key), SOPS_RECIPIENTS (who can read a record)' <<<"$output"
+  grep -q 'CREDS_DIR, CREDENTIALS_DIRECTORY, CREDS_ROOT' <<<"$output"
+  grep -q 'sopsctl takes AGE_ROOT (where the age identity lives' <<<"$output"
+  grep -q 'SOPS_RECIPIENTS (an optional recipient file whose keys join the rules)' <<<"$output"
   grep -q 'decrypt FILE' <<<"$output"
   grep -q '1 bad usage · 2 no such record · 3 encrypt or decrypt failed' <<<"$output"
 }
@@ -809,7 +856,9 @@ TOKEN=bob" ]
   chmod +x "$real/bin/sopsctl"
   PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
   grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
-  PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_RECIPIENTS="$real/recipient" \
+  # CREDS_ROOT keeps sopsctl's rules-file default inside the fixture too, so the suite never reads
+  # the real ~/.local/share/credentials/.sops.yaml.
+  PATH="$real/bin:$host_path" CREDS_DIR="$real" CREDS_ROOT="$real" SOPS_RECIPIENTS="$real/recipient" \
     SOPS_AGE_FILE="$real/key" bash "$script" encrypt PORTABLE.sops.json <<<'hello sops'
   [ "$(stat -c '%a' "$real/PORTABLE.sops.json")" = "400" ]
   # encrypt names the backend with the suffix; decrypt resolves it from the file that exists.
@@ -831,8 +880,8 @@ TOKEN=bob" ]
   PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
   grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
   jq -n --arg u 'https://xilo.test' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$real/fields"
-  PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_RECIPIENTS="$real/recipient" SOPS_AGE_FILE="$real/key" \
-    run bash "$script" encrypt XILO.sops.json --fields "$real/fields"
+  PATH="$real/bin:$host_path" CREDS_DIR="$real" CREDS_ROOT="$real" SOPS_RECIPIENTS="$real/recipient" \
+    SOPS_AGE_FILE="$real/key" run bash "$script" encrypt XILO.sops.json --fields "$real/fields"
   [ "$status" -eq 0 ]
   [ "$(stat -c '%a' "$real/XILO.sops.json")" = "400" ]
   out=$(PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_AGE_FILE="$real/key" \
@@ -855,8 +904,8 @@ TOKEN=bob" ]
   PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
   grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
   jq -n --arg u 'https://xilo.test' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$real/fields"
-  PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_RECIPIENTS="$real/recipient" SOPS_AGE_FILE="$real/key" \
-    run bash "$script" encrypt XILO.sops.yaml --fields "$real/fields"
+  PATH="$real/bin:$host_path" CREDS_DIR="$real" CREDS_ROOT="$real" SOPS_RECIPIENTS="$real/recipient" \
+    SOPS_AGE_FILE="$real/key" run bash "$script" encrypt XILO.sops.yaml --fields "$real/fields"
   [ "$status" -eq 0 ]
   [ "$(stat -c '%a' "$real/XILO.sops.yaml")" = "400" ]
   grep -q '^XILO_TOKEN: ENC\[AES256_GCM,data:' "$real/XILO.sops.yaml"

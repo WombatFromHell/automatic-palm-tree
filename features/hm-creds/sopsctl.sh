@@ -10,11 +10,17 @@
 # with --config so the current directory never decides who can read the record. Plaintext only ever
 # goes to stdout.
 #
+# Two roots move the whole environment for a store that lives elsewhere: $AGE_ROOT names the directory
+# the secret half lives in (its own age/keys.txt, default ~/.config/sops) and $CREDS_ROOT the directory
+# the public half lives in (rules, records, and a recipient file only if someone made one — default
+# ~/.local/share/credentials, and the same root credsctl's store follows). Unset, every path below is
+# today's default.
+#
 # The suffix names a record's shape. The plaintext is read as json either way — jq, credsctl and the
 # xilo wrapper parse it — and written back in the shape the name carries. Encrypting from stdin (no
 # PATH, the stream credsctl uses) needs the type flags: without --input-type/--output-type sops reads
 # stdin as binary and re-keys the payload under `data`, and no path_regex can match /dev/stdin, so
-# that path names the recipient file instead. sops stamps `unencrypted_suffix: "_unencrypted"`, so a
+# that path names the recipients outright instead. sops stamps `unencrypted_suffix: "_unencrypted"`, so a
 # field named e.g. `host_unencrypted` stays readable in the file; that is the only way to keep a field
 # in plain text.
 set -uo pipefail
@@ -31,9 +37,21 @@ tilde() {
 }
 
 keys_cmd="${SOPS_KEYS_CMD:-kwallet-query -f flakeroot -r creds-identity kdewallet}"
-recipients="$(tilde "${SOPS_RECIPIENTS:-$HOME/.local/share/credentials/recipient}")"
-identity="$(tilde "${SOPS_AGE_FILE:-$HOME/.config/sops/age/keys.txt}")" # sops' own lookup path
-rules="$(tilde "${SOPS_RULES:-$(dirname "$recipients")/.sops.yaml}")" # sops-nix's rules, beside the records
+# Two roots, one per half of the environment: AGE_ROOT is the directory the SECRET half lives in, in
+# sops' own layout ($AGE_ROOT/age/keys.txt), and CREDS_ROOT the directory the PUBLIC half lives in —
+# rules file, records, and a recipient file only if someone made one. They are overrides over today's
+# defaults, not new defaults:
+# unset, the paths below are exactly what sops looks for and what this store already uses. So a
+# sops-nix enclave (`AGE_ROOT=/var/lib/sops-nix`) or a flake-deployed store (`CREDS_ROOT=./secrets`)
+# needs one variable each, and the per-file overrides still outrank a root — a sops-nix key file can
+# be named by SOPS_AGE_FILE outright.
+age_root="$(tilde "${AGE_ROOT:-$HOME/.config/sops}")"
+creds_root="$(tilde "${CREDS_ROOT:-$HOME/.local/share/credentials}")"
+# The rules file is the public half's home: sops-nix's creation rules, beside the records, and the
+# place recipients are kept. The recipient file is optional — read if the user made one, never written.
+rules="$(tilde "${SOPS_RULES:-$creds_root/.sops.yaml}")"
+recipients="$(tilde "${SOPS_RECIPIENTS:-$creds_root/recipient}")"
+identity="$(tilde "${SOPS_AGE_FILE:-$age_root/age/keys.txt}")" # sops' own lookup path
 
 die() {
   echo "sopsctl: $1" >&2
@@ -46,9 +64,9 @@ encrypted_record() {
 }
 
 # The rules file in sops-nix's shape — recipients as anchors under `keys:`, one creation rule whose
-# path_regex covers both record shapes wherever the records live. It is generated from the recipient
-# file, so the rules and an explicit `--age` never drift apart.
-rules_from_recipients() {
+# path_regex covers both record shapes wherever the records live. It is written from the key list on
+# stdin, so the rules and an explicit `--age` never drift apart.
+rules_from_keys() {
   awk '
     /^#/ { next }
     NF { key[++n] = $1 }
@@ -62,7 +80,7 @@ rules_from_recipients() {
       print "      - age:"
       for (i = 1; i <= n; i++) print "          - *r" i
     }
-  ' "$recipients"
+  '
 }
 
 usage() {
@@ -72,20 +90,20 @@ usage() {
   printf '%s\n' \
     "usage: sopsctl <command> ..." \
     "" \
-    '  init [--from-ssh KEY]   write an age identity to $SOPS_AGE_FILE, record its public key in $SOPS_RECIPIENTS $SOPS_RULES; with --from-ssh the pair comes from ssh-to-age instead of a fresh one, and KEY is the OpenSSH PRIVATE key without .pub (e.g. ~/.ssh/flakeroot_ed25519) — ssh-to-age reads its KEY.pub sibling and the ssh files stay untouched' \
+    '  init [--from-ssh KEY]   write an age identity to $SOPS_AGE_FILE and record its public key in $SOPS_RULES, sops-nix creation rules; an existing rules file is left alone, and no recipient file is created; with --from-ssh the pair comes from ssh-to-age instead of a fresh one, and KEY is the OpenSSH PRIVATE key without .pub (e.g. ~/.ssh/flakeroot_ed25519) — ssh-to-age reads its KEY.pub sibling and the ssh files stay untouched' \
     "  keys                    the recipient public keys (never a secret key)" \
     '  encrypt FILE            a plaintext *.sops.yaml or *.sops.json file encrypted IN PLACE, recipients from $SOPS_RULES (--config, so the cwd never matters); left 0400, and a file that is already a record is refused' \
-    '  encrypt [--format json|yaml]  JSON on stdin -> ciphertext on stdout, for credsctl and pipes; yaml is the default shape, recipients from $SOPS_RECIPIENTS; the caller names the file and its mode' \
+    '  encrypt [--format json|yaml]  JSON on stdin -> ciphertext on stdout, for credsctl and pipes; yaml is the default shape, recipients from $SOPS_RULES plus an optional $SOPS_RECIPIENTS; the caller names the file and its mode' \
     "  decrypt FILE            plaintext JSON on stdout — json whatever the record's own shape is" \
     "  get FIELD FILE          one field's value" \
     "  set FIELD FILE          replace one field, re-encrypted to the record's own recipients in its own shape; the new value comes from stdin or a prompt, never an argument" \
-    '  rekey FILE ...          re-encrypt records to $SOPS_RECIPIENTS, each keeping its own shape' \
+    '  rekey FILE ...          re-encrypt records to $SOPS_RULES (plus an optional $SOPS_RECIPIENTS), each keeping its own shape' \
     "  recipients FILE         the recipients embedded in a record, read from its metadata without decrypting" \
     "  protected KEY         say if an OpenSSH identity needs a passphrase: exit 0 yes, 1 no" \
     "  verify FILE             decrypt to /dev/null: exit 0 means the MAC is intact, no plaintext printed" \
-    '  reset [--force]         delete the sops environment so init starts fresh: the identity, the rules file, the recipient file, and every *.sops.json / *.sops.yaml record in the credentials dir; only *.cred records stay. Without --force this only names those files and exits 1, because deleting the identity makes every record unreadable for good and deleting the recipient file drops the invite list for every other machine' \
+    '  reset [--force]         delete the sops environment so init starts fresh: the identity, the rules file, a recipient file if one exists, and every *.sops.json / *.sops.yaml record in the credentials dir; only *.cred records stay. Without --force this only names those files and exits 1, because deleting the identity makes every record unreadable for good and deleting the rules file drops the invite list for every other machine' \
     "" \
-    "  overrides               SOPS_AGE_FILE (the identity), SOPS_RULES (the .sops.yaml of creation rules), SOPS_KEYS_CMD (a wallet-backed key instead), SOPS_RECIPIENTS (who can read a record)" \
+    "  overrides               AGE_ROOT (the directory holding age/keys.txt) and CREDS_ROOT (the directory holding .sops.yaml, an optional recipient file and the records) move a whole environment — e.g. AGE_ROOT=/var/lib/sops-nix for a sops-nix enclave, CREDS_ROOT=./secrets for a flake-deployed store; the per-file overrides outrank a root: SOPS_AGE_FILE (the identity), SOPS_RULES (the creation rules that name the recipients), SOPS_KEYS_CMD (a wallet-backed key instead), SOPS_RECIPIENTS (an optional recipient file, one age public key per line, whose keys join the rules)" \
     "  exit codes              0 ok · 1 bad usage · 2 no such record · 3 encrypt or decrypt failed; protected also exits 1 for an unlocked identity"
 }
 
@@ -108,9 +126,27 @@ run_sops() {
 # and names it with --config instead.
 sops_no_rules=(--config /dev/null)
 
+# Age public keys named in a file, deduped in the order they appear: sops-nix's `keys:` anchors and
+# their aliases, a json list, or one key per line all match. The regex is the public half only — an
+# age secret key is upper-case AGE-SECRET-KEY and never printed. A file that is not there contributes
+# nothing, so an optional file costs no check of its own.
+age_keys() {
+  grep -ohE 'age1[a-z0-9]+' "$1" 2>/dev/null | awk 'NF && !seen[$0]++' || true
+}
+
+# Who may read a record: the rules file first — sops-nix's creation rules, the shape sops itself reads
+# and the one place recipients have to live — then the optional `recipient` file beside it, which is
+# used only if someone made one. A key in both is named once.
 recipient_list() {
-  [[ -r $recipients ]] || die "no recipient file: $recipients (one age public key per line)"
-  grep -v '^#' "$recipients" | paste -sd, -
+  local keys
+  keys="$(
+    age_keys "$rules"
+    age_keys "$recipients"
+  )"
+  keys="$(printf '%s\n' "$keys" | awk 'NF && !seen[$0]++')"
+  [[ -n $keys ]] ||
+    die "no recipients: neither $rules nor $recipients holds an age public key — sopsctl init writes the rules file, or add keys to it yourself"
+  printf '%s' "$(printf '%s\n' "$keys" | paste -sd, -)"
 }
 
 need_file() { [[ -f $1 ]] || die "no record: $1" 2; }
@@ -303,8 +339,8 @@ cmd_encrypt() {
 
   # A path argument is the plaintext to encrypt, in place — sops' own way, `sops -e -i FILE`. The
   # recipients come from the rules file, named with --config so the current directory never decides
-  # who can read the record; with no rules file the recipient file names them. The suffix is the
-  # shape, and the record is left 0400.
+  # who can read the record; with no rules file, an optional recipient file names them. The suffix is
+  # the shape, and the record is left 0400.
   if [[ -n $rec ]]; then
     need_record "$rec"
     encrypted_record "$rec" &&
@@ -413,8 +449,8 @@ cmd_verify() {
 }
 
 # The secret half goes to an identity FILE on sops' own lookup path, so decrypting later needs no
-# command, no wallet and no terminal; the public half goes to the recipient file and to a rules file
-# beside the records in sops-nix's shape, which is what hands a hand-written record these keys. Raw
+# command, no wallet and no terminal; the public half goes to a rules file beside the records in
+# sops-nix's shape, which is what hands a hand-written record these keys. Raw
 # `sops -e FILE` reads that rules file from the CURRENT directory, which is why the message names the
 # directory to cd into; `sopsctl encrypt FILE` names the rules file outright, so its cwd never matters.
 cmd_init() {
@@ -425,7 +461,7 @@ cmd_init() {
   }
   [[ -z ${1:-} || ${1:-} == --from-ssh ]] ||
     die "init takes --from-ssh SSH_KEYPAIR or no argument" 1
-  dir="$(dirname "$recipients")"
+  dir="$(dirname "$rules")"
   mkdir -p "$(dirname "$identity")" || die "cannot create $(dirname "$identity")" 3
   if [[ -n $origin ]]; then
     if grep -q "# created: ssh-to-age from $origin" "$identity" 2>/dev/null; then
@@ -440,32 +476,39 @@ cmd_init() {
     chmod 600 "$identity"
   fi
   pub="${pub:-$(grep '^# public key:' "$identity" | awk '{print $NF}')}"
-  [[ -n $pub ]] || die "no public key line in $identity — put that recipient in $recipients yourself" 3
+  [[ -n $pub ]] || die "no public key line in $identity — put that recipient in $rules yourself" 3
   mkdir -p "$dir"
-  grep -qx "$pub" "$recipients" 2>/dev/null || printf '%s\n' "$pub" >>"$recipients"
+  # The recipients live in the rules file. init writes it only when it is not there yet, from this
+  # identity's key plus whatever the store already names; a rules file a person wrote by hand is left
+  # alone rather than rewritten, and an optional recipient file is never created or appended to.
   if [[ -f $rules ]]; then
     printf 'rules file already in %s — add %s to its key_groups, and check path_regex covers both shapes\n' "$rules" "$pub"
   else
-    rules_from_recipients >"$rules" || die "no recipients in $recipients to write rules from" 3
+    # This branch runs only when $rules is not there, so the keys are init's own public key plus the
+    # optional recipient file — reading $rules here would read and write one file in one pipeline.
+    {
+      printf '%s\n' "$pub"
+      age_keys "$recipients"
+    } | awk 'NF && !seen[$0]++' | rules_from_keys >"$rules" || die "no keys to write $rules from" 3
     chmod 644 "$rules"
     printf 'rules file written to %s\n' "$rules"
   fi
   printf '\n%s is now the source of truth for your records:\n' "$identity"
   printf 'secret   %s at 0600 — the only file that can read them; keep it out of git, out of a share, and out of a screenshot\n' "$identity"
-  printf 'public   %s in %s and %s — public keys, safe to commit\n' "$pub" "$recipients" "$rules"
+  printf 'public   %s in %s — public keys, safe to commit\n' "$pub" "$rules"
   printf 'read     sops finds the identity itself, so nothing prompts: credsctl, sopsctl and a unit all just work\n'
   printf 'new      sopsctl encrypt NAME.sops.yaml (or NAME.sops.json) encrypts a plaintext file in place, from %s; a record you make by hand (sops -e FILE) gets these keys from that rules file, which sops reads from the CURRENT directory, so cd %s first\n' "$rules" "$dir"
-  printf 'invite   append another machine\u2019s public key to %s, then sopsctl rekey FILE...\n' "$recipients"
+  printf 'invite   add another machine\u2019s public key to the keys: block of %s, then sopsctl rekey FILE...\n' "$rules"
   [[ -n $origin ]] || return 0
   printf '\nyour age keypair came from %s:\n' "$origin"
   printf 'origin   %s and %s.pub — read once, never copied, unlocked or rewritten: ssh still uses it, and its passphrase still applies\n' "$origin" "$origin"
   printf 'derived  %s is disposable: sopsctl init --from-ssh %s regenerates it, so losing it costs a passphrase, not a record\n' "$identity" "$origin"
 }
 
-# reset — the sops environment back to nothing, so init starts fresh. sopsctl owns four kinds of
-# file: the identity, the rules file, the recipient file, and the records. Only a .cred stays —
+# reset — the sops environment back to nothing, so init starts fresh. sopsctl owns the identity, the
+# rules file, the records, and a recipient file only if someone made one. Only a .cred stays —
 # systemd-creds owns that, not sops. Records are encrypted and the identity is the only thing that
-# can read them, so removing both is permanent; the recipient file lists every machine that holds a
+# can read them, so removing both is permanent; the rules file names every machine that holds a
 # record, so it is the invite list, not a scratch file. Without --force this names the files and
 # deletes nothing.
 cmd_reset() {
@@ -481,7 +524,7 @@ cmd_reset() {
   fi
   [[ -e $rules ]] && files+=("$rules")
   [[ -e $recipients ]] && files+=("$recipients")
-  dir="$(dirname "$recipients")"
+  dir="$(dirname "$rules")"
   shopt -s nullglob
   files+=("$dir"/*.sops.json "$dir"/*.sops.yaml)
   shopt -u nullglob
@@ -492,7 +535,7 @@ cmd_reset() {
   fi
   printf '%s\n' "${files[@]}"
   [[ $force == 1 ]] ||
-    die "reset deletes encrypted records whose only key is the identity above, and the recipient file that invites other machines: re-run with --force" 1
+    die "reset deletes encrypted records whose only key is the identity above, and the rules file that invites other machines: re-run with --force" 1
   rm -rf "${files[@]}"
   printf 'reset: %s removed — sopsctl init now starts fresh\n' "${#files[@]}"
 }

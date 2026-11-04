@@ -113,10 +113,12 @@ EOF
   ssh-keygen -q -t ed25519 -N 'protectpass' -f "$stubs/ssh_protected" 2>/dev/null || true
   ssh-keygen -q -t ed25519 -N '' -f "$stubs/ssh_unlocked" 2>/dev/null || true
 
-  # init writes the identity here instead of into a wallet, and the rules file beside the
-  # records; both are overrides (SOPS_AGE_FILE, SOPS_RULES) so the suite stays inside the fixture.
+  # init writes the identity here instead of into a wallet, and the rules file beside the records.
+  # CREDS_ROOT keeps the whole public store — rules, recipient file, records — inside the fixture, so
+  # the suite never touches the real ~/.local/share/credentials.
   export SOPS_AGE_FILE="$stubs/keys.txt"
   rulefile="$store/.sops.yaml" # init puts the rules beside the records
+  export CREDS_ROOT="$store"
   export SOPS_RECIPIENTS="$store/recipient"
   export SOPS_KEYS_CMD="kwallet-query -f flakeroot -r creds-identity kdewallet"
   PATH="$stubs:$PATH"
@@ -187,13 +189,22 @@ ctl() { bash "$script" "$@"; }
 @test "init seeds sops-nix creation rules carrying every recipient, for both record shapes" {
   run ctl init
   [ "$status" -eq 0 ]
-  grep -q 'age1stub' "$SOPS_RECIPIENTS"
   grep -q '^keys:' "$rulefile"
   grep -q 'key_groups:' "$rulefile"
   grep -q '  - age:' "$rulefile"
   grep -qF '\.sops\.(json|yaml)$' "$rulefile"
   for r in age1aaa age1bbb age1stub; do grep -q "$r" "$rulefile"; done
   [ "$(grep -c -- '- \*' "$rulefile")" -eq 3 ]
+}
+
+# init writes the public key into the rules file, never into a recipient file: that file is the user's
+# own choice, and init must not create one or add to it.
+@test "init puts its public key in the rules file and leaves the recipient file untouched" {
+  run ctl init
+  [ "$status" -eq 0 ]
+  grep -q 'age1stub' "$rulefile"
+  [ "$(grep -c '' "$SOPS_RECIPIENTS")" -eq 2 ]
+  run ! grep -q 'age1stub' "$SOPS_RECIPIENTS"
 }
 
 @test "init tells where each half of the key lives and what to run next" {
@@ -205,14 +216,27 @@ ctl() { bash "$script" "$@"; }
   grep -q 'cd ' <<<"$output"
 }
 
-@test "init rerun changes nothing: no second identity, no duplicated recipient" {
+@test "init rerun changes nothing: no second identity, no duplicated key in the rules" {
   run ctl init
   : >"$calls"
   run ctl init
   [ "$status" -eq 0 ]
   run ! grep -q 'age-keygen' "$calls"
-  [ "$(grep -c 'age1stub' "$SOPS_RECIPIENTS")" -eq 1 ]
+  [ "$(grep -c -- '- &r' "$rulefile")" -eq 3 ]
+  run ! grep -q 'age1stub' "$SOPS_RECIPIENTS"
   [ -f "$stubs/wallet" ] || true
+}
+
+# A fresh environment — no rules file, no recipient file — gets a rules file holding only init's own
+# key, and still no recipient file.
+@test "init with nothing in the store writes a rules file and never a recipient file" {
+  rm "$SOPS_RECIPIENTS"
+  run ctl init
+  [ "$status" -eq 0 ]
+  [ ! -f "$SOPS_RECIPIENTS" ]
+  grep -q '^keys:' "$rulefile"
+  [ "$(grep -c -- '- &r' "$rulefile")" -eq 1 ]
+  grep -q 'age1stub' "$rulefile"
 }
 
 # --- reset ------------------------------------------------------------------
@@ -259,7 +283,8 @@ ctl() { bash "$script" "$@"; }
   [ "$status" -eq 0 ]
   grep -q '^age-keygen -o ' "$calls"
   grep -q '^keys:' "$rulefile"
-  grep -q '^age1stub' "$SOPS_RECIPIENTS" # the recipient file is written again, with the new key
+  grep -q '^  - &r1 age1stub' "$rulefile" # the new key, and no recipient file to rewrite
+  [ ! -f "$store/recipient" ]
   [ "$(stat -c '%a' "$SOPS_AGE_FILE")" = "600" ]
 }
 
@@ -292,14 +317,34 @@ ctl() { bash "$script" "$@"; }
   rm -rf "$home"
 }
 
+# A root is not sops' config dir. /var/lib/sops-nix holds every secret sops-nix provisions, so an
+# AGE_ROOT that is not the default loses the identity FILE and nothing else.
+@test "reset --force deletes an identity under AGE_ROOT but never the root that holds it" {
+  roots="$(mktemp -d)"
+  mkdir -p "$roots/enclave/age" "$roots/store"
+  printf 'AGE-SECRET-KEY-1TEST\n' >"$roots/enclave/age/keys.txt"
+  printf 'KEEP\n' >"$roots/enclave/secrets.json"
+  printf 'age1aaa\n' >"$roots/store/recipient"
+  unset SOPS_AGE_FILE SOPS_RECIPIENTS
+  export AGE_ROOT="$roots/enclave" CREDS_ROOT="$roots/store"
+  run ctl reset --force
+  [ "$status" -eq 0 ]
+  [ ! -f "$roots/enclave/age/keys.txt" ]
+  [ -d "$roots/enclave" ]
+  [ -f "$roots/enclave/secrets.json" ]
+  [ ! -f "$roots/store/recipient" ]
+  rm -rf "$roots"
+}
+
 @test "reset refuses an argument it does not know, and an empty environment says so" {
   run ctl reset --all
   [ "$status" -eq 1 ]
   grep -q -- '--force' <<<"$output"
   # setup already left records and a recipient file in the store, so "nothing to reset" needs an
-  # empty directory of its own: the recipient file is one of the files reset names.
+  # empty directory of its own: CREDS_ROOT moves the rules file, any recipient file and the records.
   empty="$(mktemp -d)"
-  export SOPS_RECIPIENTS="$empty/recipient"
+  unset SOPS_RECIPIENTS
+  export CREDS_ROOT="$empty"
   export SOPS_AGE_FILE="$empty/keys.txt"
   run ctl reset --force
   [ "$status" -eq 0 ]
@@ -312,6 +357,35 @@ ctl() { bash "$script" "$@"; }
   [ "$status" -eq 0 ]
   [ "$output" = "age1aaa,age1bbb" ]
   run ! grep -q 'AGE-SECRET-KEY' <<<"$output"
+}
+
+# The rules file is the recipient source: sops-nix's own shape, keys as anchors under `keys:` and
+# aliases under `key_groups`, so each key is named once. A `recipient` file is only what a person
+# chose to make, not something sopsctl writes.
+@test "keys takes the recipients from the rules file, naming each key once" {
+  rm "$SOPS_RECIPIENTS"
+  printf 'keys:\n  - &main age1aaa\n  - &mate age1bbb\ncreation_rules:\n  - path_regex: \\.sops\\.(json|yaml)$\n    key_groups:\n      - age:\n          - *main\n          - *mate\n' >"$rulefile"
+  run ctl keys
+  [ "$status" -eq 0 ]
+  [ "$output" = "age1aaa,age1bbb" ]
+  run ! grep -q 'AGE-SECRET-KEY' <<<"$output"
+}
+
+# A recipient file the user made is checked for and used: its keys join the rules file's, and a key
+# that is in both is named once.
+@test "a recipient file the user made joins the rules file, deduped" {
+  printf 'keys:\n  - &main age1aaa\ncreation_rules:\n  - path_regex: \\.sops\\.(json|yaml)$\n' >"$rulefile"
+  printf 'age1aaa\n# invite\nage1ccc\n' >"$SOPS_RECIPIENTS"
+  run ctl keys
+  [ "$status" -eq 0 ]
+  [ "$output" = "age1aaa,age1ccc" ]
+}
+
+@test "keys with neither a rules file nor a recipient file exits 1" {
+  rm "$SOPS_RECIPIENTS"
+  run ctl keys
+  [ "$status" -eq 1 ]
+  grep -q "$rulefile" <<<"$output"
 }
 
 # --- encrypt / decrypt ------------------------------------------------------
@@ -428,7 +502,7 @@ EOF
   run ! grep -q '^sops ' "$calls"
 }
 
-@test "encrypt with no recipient file exits 1 and calls nothing" {
+@test "encrypt with no rules file and no recipient file exits 1 and calls nothing" {
   rm "$SOPS_RECIPIENTS"
   : >"$calls"
   run ctl encrypt <<'EOF'
@@ -575,6 +649,67 @@ EOF
   run ! grep -q '^sops -d' "$calls"
 }
 
+# --- roots -------------------------------------------------------------------
+# AGE_ROOT names the directory the SECRET half lives in (sops' own layout: $AGE_ROOT/age/keys.txt),
+# CREDS_ROOT the directory the PUBLIC half lives in (rules file, records, and a recipient file only if
+# the user made one). A whole environment moves with one variable each, which is what makes a
+# flake-deployed ./secrets or a sops-nix enclave usable without touching the defaults. Defaults stay
+# sops' own paths: AGE_ROOT=$HOME/.config/sops, CREDS_ROOT=$HOME/.local/share/credentials.
+
+@test "AGE_ROOT and CREDS_ROOT move the identity and the whole public store together" {
+  roots="$(mktemp -d)"
+  # The roots only apply where no per-file override already names the file, so unset setup's.
+  unset SOPS_AGE_FILE SOPS_RECIPIENTS
+  export AGE_ROOT="$roots/enclave" CREDS_ROOT="$roots/store"
+  : >"$calls"
+  run ctl init
+  [ "$status" -eq 0 ]
+  [ -f "$roots/enclave/age/keys.txt" ]
+  [ "$(stat -c '%a' "$roots/enclave/age/keys.txt")" = "600" ]
+  grep -q "^age-keygen -o $roots/enclave/age/keys.txt$" "$calls"
+  grep -q '^  - &r1 age1stub' "$roots/store/.sops.yaml" # the public key lands in the rules file
+  [ ! -f "$roots/store/recipient" ]                     # init never creates a recipient file
+  grep -q '^keys:' "$roots/store/.sops.yaml"
+  run ! grep -q 'age1stub' "$store/recipient" # the default store got nothing; setup's keys stay
+  rm -rf "$roots"
+}
+
+@test "encrypt FILE seals with the rules file inside CREDS_ROOT, whatever the cwd is" {
+  roots="$(mktemp -d)"
+  unset SOPS_AGE_FILE SOPS_RECIPIENTS
+  export AGE_ROOT="$roots/enclave" CREDS_ROOT="$roots/store"
+  run ctl init
+  [ "$status" -eq 0 ]
+  printf 'secret: hunter2\n' >"$roots/store/A.sops.yaml"
+  : >"$calls"
+  run ctl encrypt "$roots/store/A.sops.yaml"
+  [ "$status" -eq 0 ]
+  grep -q "^sops -e -i --config $roots/store/.sops.yaml $roots/store/A.sops.yaml " "$calls"
+  [ "$(stat -c '%a' "$roots/store/A.sops.yaml")" = "400" ]
+  : >"$calls"
+  run ctl verify "$roots/store/A.sops.yaml"
+  [ "$status" -eq 0 ]
+  grep -q "agefile=$roots/enclave/age/keys.txt" "$calls" # sops opens the identity under AGE_ROOT
+  rm -rf "$roots"
+}
+
+@test "the per-file overrides still outrank a root, so a sops-nix keyFile can be named exactly" {
+  roots="$(mktemp -d)"
+  mkdir -p "$roots/nixos"
+  printf 'AGE-SECRET-KEY-1TEST\n' >"$roots/nixos/keyFile"
+  export AGE_ROOT="$roots/enclave" CREDS_ROOT="$roots/store"
+  export SOPS_AGE_FILE="$roots/nixos/keyFile" SOPS_RECIPIENTS="$store/recipient"
+  : >"$calls"
+  run ctl decrypt "$record"
+  [ "$status" -eq 0 ]
+  grep -q "agefile=$roots/nixos/keyFile" "$calls"
+  run ctl keys
+  [ "$output" = "age1aaa,age1bbb" ] # the recipient override, not CREDS_ROOT, is what keys reads
+  run ! [ -e "$roots/enclave" ]     # nothing is written into the root an override outranked
+  run ! [ -e "$roots/store/recipient" ]
+  rm -rf "$roots"
+}
+
 # --- tilde expansion -------------------------------------------------------
 
 # A quoted ~ (or one from a variable) reaches the script literal, which is how a fish user types a
@@ -624,7 +759,7 @@ EOF
   grep -q '^ssh-to-age -private-key -i .*ssh_unlocked$' "$calls"
   run ! grep -q 'age-keygen -o ' "$calls"
   grep -q '^# public key: age1stubderived' "$SOPS_AGE_FILE"
-  grep -q 'age1stubderived' "$SOPS_RECIPIENTS"
+  grep -q 'age1stubderived' "$rulefile"
 }
 
 @test "init --from-ssh hands the passphrase to ssh-to-age in its environment, never in argv" {
@@ -674,14 +809,14 @@ EOF
   grep -q '^# created: ssh-to-age from ' "$SOPS_AGE_FILE"
 }
 
-@test "init --from-ssh rerun changes nothing: no prompt, no second derivation, no duplicate recipient" {
+@test "init --from-ssh rerun changes nothing: no prompt, no second derivation, no duplicate key" {
   run ctl init --from-ssh "$stubs/ssh_unlocked"
   : >"$calls"
   run ctl init --from-ssh "$stubs/ssh_unlocked"
   [ "$status" -eq 0 ]
   again="$output"
   run ! grep -q 'ssh-to-age' "$calls"
-  [ "$(grep -c 'age1stubderived' "$SOPS_RECIPIENTS")" -eq 1 ]
+  [ "$(grep -c 'age1stubderived' "$rulefile")" -eq 1 ]
   grep -q 'already derived' <<<"$again"
 }
 
@@ -707,6 +842,8 @@ EOF
   grep -q 'recipients embedded in a record' <<<"$output"
   grep -q '^  protected KEY' <<<"$output"
   grep -q 'PRIVATE key without .pub' <<<"$output"
+  grep -q 'AGE_ROOT' <<<"$output"
+  grep -q 'CREDS_ROOT' <<<"$output"
   run ! grep -q 'command not found' <<<"$output"
   run ! grep -q . "$calls"
 }
@@ -731,7 +868,7 @@ EOF
   # The generated key must match the recipient, so generate one and use its own public key.
   PATH="$host_path" age-keygen -o "$stubs/realkey" 2>/dev/null || skip "no age-keygen on the host PATH"
   grep '^# public key:' "$stubs/realkey" | awk '{print $NF}' >"$store2/recipient"
-  export SOPS_RECIPIENTS="$store2/recipient"
+  export CREDS_ROOT="$store2" SOPS_RECIPIENTS="$store2/recipient"
   export SOPS_KEYS_CMD="cat $stubs/realkey"
   cipher=$(jq -n --arg v "$(printf 'line1\nline2')" '{secret:$v}' | ctl encrypt --format json)
   printf '%s' "$cipher" >"$store2/A.sops.json"
@@ -757,7 +894,8 @@ line2" ]
   # with no key command, both through the identity file alone.
   store3="$stubs/rules"
   mkdir -p "$store3"
-  export SOPS_RECIPIENTS="$store3/recipient"
+  unset SOPS_RECIPIENTS # this store has no recipient file: the rules file init writes is the whole list
+  export CREDS_ROOT="$store3"
   export SOPS_AGE_FILE="$store3/keys.txt"
   run ctl init
   [ "$status" -eq 0 ]
@@ -789,7 +927,7 @@ line2" ]
   mkdir -p "$store4"
   age-keygen -o "$stubs/realkey4" 2>/dev/null || skip "age-keygen failed"
   grep '^# public key:' "$stubs/realkey4" | awk '{print $NF}' >"$store4/recipient"
-  export SOPS_RECIPIENTS="$store4/recipient"
+  export CREDS_ROOT="$store4" SOPS_RECIPIENTS="$store4/recipient"
   export SOPS_AGE_FILE="$stubs/realkey4"
   jq -n --arg s "$(printf 'one\nTwo\n')" --arg t 'abc' '{secret:$s,TOKEN:$t}' |
     ctl encrypt >"$store4/B.sops.yaml"
@@ -831,7 +969,7 @@ line2" ]
   mkdir -p "$store5"
   age-keygen -o "$stubs/realkey5" 2>/dev/null || skip "age-keygen failed"
   grep '^# public key:' "$stubs/realkey5" | awk '{print $NF}' >"$store5/recipient"
-  export SOPS_RECIPIENTS="$store5/recipient"
+  export CREDS_ROOT="$store5" SOPS_RECIPIENTS="$store5/recipient"
   export SOPS_AGE_FILE="$store5/keys.txt"
   run ctl init
   [ "$status" -eq 0 ]
@@ -848,7 +986,9 @@ line2" ]
   [ "$status" -eq 0 ]
   [ "$output" = "abc" ]
   run ctl recipients "$store5/XILO.sops.yaml"
-  [ "$output" = "$(cat "$store5/recipient")" ]
+  # The rules file is the recipient list: init's own public key plus the key from the recipient file
+  # the user made, each once. The recipient file itself is never rewritten.
+  [ "$output" = "$(grep -oE 'age1[a-z0-9]+' "$store5/.sops.yaml" | awk '!seen[$0]++')" ]
   # Re-encrypting a record is `set` or `rekey`, never encrypt.
   run ctl encrypt "$store5/XILO.sops.yaml"
   [ "$status" -eq 1 ]
@@ -897,7 +1037,7 @@ line2" ]
   [ "$status" -eq 0 ]
   [ -s "$store4/keys.txt" ]
   grep -q '^# created: ssh-to-age from ' "$store4/keys.txt"
-  [ -s "$SOPS_RECIPIENTS" ]
+  [ -s "$store4/.sops.yaml" ] # init wrote the rules; it never writes a recipient file
   # The derived half seals a record that opens through the identity file alone: no flag, no key
   # command, which is the route credsctl and xilo hand off on.
   printf '{"token":"mock-token"}' >"$store4/a.sops.json"

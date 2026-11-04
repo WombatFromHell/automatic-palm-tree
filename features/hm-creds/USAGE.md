@@ -3,9 +3,14 @@
 Everything here is installed by the `hm-creds` feature: `credsctl`, `sopsctl`, and `sops`.
 
 A record is one file holding exactly one secret, in `~/.local/share/credentials` (override with
-`CREDS_DIR`), alongside `recipient` and the `.sops.yaml` of creation rules that names who may read a
-new record. Every record ends up `0400`: encrypting a file turns its plaintext into ciphertext in
-place, and encrypting a stream writes ciphertext to stdout only.
+`CREDS_DIR`), alongside the `.sops.yaml` of creation rules that names who may read a new record. A
+`recipient` file you made yourself — one age public key per line — joins those rules; nothing writes
+it. Two roots move the whole environment for a store that lives elsewhere: `AGE_ROOT` for the
+identity directory (`$AGE_ROOT/age/keys.txt`, default `~/.config/sops`, e.g.
+`AGE_ROOT=/var/lib/sops-nix`) and `CREDS_ROOT` for the rules, records and recipient file (default
+`~/.local/share/credentials`, e.g. `CREDS_ROOT=./secrets`). Every record ends up `0400`: encrypting a
+file turns its plaintext into ciphertext in place, and encrypting a stream writes ciphertext to
+stdout only.
 
 The extension picks the backend:
 
@@ -25,15 +30,15 @@ the migration re-encrypts them as `.sops.json`.
 
 ```bash
 sopsctl init      # once: write an age identity to ~/.config/sops/age/keys.txt (0600, sops' own
-                  # lookup path), add its public key to ~/.local/share/credentials/recipient and
-                  # to a .sops.yaml of creation rules beside the records. Idempotent. Nothing
-                  # prompts, and init prints the paths plus the next command.
+                  # lookup path) and its public key into a .sops.yaml of creation rules beside the
+                  # records. Idempotent. Nothing prompts, and init prints the paths plus the next
+                  # command.
 sopsctl keys      # the recipient public keys you can encrypt to — never a secret key
-sopsctl reset     # name the files sopsctl owns — the identity, the rules file, the recipient file,
-                  # and every *.sops.json / *.sops.yaml record — and delete nothing. `reset --force`
-                  # deletes them so init starts fresh. That is unrecoverable: the identity is the
-                  # only thing that can read the records, and the recipient file is the invite list
-                  # for every other machine that holds one. Only *.cred stays — systemd-creds owns
+sopsctl reset     # name the files sopsctl owns — the identity, the rules file, a recipient file if
+                  # you made one, and every *.sops.json / *.sops.yaml record — and delete nothing.
+                  # `reset --force` deletes them so init starts fresh. That is unrecoverable: the
+                  # identity is the only thing that can read the records, and the rules file is the
+                  # invite list for every other machine that holds one. Only *.cred stays — systemd-creds owns
                   # those, not sops. Re-add each machine's public key afterwards, then `rekey`.
 ```
 
@@ -62,7 +67,7 @@ config file `~/.config/ksshaskpassrc` is not writable, so every attempt raises i
 the fontconfig warnings Qt brings up, and exits non-zero. That flood is ksshaskpass, not `sopsctl`.
 The identity file it writes is the **disposable** half: it is regenerable with the same command, while
 the ssh keypair is the origin. A rerun with the same keypair is a no-op.
-Once that public key is in the recipient file, `sopsctl keys` prints it, and because sops finds the
+Once that public key is in the rules file, `sopsctl keys` prints it, and because sops finds the
 derived identity file itself, decrypting any record needs no prompt and no key flag.
 
 Add a secret — write the plaintext where the record will live, then encrypt it in place:
@@ -83,7 +88,8 @@ a record is immutable: `encrypt` refuses it, so a change is `set`, `rekey`, or `
 
 With no file, `encrypt` reads JSON on stdin and writes ciphertext to stdout, which is what `credsctl`
 and a pipe use; `--format json|yaml` picks the shape, yaml by default, and the recipients come from
-`recipient` because a `path_regex` can never match a stream. A field whose name ends in `_unencrypted`
+the rules file — plus a `recipient` file if you made one — because a `path_regex` can never match a
+stream. A field whose name ends in `_unencrypted`
 stays readable in the file — that is the only way to keep a field in plain text.
 
 Read a secret:
@@ -111,8 +117,9 @@ printf 'age1newpubkey...\n' >> ~/.local/share/credentials/recipient
 sopsctl rekey ~/.local/share/credentials/*.sops.json ~/.local/share/credentials/*.sops.yaml
 ```
 
-`rekey` re-encrypts each record listed to the current recipient file. To drop someone, delete their
-line and rekey.
+`rekey` re-encrypts each record listed to the current recipients — the rules file, plus a `recipient`
+file if you made one (adding the key to the `keys:` block of `.sops.yaml` works too). To drop someone,
+delete their line and rekey.
 
 Audit and integrity:
 
@@ -162,22 +169,29 @@ and the one you can hand-write; `credsctl` still reads it as json, because `sops
 normalizes any record. The suffix decides only what gets written to disk.
 
 `credsctl` delegates a `.sops.json` or `.sops.yaml` record to `sopsctl`: every sops flag, the
-recipient file and the key command belong to `sopsctl`.
+recipients and the key command belong to `sopsctl`.
 
 ## Overrides and exit codes
 
 - `CREDS_DIR` / `CREDENTIALS_DIRECTORY` — where the store is.
+- `AGE_ROOT` — the directory the identity lives in, in sops' own layout (`$AGE_ROOT/age/keys.txt`,
+  default `~/.config/sops`). `AGE_ROOT=/var/lib/sops-nix` points at a sops-nix enclave.
+- `CREDS_ROOT` — the directory the public half lives in: rules file, records, and a recipient file
+  only if you made one (default `~/.local/share/credentials`). `CREDS_ROOT=./secrets` is the store a
+  flake deploys; `credsctl` follows the same root.
 - `SOPS_AGE_FILE` — the age identity (default `~/.config/sops/age/keys.txt`, where sops looks by
   itself). Move it there only if you want the file store somewhere else; while a readable identity
   exists, it is what decrypt uses and no key command runs.
 - `SOPS_RULES` — the `.sops.yaml` of creation rules for new records (default `.sops.yaml` beside the
-  recipient file). Public keys only, so it is safe to commit; `sopsctl encrypt FILE` names it with
+  records). Public keys only, so it is safe to commit; `sopsctl encrypt FILE` names it with
   `--config`, so the directory you sit in never matters — raw `sops -e FILE` reads it from the
   **current** directory, which is why `init` prints the directory to `cd` into.
 - `SOPS_KEYS_CMD` — the wallet route, used only when no identity file is readable. Default
   `kwallet-query -f flakeroot -r creds-identity kdewallet`; point it at any command that prints an
   age secret key.
-- `SOPS_RECIPIENTS` — the recipient file (default `~/.local/share/credentials/recipient`).
+- `SOPS_RECIPIENTS` — an **optional** recipient file, one age public key per line, whose keys join the
+  rules (default `~/.local/share/credentials/recipient`). Nothing creates or rewrites it; if you made
+  one, `keys`, `encrypt` and `rekey` read it, and `reset` deletes it when it exists.
 
 Both tools exit `0` ok, `1` bad usage, `2` no such record, `3` encrypt or decrypt failed.
 

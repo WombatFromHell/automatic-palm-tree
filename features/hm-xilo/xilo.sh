@@ -53,9 +53,9 @@ if [[ $exported == 0 && $missing == 1 ]]; then
   shopt -s nullglob nocaseglob
   for f in "$cred_dir"/XILO.sops.*; do
     case "${f,,}" in
-      # The basename, not the path: --env takes a name and credsctl resolves it inside cred_dir.
-      *.sops.json) [[ -z $bundle_json ]] && bundle_json="${f##*/}" ;;
-      *.sops.yaml) [[ -z $bundle_yaml ]] && bundle_yaml="${f##*/}" ;;
+    # The basename, not the path: --env takes a name and credsctl resolves it inside cred_dir.
+    *.sops.json) [[ -z $bundle_json ]] && bundle_json="${f##*/}" ;;
+    *.sops.yaml) [[ -z $bundle_yaml ]] && bundle_yaml="${f##*/}" ;;
     esac
   done
   shopt -u nullglob nocaseglob
