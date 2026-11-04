@@ -78,6 +78,11 @@ gate() {
   fi
 }
 
+# `nix develop` is where the pin updaters run (features/*/update.sh -> lib/updater.sh), so the
+# tools they need must resolve from the devShell, not from whatever the host installed.
+gate "nix develop resolves the updater tools" devshell nix develop --command \
+  bash -c 'command -v curl jq nix bats shellcheck shfmt >/dev/null'
+
 # Eval-only suites, listed explicitly. The six .nix files not here are not eval-only:
 # support.nix is a fixture library, configs.nix evaluates one host per process, and
 # appdir/brave-layout/shellwrap/yazi-install build (below).

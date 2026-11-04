@@ -74,5 +74,17 @@
         (mkChecks system "nixos" (config: config.config.system.build.toplevel))
         // (mkChecks system "home" (config: config.activationPackage))
     );
+
+    # The pin updaters (features/*/update.sh -> lib/updater.sh) and the eval gate need these
+    # six tools; `nix develop` is where they resolve rather than whatever the host installed.
+    devShells = lib.genAttrs supportedSystems (
+      system:
+      let pkgs = cfg.pkgsFor.${system};
+      in {
+        default = pkgs.mkShell {
+          packages = with pkgs; [curl jq nix bats shellcheck shfmt];
+        };
+      }
+    );
   };
 }

@@ -102,3 +102,35 @@ update() { PATH="$stubs:$PATH" bash "$feature/update.sh" "$@"; }
   [ "$status" -eq 1 ]
   [[ $output == *"Update available: 0.22.0 -> 0.23.1"* ]]
 }
+
+# update-all.sh runs the whole pin sweep from its own directory, so the fixture repo is the
+# scratch dir itself: its features/hm-test entry is the symlink setup() made.
+all() { PATH="$stubs:$PATH" run bash "$stubs/update-all.sh" "$@"; }
+
+all_repo() {
+  cp "$repo/update-all.sh" "$stubs/update-all.sh"
+  write_meta
+}
+
+@test "update-all.sh --check passes a repo whose pins hold" {
+  all_repo
+  all --check
+  [ "$status" -eq 0 ]
+  assert_out "Already up to date"
+}
+
+@test "update-all.sh --check aborts on a pin that moved" {
+  all_repo
+  PREFETCH_HASH=sha256-DIFFERENT all --check
+  [ "$status" -eq 1 ]
+  assert_out "Pin moved"
+}
+
+@test "update-all.sh refuses an update.sh that is a copy of lib/updater.sh" {
+  all_repo
+  rm "$stubs/features/hm-test/update.sh"
+  cp "$repo/lib/updater.sh" "$stubs/features/hm-test/update.sh"
+  all --check
+  [ "$status" -eq 1 ]
+  assert_out "copies, not symlinks"
+}
