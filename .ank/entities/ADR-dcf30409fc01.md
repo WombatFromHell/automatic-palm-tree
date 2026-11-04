@@ -15,7 +15,7 @@ amends: [ADR-5eb78b01a869]
 ratified: 829123d3a88c
 verified:
   - by: WombatFromHell@users.noreply.github.com
-    at: 2026-11-04T17:55:17Z
+    at: 2026-11-04T18:06:15Z
 schema: 4
 version: 2
 ---
