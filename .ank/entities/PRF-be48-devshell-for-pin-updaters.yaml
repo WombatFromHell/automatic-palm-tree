@@ -1,0 +1,34 @@
+id: PRF-be48-devshell-for-pin-updaters
+type: proof
+status: confirmed
+summary: TASK-be48 - a devShell carries the pin updater tools
+covers:
+  - TASK-be48
+source: human
+evidence:
+  - >
+    commit 26f5474 (main): flake.nix adds
+    devShells.<supportedSystem>.default = pkgs.mkShell with curl, jq, nix,
+    bats, shellcheck and shfmt from cfg.pkgsFor.
+  - >
+    'nix eval .#devShells.x86_64-linux.default' evaluates to a derivation
+    (/nix/store/5qhj00yxn508pq25gm6k4i16caz6c4pc-nix-shell.drv).
+  - >
+    tests/run.sh gates 'nix develop resolves the updater tools' with
+    'nix develop --command bash -c command -v curl jq nix bats shellcheck
+    shfmt' - ok in the gate run.
+  - >
+    tests/outputs.nix asserts outputs attrNames include devShells, the shell is
+    keyed by system, and drvAttrs.nativeBuildInputs carries all six tools
+    (matched on lowercased pname, because shellcheck's pname is ShellCheck).
+  - >
+    tests/updater.bats drives update-all.sh --check against a fixture repo in
+    the stub dir: 0 when pins hold ("Already up to date"), 1 when a pin moved
+    ("Pin moved"), 1 when update.sh is a copy ("copies, not symlinks"). 9
+    tests pass; nix/curl/prefetch are stubbed, so no network is used.
+  - >
+    bash tests/run.sh exit 0, 45 checks ok.
+note: |
+  Red first: tests/outputs.nix failed "the devShell carries the tools the pin
+  updaters need" before flake.nix exposed devShells. 'nix flake check' was not
+  re-run; the gate does not run it.
