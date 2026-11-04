@@ -1,0 +1,12 @@
+{
+  "repo": "fixture-two-arch",
+  "url": "https://example.com/{repo}/{version}/{arch}",
+  "version": "1.0",
+  "arches": {
+    "x86_64-linux": "x86_64",
+    "aarch64-linux": "aarch64"
+  },
+  "hashes": {
+    "x86_64-linux": "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
