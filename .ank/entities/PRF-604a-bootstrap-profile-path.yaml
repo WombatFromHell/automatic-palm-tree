@@ -1,0 +1,30 @@
+id: PRF-604a-bootstrap-profile-path
+type: proof
+status: confirmed
+summary: TASK-604a - --install puts the resolved nix profile on PATH
+covers:
+  - TASK-604aab196ac8
+source: human
+evidence:
+  - >
+    commit 5db5e95 (main): bootstrap.sh exports
+    "$HOME/.nix-profile/bin:$profile/bin:$PATH" where profile is
+    'readlink -f "$HOME/.nix-profile"', so the directory nix really installed
+    into is on PATH before home-manager runs.
+  - >
+    red first: tests/bootstrap.bats test 14 failed before the fix on
+    'path=.*<HOME>/state/nix/profile/bin' - only the symlink path was there.
+  - >
+    fixture is the real layout: HOME/.nix-profile is a symlink to
+    HOME/state/nix/profile, the switch is exec'd through systemd-run, and that
+    stub logs the PATH it was exec'd with.
+  - >
+    green: 'bats tests/bootstrap.bats' - 15 tests pass, test 14 asserts both
+    '<HOME>/.nix-profile/bin' and '<HOME>/state/nix/profile/bin'.
+  - "bash tests/run.sh: exit 0, 39 checks ok; shellcheck lint green."
+note: |
+  Both entries are exported on purpose: the symlink is the conventional one and
+  the resolved directory is what nix-channel --update actually filled, so a
+  stale or missing symlink cannot leave home-manager unreachable. HOME is
+  overridden per test, so the assertions name the fixture's paths rather than a
+  real /home/josh layout.
