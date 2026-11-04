@@ -1,0 +1,39 @@
+id: PRF-04c5-uncovered-features-hosts
+type: proof
+status: confirmed
+summary: TASK-04c5 - zram, dcal and ghostty have hosts that ask for them
+covers:
+  - TASK-04c519eacf22
+source: human
+evidence:
+  - >
+    commit c9c9a78 (main): tests/zram.nix is a new eval-only tier in
+    tests/run.sh's eval_suites; it builds a fixture NixOS host record
+    (features ["nixos-zram"]) through builders.buildNixosConfigurations and
+    asserts the systemd-zram-setup@ unit, the zram-generator package that
+    ships the template unit, environment.etc."systemd/zram-generator.conf",
+    and services.zram-generator.settings.zram0.compression-algorithm == "zstd".
+  - >
+    tests/home.nix evaluates s.hmCfg of a fixture standalone host asking for
+    hm-dcal, hm-ghostty and hm-nixgl, and asserts dcal reaches home.packages
+    exactly once with the same outPath as the pinned derivation, its
+    xdg.desktopEntries exec prefix "${dcal.outPath}/bin/dcal", and ghostty
+    reaching home.packages exactly once with an outPath different from
+    rawFeaturePkgs.ghostty.outPath (i.e. wrapped).
+  - >
+    no enable flag is asserted: the zram check reads units, packages and the
+    generated conf file; the home checks read PATH contents and store paths.
+  - >
+    red first: tests/zram.nix failed "the unit runs the generator, not a
+    hand-written swap command" before the check was pointed at the generator
+    package, and tests/home.nix failed the ghostty check until hm-nixgl was in
+    the fixture's ask - wrapGpu is a no-op without a wrapper, which is the
+    behaviour the assertion is about.
+  - >
+    green: bash tests/run.sh exit 0, 43 checks ok; tests/zram.nix peak=249MB,
+    tests/home.nix peak=974MB, both under the 1792MB cap tests/run.sh sets.
+note: |
+  No real host is changed: hosts/methyl-base/base.nix keeps "nixos-zram"
+  commented out, so the assertions run on fixture host records. dcal is
+  resolved in the test the same way features/hm-dcal/home.nix resolves it
+  (pkgs.unstable.flakePackages.dcal.<system>.default).
