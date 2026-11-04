@@ -1,0 +1,34 @@
+id: PRF-4568-kernel-module-guard
+type: proof
+status: confirmed
+summary: TASK-4568 - kernel guard covers modules a host imports itself
+covers:
+  - TASK-4568f66f2e48
+source: human
+evidence:
+  - >
+    commit 4d30049 (main): lib/builders.nix assertOneKernelWriter scans
+    host.nixosModules (path, function or attrset module) and throws when the
+    host also lists a kernel feature. lib/features.nix exports kernelFeatures;
+    the old feature-list-only guard stays as-is for two kernel features.
+  - >
+    'nix eval -f tests/red/kernel-module-collision.nix' errors
+    "Host 'kernelhost' pins boot.kernelPackages twice: feature
+    'nixos-cachyos' (.../features/nixos-cachyos/nixos.nix) and host module
+    (.../tests/fixtures/kernelhost/nixos.nix). Keep one." - host and both
+    writers named, peak=13MB through tests/nix-eval.sh.
+  - >
+    red first: with the fixture module in place and no guard, that same eval
+    returned the host facts attrset instead of throwing.
+  - >
+    tests/red/kernel-feature-collision.nix still throws 'Only one kernel
+    feature per host, not nixos-cachyos, nixos-kait2en'.
+  - >
+    bash tests/run.sh: exit 0, 42 checks ok - tests/configs.nix for methyl,
+    methyl-nixos and propyl, and tests/mounts.nix, are green, so no real host
+    trips the new check (modules/defaults/nixos.nix writes boot.kernelPackages
+    at mkOverride 1100 and is deliberately not scanned).
+note: |
+  shortcut, recorded in lib/builders.nix: the check reads each module's own
+  config, not nested `imports`. A host module that pins the kernel from a file
+  it imports is not caught yet.
