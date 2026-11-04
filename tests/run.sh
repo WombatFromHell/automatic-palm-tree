@@ -33,6 +33,23 @@ export XDG_CACHE_HOME="$cache"
 
 fail=0
 
+# Shell that ships without writeShellApplication is never linted: nixpkgs' checkPhase only sees the
+# text it wraps. These are shipped as-is, so the gate lints them itself (~0MB, ~1s, no nix).
+# shortcut: inline text passed to writeShellScriptBin (features/hm-gpg/home.nix's pinentry-fallback)
+# is not covered here -- upgrading means routing that text through a wrapper the gate builds.
+lint_files=(bootstrap.sh update-all.sh lib/updater.sh
+  features/hm-gpg/pinentry-tmux.sh features/hm-gpg/pinentry-zellij.sh
+  features/hm-nasmount/nasmount-sshfs.sh)
+if ! command -v shellcheck >/dev/null 2>&1; then
+  echo "skip shipped shell lint [shellcheck not installed]"
+elif out=$(shellcheck -f gcc "${lint_files[@]}" 2>&1); then
+  echo "ok   shipped shell lint  ${#lint_files[@]} files"
+else
+  echo "FAIL shipped shell lint"
+  printf '%s\n' "$out" | tail -20
+  fail=1
+fi
+
 # tests/nix-eval.sh reports the scope's highest memory on stderr. Keep the suite's own output on
 # one line and carry the peak alongside it, so the cap is auditable: a suite that balloons shows
 # up here instead of only in a separate measurement.

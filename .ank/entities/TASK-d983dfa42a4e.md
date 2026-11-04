@@ -1,0 +1,25 @@
+---
+id: TASK-d983dfa42a4e
+type: task
+slug: the-ghostty-build-carries-no-rewritten-appdir-pa
+title: The Ghostty build carries no rewritten AppDir paths
+created: 2026-11-04T17:01:56Z
+author: josh@methyl-bazzite
+status: open
+scope:
+  - features/hm-ghostty/_package.nix
+  - tests/appdir.nix
+blocked_by: []
+done_criteria: |
+  tests/appdir.nix asserts the built store path contains no /tmp/EKFs= string anywhere in the tree, so the AppDir's bundled-lib rewrite is proven at build time, and the tier stays green.
+criteria_by: creator
+method: diagnose
+schema: 4
+version: 1
+---
+
+features/hm-ghostty/_package.nix:26 records the limit: the AppDir's bundled libraries carry
+build-time paths rewritten to /tmp/EKFs=, and the install phase relocates and symlinks around them.
+appdir.nix proves which entries are kept, dropped and moved, but nothing checks what the relocated
+tree actually references, so a ghostty that cannot find its bundled libs is a runtime failure on the
+host rather than a gate failure.
