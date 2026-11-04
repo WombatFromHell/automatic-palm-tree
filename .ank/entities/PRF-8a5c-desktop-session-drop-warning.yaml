@@ -1,0 +1,36 @@
+id: PRF-8a5c-desktop-session-drop-warning
+type: proof
+status: confirmed
+summary: TASK-8a5c - a host asking for both desktops names the dropped one
+covers:
+  - TASK-8a5ccb7dfd5b
+source: human
+evidence:
+  - >
+    commit 6f1cf14 (main): features/nixos-kde/nixos.nix sets
+    config.warnings when GDM owns the login screen - "Host enables nixos-kde
+    and nixos-gnome: GDM owns the login screen, so the Plasma session
+    (services.desktopManager.plasma6) is dropped; KDE apps remain."
+  - >
+    fixture host tests/fixtures/hosts/desktophost/default.nix lists features
+    ["nixos-kde" "nixos-gnome"]; tests/warnings.nix reads that feature list
+    through hostsAt and imports the modules through
+    features.resolveFeaturePaths, evaluated against assertWarnStubs +
+    modules/warnings-gate.nix.
+  - >
+    red first: 'nix eval -f tests/warnings.nix' reported
+    "warnings: FAILED enabling both warns which session the greeter drops"
+    before the module carried the warning.
+  - >
+    green: 'nix eval -f tests/warnings.nix' prints OK warnings (peak=27MB);
+    the suite also asserts one desktop alone warns nothing, and that the gate
+    still turns any warning into a failed assertion.
+  - >
+    bash tests/run.sh: exit 0, 42 checks ok - methyl, methyl-nixos and propyl
+    still build clean, so no real host gains a warning (profiles enable one
+    desktop each: methyl-kde, methyl-gnome, methyl-ws).
+note: |
+  tests/support.nix gains flakeHostStub and desktopStubs because a bare
+  lib.evalModules does not declare config.flakeHost or the services.* paths the
+  desktop modules write. Nothing is built; pkgs is a stub attr handed to
+  specialArgs so environment.systemPackages type-checks without instantiation.
