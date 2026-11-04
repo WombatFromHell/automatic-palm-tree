@@ -63,6 +63,11 @@ let
 
   # Per-host expectations, straight from hosts/ and the profile layout. `kernel = null`
   # means "the kernel its own feature pins", compared against that feature's derivation.
+  # Which host runs the Wayland watcher: its script shells out to bare `niri`, `pgrep` and
+  # `nvtop`, so the unit may only name store paths and those tools must be installed for the
+  # user whose session PATH the script reads. The option is the source of truth -- a host can
+  # enable the niri feature without the watcher.
+  watcherOn = cfg: (homeCfg cfg).features.niri.wl-watcher.enable;
   # Per-host facts no owner table can derive: which kernel the host's own feature pins, the
   # packages its profile promises, and the caches its features gate on. `kernel = null` means
   # "the kernel its own feature pins", compared against that feature's derivation.
@@ -120,6 +125,24 @@ let
           && (homeCfg cfg).programs.chromium.package.version == rawBrave.version
           && (homeCfg cfg).programs.zed-editor.package.pname == rawZed.pname
           && (homeCfg cfg).programs.zed-editor.package.version == rawZed.version))
+
+      (ck "${host}: wl-watcher execs store paths only, and installs what its script calls"
+        (let
+          u = (homeCfg cfg).systemd.user.services.wl-watcher or null;
+        in
+          # Non-watcher hosts must not grow the unit; forcing `home.packages` is skipped
+          # there, which is what makes this check cheap on the other hosts.
+          ((u != null) == watcherOn cfg)
+          && (u == null ||
+            (lib.all
+              (v: builtins.match "^-?/nix/store/.*" v != null)
+              (lib.concatLists [
+                (lib.toList u.Service.ExecStartPre)
+                (lib.toList u.Service.ExecStart)
+                (lib.toList u.Service.ExecStop)
+              ])
+              && s.hasPkg (homeCfg cfg).home.packages "procps"
+              && s.hasPkg (homeCfg cfg).home.packages "nvtop"))))
 
       # --- this host's own profile effects -------------------------------------
       (ck "${host}: its packages are installed" (lib.all (p: sysPkg cfg p) e.packages))

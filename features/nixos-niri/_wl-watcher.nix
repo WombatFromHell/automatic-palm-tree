@@ -27,12 +27,11 @@
   # Everything else -- poll interval, startup delay, relaxed/hold mode, app
   # filters -- is wl_watcher.py's upstream default.
   #
-  # ponytail: wl_watcher.py shells out to bare `niri`, `pgrep`, `nvtop` from the
-  # session PATH. On NixOS `niri` comes from features.niri's systemPackages
-  # (nixos.nix:14); `pgrep`/`nvtop` are absent, and upstream degrades gracefully
-  # (backend falls back to XDG_CURRENT_DESKTOP, GPU-strict filter falls back to
-  # permissive). Upgrade path: add `pkgs.nvtopPackages.full` here if strict GPU
-  # detection is ever wanted on the NixOS host.
+  # wl_watcher.py shells out to bare `niri`, `pgrep` and `nvtop`, and a systemd user unit gets
+  # no PATH into the store -- so those three are installed for the user whose session PATH the
+  # script reads: `niri` from features.niri's systemPackages (nixos.nix:14), and `pgrep`/`nvtop`
+  # from `home.packages` below. Without them upstream degrades silently (backend falls back to
+  # XDG_CURRENT_DESKTOP, the GPU-strict filter falls back to permissive).
   envVars = [
     "WATCHER_HOOK_ON=\"${gamemodePkg}/bin/gamemode on\""
     "WATCHER_HOOK_OFF=\"${gamemodePkg}/bin/gamemode off\""
@@ -43,7 +42,8 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [watcherPkg gamemodePkg];
+    # `procps` and `nvtop` are what wl_watcher.py calls by bare name; see the note above.
+    home.packages = [watcherPkg gamemodePkg pkgs.procps pkgs.nvtopPackages.full];
 
     systemd.user.services.wl-watcher = {
       Unit = {
