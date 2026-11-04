@@ -138,6 +138,27 @@ EOF
   [[ $output == *"--rebind"* ]]
 }
 
+@test "--install puts the profile nix actually installed on PATH before home-manager runs" {
+  tmp="$(mktemp -d)"
+  cp "$repo/bootstrap.sh" "$tmp/"
+  printf '{\n  inputs.home-manager.url = "github:nix-community/home-manager/release-25.05";\n}\n' >"$tmp/flake.nix"
+  # Newer Nix installs into $XDG_STATE_HOME/nix/profile and symlinks ~/.nix-profile to it, so the
+  # symlink is a pointer, not the directory home-manager was installed into.
+  mkdir -p "$tmp/state/nix/profile/bin"
+  ln -s "$tmp/state/nix/profile" "$tmp/.nix-profile"
+  # The switch is exec'd through a systemd-run scope, so that stub is where PATH is visible.
+  stub systemd-run <<EOF
+#!/usr/bin/env bash
+echo "systemd-run \$*" >> "$calls"
+echo "path=\$PATH" >> "$calls"
+EOF
+  HOME="$tmp" PATH="$stubs:/usr/bin:/bin" bash "$tmp/bootstrap.sh" --standalone --install josh@methyl || true
+  assert_call "home-manager switch --flake"
+  assert_call "path=.*$tmp/.nix-profile/bin"
+  assert_call "path=.*$tmp/state/nix/profile/bin"
+  rm -rf "$tmp"
+}
+
 @test "--install installs the Home Manager release the flake pins" {
   tmp="$(mktemp -d)"
   cp "$repo/bootstrap.sh" "$tmp/"

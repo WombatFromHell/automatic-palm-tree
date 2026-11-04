@@ -97,8 +97,11 @@ if [ -n "$install" ]; then
   nix-channel --add "https://github.com/nix-community/home-manager/archive/$hm_ref.tar.gz" home-manager
   nix-channel --update
   nix-shell '<home-manager>' -A install
-  # ponytail: classic profile path; newer Nix may use $XDG_STATE_HOME/nix/profile
-  export PATH="$HOME/.nix-profile/bin:$PATH"
+  # `nix-shell -A install` installs into the profile nix actually uses. $HOME/.nix-profile is a
+  # symlink to $XDG_STATE_HOME/nix/profile on newer Nix (and can be stale or missing), so name
+  # the resolved profile too -- whichever directory holds home-manager is on PATH.
+  profile="$(readlink -f "$HOME/.nix-profile")"
+  export PATH="$HOME/.nix-profile/bin:$profile/bin:$PATH"
 fi
 [ -n "$target" ] || {
   echo "standalone ready: nix on PATH, $(id -un) trusted"
