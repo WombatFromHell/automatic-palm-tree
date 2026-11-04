@@ -15,7 +15,7 @@ Run from the repo root.
 | `./bootstrap.sh --standalone [--install] [--rebind[=DIR]] [<user>@<host>]`           | Prepares a box with **no Nix**: installs it through the pinned upstream installer's `ostree` plan (`--enable-flakes`, plus `--persistence <dir>` when `--rebind` names the volume), then adds this user to `extra-trusted-users` and restarts `nix-daemon`. `--install` also installs Home Manager through its channel — the release the flake's `home-manager` input pins. With no target it prints one status line and stops. `--rebind` is refused when `nix` is already on PATH, because the store bind only happens while the installer runs; clear Determinate first with `sh <(curl -s https://install.determinate.systems/nix) uninstall`. `--help` prints the usage. |
 | `features/<name>/update.sh [<ref> \| --check]`                                       | Pins one feature. No arg = latest release; `<ref>` = pin that ref explicitly; `--check` = exit 1 when a newer version exists or the pinned hash moved. A symlink to `lib/updater.sh`, configured by that feature's `metadata.json`.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `./update-all.sh [--flake] [--check]`                                                | Runs every `features/*/update.sh` (aborts on the first failure), forwards its args to each, then commits `features/` and `flake.lock`. `--flake` also runs `nix flake update`. Stops if any `update.sh` is a copy instead of a symlink, and skips the commit when the tree is dirty beyond those paths.                                                                                                                                                                                                                                                                                                                                                                       |
-| `bash tests/run.sh`                                                                  | Eval-only gate. Green suites print `ok tests/<suite>.nix`; each `tests/red/` guard must throw a message containing its first line (`# expect: <substring>`). Never runs `nix build`. See **Test gate** below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `bash tests/run.sh`                                                                  | Gate. Green suites print `ok tests/<suite>.nix`; each `tests/red/` guard must throw a message containing its first line (`# expect: <substring>`). Three tiers run `nix build` on synthetic fixtures (`appdir`, `shellwrap`, `yazi-install`), so a build failure can come from the gate. See **Test gate** below.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `bash tests/build-harness.sh [--cap MB] [--build] [--stats] [--link PATH] -- <attr>` | Build-time telemetry for one attribute under one memory scope, running the exact `nix build` command `njust` runs: `peak`/`swap` from the scope, `wall`, and `out`/`installed` with `--build`. Not part of the gate — it builds. See **Build telemetry** in TEST_DESIGN.md.                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 ## Test gate
@@ -27,13 +27,19 @@ caps each process with a transient systemd scope (`MemoryHigh` 90%, `MemoryMax 1
 free, 3 GB swap — thrashes on a whole-tree eval. Going over the cap is a failure (`exit 137`),
 not a hang.
 
-Cost, measured on this host with the cap in force: whole gate ~27s, 30 checks green. `run.sh`
+Cost, measured on this host with the cap in force: whole gate ~60s, 38 checks green (shell lint, 9 eval suites, 3 build tiers, 3 host configs, the mocked rebuild, 7 bats suites, parity, 13 red guards). `run.sh`
 prints each eval's peak on its own line (`peak=793MB`), taken from the scope's `MemoryPeak` while
 the eval is still alive — a killed eval reports the peak it reached before the OOM. Widest peaks:
-`home` 793MB, `wrap` 733MB, `configs` 670–695MB (methyl / methyl-nixos / propyl), `mounts` 416MB;
-the eval-only tiers (`loader`, `filesystems`, `pins`, `warnings`, `caches`, `outputs`, the red
-guards, parity) sit at 22–44MB, which is `nix` startup. Nothing on the gate path is ever built, so
-no tier pulls a kernel, firmware or package derivation.
+`home` 908–925MB, `wrap` 700–706MB, `configs` 648–690MB (methyl / methyl-nixos / propyl),
+`mounts` 367–397MB; the eval-only tiers (`loader`, `filesystems`, `pins`, `warnings`, `caches`,
+`outputs`, the red guards, parity) sit at 15–30MB, which is `nix` startup.
+
+Three tiers build, on purpose, and none of them fetches what it is testing: `appdir` (~8s,
+`features/hm-ghostty/_package.nix`'s real installPhase over a synthetic AppDir — `src` is a
+placeholder, so no AppImage is ever downloaded), `shellwrap` (~4s, the shipped
+`writeShellApplication` wrappers, so nixpkgs' shellcheck linting is applied to the text that
+ships), and `yazi-install` (~10s, the pinned yazi sources unpacked and their `postInstall`
+re-run). Nothing else is built, so no tier pulls a kernel, firmware or vendor asset.
 
 **The warning invariant.** A config warning must fail a build, not print one line of text. Every
 NixOS config and Home Manager config gets `modules/warnings-gate.nix`, which appends a
