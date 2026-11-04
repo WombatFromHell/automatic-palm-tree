@@ -37,14 +37,8 @@ tilde() {
 }
 
 keys_cmd="${SOPS_KEYS_CMD:-kwallet-query -f flakeroot -r creds-identity kdewallet}"
-# Two roots, one per half of the environment: AGE_ROOT is the directory the SECRET half lives in, in
-# sops' own layout ($AGE_ROOT/age/keys.txt), and CREDS_ROOT the directory the PUBLIC half lives in —
-# rules file, records, and a recipient file only if someone made one. They are overrides over today's
-# defaults, not new defaults:
-# unset, the paths below are exactly what sops looks for and what this store already uses. So a
-# sops-nix enclave (`AGE_ROOT=/var/lib/sops-nix`) or a flake-deployed store (`CREDS_ROOT=./secrets`)
-# needs one variable each, and the per-file overrides still outrank a root — a sops-nix key file can
-# be named by SOPS_AGE_FILE outright.
+# Two roots, one per half of the environment (the header names both): overrides over today's defaults,
+# and the per-file overrides still outrank a root.
 age_root="$(tilde "${AGE_ROOT:-$HOME/.config/sops}")"
 creds_root="$(tilde "${CREDS_ROOT:-$HOME/.local/share/credentials}")"
 # The rules file is the public half's home: sops-nix's creation rules, beside the records, and the
@@ -60,7 +54,7 @@ die() {
 
 # sops' own metadata block, in either shape: a file carrying it is a record, not plaintext.
 encrypted_record() {
-  grep -qE '^[[:space:]]*sops:' "$1" || grep -qE '"sops"[[:space:]]*:' "$1"
+  grep -qE '^[[:space:]]*sops:|"sops"[[:space:]]*:' "$1"
 }
 
 # The rules file in sops-nix's shape — recipients as anchors under `keys:`, one creation rule whose
@@ -69,7 +63,7 @@ encrypted_record() {
 rules_from_keys() {
   awk '
     /^#/ { next }
-    NF { key[++n] = $1 }
+    NF && !seen[$1]++ { key[++n] = $1 }
     END {
       if (n == 0) exit 1
       print "keys:"
@@ -117,53 +111,37 @@ run_sops() {
   fi
 }
 
-# A stream encrypt names the recipients itself with --age on /dev/stdin, so sops' own rules-file
-# lookup has to be switched off for it. sops reads a .sops.yaml from the CURRENT directory for ANY
-# encrypt, no path_regex in one can match /dev/stdin, and cmd_init writes that file into the records
-# dir — measured on sops 3.13.3 here: without this flag, `cd
-# ~/.local/share/credentials && credsctl encrypt ALPHA.sops.json` dies 'error loading config: no
-# matching creation rules found' even though --age names the key. A file encrypt keeps the rules file
-# and names it with --config instead.
-sops_no_rules=(--config /dev/null)
+# A stream encrypt names the recipients itself with --age on /dev/stdin, so sops' own rules-file lookup
+# has to be switched off for it: sops reads a .sops.yaml from the CURRENT directory for ANY encrypt, and
+# no path_regex in one can match /dev/stdin — measured on sops 3.13.3 here, without `--config /dev/null`
+# a stream encrypt dies 'error loading config: no matching creation rules found'. A file encrypt keeps
+# the rules file and names it with --config instead.
 
 # Age public keys named in a file, deduped in the order they appear: sops-nix's `keys:` anchors and
 # their aliases, a json list, or one key per line all match. The regex is the public half only — an
 # age secret key is upper-case AGE-SECRET-KEY and never printed. A file that is not there contributes
 # nothing, so an optional file costs no check of its own.
 age_keys() {
-  grep -ohE 'age1[a-z0-9]+' "$1" 2>/dev/null | awk 'NF && !seen[$0]++' || true
+  grep -ohE 'age1[a-z0-9]+' "$@" 2>/dev/null | awk 'NF && !seen[$0]++' || true
 }
 
 # Who may read a record: the rules file first — sops-nix's creation rules, the shape sops itself reads
 # and the one place recipients have to live — then the optional `recipient` file beside it, which is
-# used only if someone made one. A key in both is named once.
-recipient_list() {
+# used only if someone made one. One grep over both files names a key in both once. `keys` is this
+# command and the internal callers use it the same way.
+cmd_keys() {
   local keys
-  keys="$(
-    age_keys "$rules"
-    age_keys "$recipients"
-  )"
-  keys="$(printf '%s\n' "$keys" | awk 'NF && !seen[$0]++')"
+  keys="$(age_keys "$rules" "$recipients")"
   [[ -n $keys ]] ||
     die "no recipients: neither $rules nor $recipients holds an age public key — sopsctl init writes the rules file, or add keys to it yourself"
-  printf '%s' "$(printf '%s\n' "$keys" | paste -sd, -)"
+  printf '%s\n' "$keys" | paste -sd, -
 }
 
-need_file() { [[ -f $1 ]] || die "no record: $1" 2; }
-
-# A record is a *.sops.json or a *.sops.yaml file: the suffix is its shape, and a .cred belongs to
+# A record is a *.json or a *.yaml file: the suffix is its shape, and a .cred belongs to
 # systemd-creds, which sops has no format for.
-record_suffix() {
-  case $1 in
-  *.json) printf json ;;
-  *.yaml) printf yaml ;;
-  *) printf '' ;;
-  esac
-}
-
 need_record() {
-  need_file "$1"
-  [[ -n $(record_suffix "$1") ]] || die "no record: $1 — a record is *.sops.json or *.sops.yaml" 2
+  [[ -f $1 ]] || die "no record: $1" 2
+  [[ $1 == *.json || $1 == *.yaml ]] || die "no record: $1 — a record is *.sops.json or *.sops.yaml" 2
 }
 
 # The write side needs a shape, in REPLY: a name carries its suffix, a stream without a name defaults
@@ -177,11 +155,11 @@ record_format() {
   *) die "unknown format: $format (json or yaml)" 1 ;;
   esac
   if [[ -n $name ]]; then
-    suffix=$(record_suffix "$name")
-    [[ -n $suffix ]] || die "no record: $name" 2
-    [[ -n $format ]] || format="$suffix"
-    [[ $format == "$suffix" ]] || die "$name is a $suffix record; --format=$format says otherwise" 1
-    REPLY=$format
+    suffix=${name##*.}
+    [[ $suffix == json || $suffix == yaml ]] || die "no record: $name" 2
+    # A name and a flag that disagree are refused, so a *.json name never holds yaml ciphertext.
+    [[ -z $format || $format == "$suffix" ]] || die "$name is a $suffix record; --format=$format says otherwise" 1
+    REPLY=${format:-$suffix}
     return
   fi
   REPLY=${format:-yaml}
@@ -189,16 +167,16 @@ record_format() {
 
 # sops' metadata block is json in a *.json record and yaml in a *.yaml one, so a parser that assumes
 # one shape reads only one of them. The recipients come out of the block with one match that
-# tolerates either: quoted or not, and whatever follows the key is the value.
+# tolerates either: quoted or not, and whatever follows the key is the value. One line per recipient.
 meta_values() {
-  awk -v key="$1" 'BEGIN { re = "\"?" key "\"?[ \t]*:[ \t]*\"*" }
+  awk 'BEGIN { re = "\"?recipient\"?[ \t]*:[ \t]*\"*" }
     {
       if (match($0, re)) {
         rest = substr($0, RSTART + RLENGTH)
         sub(/[" \t,].*$/, "", rest)
         print rest
       }
-    }' "$2" | paste -sd, -
+    }' "$1"
 }
 
 need_field() { [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || die "invalid field name '$1' (letters, digits, _)" 1; }
@@ -225,13 +203,11 @@ cmd_protected() {
 }
 
 # The passphrase comes from one place: the terminal, read with echo off into the one variable that
-# receives it, and handed to ssh-to-age in SSH_TO_AGE_PASSPHRASE. That variable is ssh-to-age's only
-# passphrase input (measured here on the release nixpkgs ships, ssh-to-age 1.2.0: `strings` finds the
-# name SSH_TO_AGE_PASSPHRASE and no -stdinpass, and the usage block lists only -i, -o, -private-key),
-# and the command runs </dev/null so ssh-to-age cannot reach a terminal of its own. A caller with no
-# terminal — a unit, a script, a GUI launcher — exports the variable itself and this prompt is skipped;
-# with neither the read fails and the message names what to export. shortcut: a blank read is not a
-# passphrase, so it is refused rather than tried.
+# receives it, and handed to ssh-to-age in SSH_TO_AGE_PASSPHRASE (its only passphrase input — see the
+# call in cmd_derive_from_ssh, which runs </dev/null so ssh-to-age cannot reach a terminal of its
+# own). A caller with no terminal — a unit, a script, a GUI launcher — exports the variable itself and
+# this prompt is skipped; with neither the read fails and the message names what to export. shortcut:
+# a blank read is not a passphrase, so it is refused rather than tried.
 # No desktop helper belongs on this path and none may be added: ssh-to-age is not ssh, it never reads
 # SSH_ASKPASS, so a helper here could only be called by hand — and ksshaskpass on this host (6.8.2,
 # measured) cannot even do that: its config dir is not writable, so it raises an error dialog for every
@@ -243,14 +219,11 @@ read_origin_passphrase() { # $1 = the keypair to name, passphrase on stdout
   printf '%s' "$pass"
 }
 
-# ssh-to-age turns an OpenSSH keypair into an age keypair. The ssh key is the origin: it stays on
-# disk behind its passphrase, and nothing here copies, unlocks or rewrites it. The age pair is the
-# disposable half — regenerating it with the same command is how you replace a lost identity. The
-# passphrase goes to ssh-to-age in its own environment variable, so a protected origin works with no
-# terminal (callers may set SSH_TO_AGE_PASSPHRASE themselves) and the passphrase never reaches the
-# store, the recipient file or git.
+# ssh-to-age turns an OpenSSH keypair into an age keypair: the ssh key is the origin — never copied,
+# unlocked or rewritten here, see USAGE.md — and the age pair is the disposable half, regenerable with
+# this same command.
 cmd_derive_from_ssh() {
-  local keypair="$1" tmp err pass="${SSH_TO_AGE_PASSPHRASE:-}"
+  local keypair="$1" tmp err pub pass="${SSH_TO_AGE_PASSPHRASE:-}"
   [[ -r $keypair && -r "$keypair.pub" ]] ||
     die "need both halves of the ssh keypair: $keypair and $keypair.pub" 2
   # Deriving replaces the identity file, so records sealed to whatever key it held before would stop
@@ -307,7 +280,7 @@ cmd_derive_from_ssh() {
 rewrite() {
   local tmp
   tmp="$(mktemp "$1.XXXXXX")" || die "cannot write a temp record beside $1"
-  run_sops -e --input-type json --output-type "$2" --age "$3" "${sops_no_rules[@]}" /dev/stdin >"$tmp" ||
+  run_sops -e --input-type json --output-type "$2" --age "$3" --config /dev/null /dev/stdin >"$tmp" ||
     {
       rm -f "$tmp"
       die "cannot rewrite $1" 3
@@ -337,10 +310,9 @@ cmd_encrypt() {
     esac
   done
 
-  # A path argument is the plaintext to encrypt, in place — sops' own way, `sops -e -i FILE`. The
-  # recipients come from the rules file, named with --config so the current directory never decides
-  # who can read the record; with no rules file, an optional recipient file names them. The suffix is
-  # the shape, and the record is left 0400.
+  # A path argument is the plaintext, encrypted in place (`sops -e -i FILE`), its recipients taken from
+  # the rules file named with --config so the current directory never decides who may read the record
+  # — or from the optional recipient file when there is no rules file. The suffix is the shape.
   if [[ -n $rec ]]; then
     need_record "$rec"
     encrypted_record "$rec" &&
@@ -352,7 +324,7 @@ sopsctl set FIELD FILE / sopsctl rekey FILE" 1
       seal=(--config "$rules")
     else
       local recs
-      recs="$(recipient_list)" || exit 1
+      recs="$(cmd_keys)" || exit 1
       seal=(--age "$recs")
     fi
     run_sops -e -i "${seal[@]}" "$rec" ||
@@ -362,9 +334,9 @@ sopsctl set FIELD FILE / sopsctl rekey FILE" 1
   fi
 
   # With no path the plaintext is JSON on stdin and the ciphertext is stdout, which is what credsctl
-  # and a pipe use. A path_regex can never match /dev/stdin, so the recipients are named outright.
-  # sops reads /dev/stdin and nobody closes a terminal, so on a tty this sits reading the keyboard
-  # with no output at all. A terminal is not a pipe: name where the plaintext comes from instead.
+  # and a pipe use. A path_regex can never match /dev/stdin, so the recipients are named outright and
+  # the rules-file lookup is switched off. On a tty sops reads the keyboard and prints nothing, so a
+  # terminal is not a pipe: the die below names a route instead.
   if [[ -t 0 ]]; then
     die "encrypt needs the plaintext JSON on stdin — a terminal is not a pipe. Pipe it in
 (jq -n '{TOKEN:\"abc\"} | sopsctl encrypt --format yaml), write a plaintext FILE.sops.yaml and
@@ -374,13 +346,12 @@ sopsctl set FIELD FILE to change one field of an existing record." 1
   record_format '' "$format"
   format="$REPLY"
   local recs
-  recs="$(recipient_list)" || exit 1
-  run_sops -e --input-type json --output-type "$format" --age "$recs" "${sops_no_rules[@]}" /dev/stdin ||
+  recs="$(cmd_keys)" || exit 1
+  run_sops -e --input-type json --output-type "$format" --age "$recs" --config /dev/null /dev/stdin ||
     die "encrypt failed" 3
 }
 
-# The plaintext is always json: jq, credsctl and the xilo wrapper parse it, whatever the record's
-# own shape is.
+# The plaintext is always json: jq, credsctl and the xilo wrapper parse it, whatever the record's shape.
 cmd_decrypt() {
   need_record "$1"
   run_sops -d --output-type json "$1" || die "cannot decrypt $1" 3
@@ -394,18 +365,16 @@ cmd_get() {
 }
 
 # The new value never travels through argv: /proc/PID/cmdline is world-readable (0444 on this host),
-# so an argument is readable by every user on the machine for the life of the process, and `jq --arg v`
-# would have put it in a second argv as well. It comes from stdin — an anonymous pipe, no path, nothing
-# to permission-check — or from a prompt with echo off, the rule credsctl encrypt already uses.
-# shortcut: buffered in a variable, which drops a trailing newline and keeps the value in this process's
-# memory rather than on disk. Upgrade to a stream if a value must keep exact bytes.
+# so an argument is readable by every user for the life of the process. It comes from stdin — an
+# anonymous pipe, no path to permission-check — or from a prompt with echo off. shortcut: buffered in
+# a variable, which drops a trailing newline; upgrade to a stream if a value must keep exact bytes.
 cmd_set() {
   [[ $# -eq 2 ]] || die "set needs FIELD FILE — the new value comes from stdin or a prompt, never an argument" 1
   need_field "$1"
   need_record "$2"
   local plain recs format value
   plain=$(run_sops -d --output-type json "$2") || die "cannot decrypt $2" 3
-  recs=$(meta_values recipient "$2")
+  recs=$(meta_values "$2" | paste -sd, -)
   [[ -n $recs ]] || die "no recipients in $2" 3
   record_format "$2"
   format="$REPLY"
@@ -427,7 +396,7 @@ cmd_set() {
 cmd_rekey() {
   [[ $# -gt 0 ]] || die "rekey needs at least one record" 1
   local recs file format
-  recs="$(recipient_list)" || exit 1
+  recs="$(cmd_keys)" || exit 1
   for file in "$@"; do
     need_record "$file"
     record_format "$file"
@@ -440,7 +409,7 @@ cmd_rekey() {
 
 cmd_recipients() {
   need_record "$1"
-  meta_values recipient "$1" | tr ',' '\n'
+  meta_values "$1"
 }
 
 cmd_verify() {
@@ -448,13 +417,11 @@ cmd_verify() {
   run_sops -d --output-type json "$1" >/dev/null || die "cannot verify $1 — MAC or key failure" 3
 }
 
-# The secret half goes to an identity FILE on sops' own lookup path, so decrypting later needs no
-# command, no wallet and no terminal; the public half goes to a rules file beside the records in
-# sops-nix's shape, which is what hands a hand-written record these keys. Raw
-# `sops -e FILE` reads that rules file from the CURRENT directory, which is why the message names the
-# directory to cd into; `sopsctl encrypt FILE` names the rules file outright, so its cwd never matters.
+# init writes the identity to sops' own lookup path and the rules file beside the records (header).
+# The message below names the directory to `cd` into because raw `sops -e FILE` reads its rules from
+# the current directory; `sopsctl encrypt FILE` names the rules file outright.
 cmd_init() {
-  local dir origin=''
+  local dir id_dir origin=''
   [[ ${1:-} == --from-ssh ]] && {
     origin="${2:-}"
     [[ -n $origin ]] || die "--from-ssh needs the ssh keypair to derive from" 1
@@ -462,7 +429,8 @@ cmd_init() {
   [[ -z ${1:-} || ${1:-} == --from-ssh ]] ||
     die "init takes --from-ssh SSH_KEYPAIR or no argument" 1
   dir="$(dirname "$rules")"
-  mkdir -p "$(dirname "$identity")" || die "cannot create $(dirname "$identity")" 3
+  id_dir="$(dirname "$identity")"
+  mkdir -p "$id_dir" || die "cannot create $id_dir" 3
   if [[ -n $origin ]]; then
     if grep -q "# created: ssh-to-age from $origin" "$identity" 2>/dev/null; then
       printf 'identity already derived from %s in %s\n' "$origin" "$identity"
@@ -475,7 +443,7 @@ cmd_init() {
     age-keygen -o "$identity" || die "age-keygen failed" 3
     chmod 600 "$identity"
   fi
-  pub="${pub:-$(grep '^# public key:' "$identity" | awk '{print $NF}')}"
+  pub="$(grep '^# public key:' "$identity" | awk '{print $NF}')"
   [[ -n $pub ]] || die "no public key line in $identity — put that recipient in $rules yourself" 3
   mkdir -p "$dir"
   # The recipients live in the rules file. init writes it only when it is not there yet, from this
@@ -489,7 +457,7 @@ cmd_init() {
     {
       printf '%s\n' "$pub"
       age_keys "$recipients"
-    } | awk 'NF && !seen[$0]++' | rules_from_keys >"$rules" || die "no keys to write $rules from" 3
+    } | rules_from_keys >"$rules" || die "no keys to write $rules from" 3
     chmod 644 "$rules"
     printf 'rules file written to %s\n' "$rules"
   fi
@@ -506,11 +474,10 @@ cmd_init() {
 }
 
 # reset — the sops environment back to nothing, so init starts fresh. sopsctl owns the identity, the
-# rules file, the records, and a recipient file only if someone made one. Only a .cred stays —
-# systemd-creds owns that, not sops. Records are encrypted and the identity is the only thing that
-# can read them, so removing both is permanent; the rules file names every machine that holds a
-# record, so it is the invite list, not a scratch file. Without --force this names the files and
-# deletes nothing.
+# rules file, the records, and a recipient file only if someone made one; only a .cred stays, because
+# systemd-creds owns that, not sops. Removing the identity and the records is permanent (the identity
+# is the only thing that can read them) and the rules file is the invite list for every other machine,
+# so without --force this names the files and deletes nothing.
 cmd_reset() {
   local force=0 files=() dir
   [[ -z ${1:-} || ${1:-} == --force ]] || die "reset takes --force or no argument" 1
@@ -553,50 +520,14 @@ if [[ $# -ge 2 ]]; then
   set -- "${args[@]}"
 fi
 
-case "${1:-}" in
-init)
+# Every command is `cmd_<name>`; `keys` is cmd_keys with its arguments ignored. The name is taken
+# before the shift, so the function still gets the arguments.
+cmd_name=${1:-}
+case $cmd_name in
+init | protected | keys | encrypt | decrypt | get | set | rekey | recipients | verify | reset)
   shift
-  cmd_init "$@"
-  ;;
-protected)
-  shift
-  cmd_protected "$@"
-  ;;
-keys)
-  recipient_list
-  ;;
-encrypt)
-  shift
-  cmd_encrypt "$@"
-  ;;
-decrypt)
-  shift
-  cmd_decrypt "$@"
-  ;;
-get)
-  shift
-  cmd_get "$@"
-  ;;
-set)
-  shift
-  cmd_set "$@"
-  ;;
-rekey)
-  shift
-  cmd_rekey "$@"
-  ;;
-recipients)
-  shift
-  cmd_recipients "$@"
-  ;;
-verify)
-  shift
-  cmd_verify "$@"
-  ;;
-reset)
-  shift
-  cmd_reset "$@"
+  "cmd_$cmd_name" "$@"
   ;;
 "" | -h | --help | help) usage ;;
-*) die "unknown command '$1' — 'sopsctl help' lists the commands" ;;
+*) die "unknown command '$cmd_name' — 'sopsctl help' lists the commands" ;;
 esac

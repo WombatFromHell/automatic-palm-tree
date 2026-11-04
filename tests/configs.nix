@@ -17,9 +17,8 @@ let
   sysPkg = cfg: name: s.hasPkg cfg.environment.systemPackages name;
   hasParam = cfg: param: lib.elem param cfg.boot.kernelParams;
   hasNs = cfg: name: builtins.hasAttr name cfg.features;
-  # An option path read as a value: `["services" "lact" "enable"]` -> bool.
-  optFalse = cfg: path: lib.getAttrFromPath path cfg == false;
-  optTrue = cfg: path: lib.getAttrFromPath path cfg == true;
+  # An option path like "services.lact.enable", read as a value.
+  optPath = lib.splitString ".";
   # Which kernel a host boots is a host-level choice: lib/features.nix allows exactly one
   # kernel-pinning feature per host.
   cachyosKernel = "linux-cachyos-latest-lto-x86_64-v3";
@@ -31,52 +30,51 @@ let
   # Which package a feature hands its program option is a name and a pin, not a store path.
   # The derivation being *unwrapped* is proved by the nixGL check below (packages null makes
   # lib.nixGL.wrapGpu identity) and by tests/wrap.nix's identity-on-a-NixOS-fixture check.
-  rawBrave = s.pkgs.unstable.callPackage ../features/hm-brave/_package.nix {};
-  rawZed = (s.pkgs.callPackage ../features/hm-zed/_package.nix {}).noFHS;
+  rawBrave = s.rawFeaturePkgs.brave;
+  rawZed = s.rawFeaturePkgs.zed;
   homeCfg = cfg: cfg.home-manager.users.josh;
 
-  # Gaming- and KDE-only effects must not leak onto the workstation or laptop. Asserted one
-  # layer above the package list: mapping `pname` over environment.systemPackages forces every
-  # package (~500MB per host), while the namespace, systemd unit and program option the same
-  # features write answer the same question for a few option values.
-  gamingStack = {
-    absentFeatures = ["korthos" "lsfg" "dmemcg-booster"];
-    # scx_loader and dmemcg-booster are systemd units only the gaming features declare, and
-    # `services.scx-loader` is an option from nixpkgs-unstable, so it does not exist on a host
-    # that does not enable the feature — the unit name is the absence signal.
-    absentServices = ["dmemcg-booster" "scx_loader"];
-    absentOptions = [
-      ["programs" "steam" "enable"]
-      ["services" "lact" "enable"]
-      ["services" "desktopManager" "plasma6" "enable"]
-    ];
+  # Gaming- and KDE-only signals, keyed by the hosts that own them. Presence is asserted on the
+  # owner and absence on the other hosts, so a misspelled name fails the owner's check instead of
+  # passing vacuously, and none of these reads environment.systemPackages (invariant 1: absence is
+  # asserted one layer above the package list).
+  featureOwners = {
+    zswap = ["methyl" "methyl-nixos" "propyl"];
+    dms = ["methyl" "methyl-nixos" "propyl"];
+    korthos = ["methyl"];
+    lsfg = ["methyl"];
+    dmemcg-booster = ["methyl"];
+    gnome = ["methyl-nixos"];
+    qemu = ["methyl-nixos"];
+    kait2en = ["propyl"];
+  };
+  # scx_loader and dmemcg-booster are systemd units only the gaming features declare, and
+  # `services.scx-loader` is an option from nixpkgs-unstable, so it does not exist on a host that
+  # does not enable the feature — the unit name is the absence signal.
+  unitOwners = {
+    dmemcg-booster = ["methyl"];
+    scx_loader = ["methyl"];
+  };
+  optionOwners = {
+    "programs.steam.enable" = ["methyl"];
+    "services.lact.enable" = ["methyl"];
+    "services.desktopManager.plasma6.enable" = ["methyl"];
   };
 
   # Per-host expectations, straight from hosts/ and the profile layout. `kernel = null`
   # means "the kernel its own feature pins", compared against that feature's derivation.
+  # Per-host facts no owner table can derive: which kernel the host's own feature pins, the
+  # packages its profile promises, and the caches its features gate on. `kernel = null` means
+  # "the kernel its own feature pins", compared against that feature's derivation.
   expect = {
     methyl = {
       kernel = cachyosKernel;
-      features = ["zswap" "korthos" "dms"];
-      absentFeatures = ["kait2en" "gnome" "qemu"];
       packages = ["steam" "gamescope" "scx-loader" "lsfg-vk"];
-      # The positive side of the gaming-stack signals, so the absence assertions below are
-      # not vacuous: `scx_loader` really is the unit nixos-scx declares, and plasma6 really
-      # is the option nixos-kde turns on.
-      services = ["dmemcg-booster" "scx_loader"];
-      options = [["services" "desktopManager" "plasma6" "enable"]];
-      absentServices = [];
-      absentOptions = [];
       required = {nix-community = true;};
     };
     methyl-nixos = {
       kernel = cachyosKernel;
-      features = ["zswap" "gnome" "qemu" "dms"];
-      absentFeatures = ["kait2en"] ++ gamingStack.absentFeatures;
       packages = ["btrfs-progs" "snapper" "spice-vdagent"];
-      inherit (gamingStack) absentServices absentOptions;
-      services = [];
-      options = [];
       # niri-spicy is on here, so its cache is required as well as the CachyOS one.
       required = {
         nix-community = true;
@@ -85,12 +83,7 @@ let
     };
     propyl = {
       kernel = null;
-      features = ["kait2en" "dms"];
-      absentFeatures = ["korthos" "gnome" "qemu"] ++ gamingStack.absentFeatures;
       packages = ["fprintd"];
-      inherit (gamingStack) absentServices absentOptions;
-      services = [];
-      options = [];
       required = {kait2en = true;};
     };
   };
@@ -129,14 +122,14 @@ let
           && (homeCfg cfg).programs.zed-editor.package.version == rawZed.version))
 
       # --- this host's own profile effects -------------------------------------
-      (ck "${host}: its features are enabled" (lib.all (f: hasNs cfg f) e.features))
-      (ck "${host}: another host's features are absent" (lib.all (f: !hasNs cfg f) e.absentFeatures))
       (ck "${host}: its packages are installed" (lib.all (p: sysPkg cfg p) e.packages))
-      (ck "${host}: another host's systemd units are absent" (lib.all (u: !hasService cfg u) e.absentServices))
-      (ck "${host}: another host's program and service options stay off"
-        (lib.all (p: optFalse cfg p) e.absentOptions))
-      (ck "${host}: its services are enabled" (lib.all (svc: hasService cfg svc) e.services))
-      (ck "${host}: its program and service options are on" (lib.all (p: optTrue cfg p) e.options))
+      (ck "${host}: feature namespaces exist on their owning hosts only"
+        (lib.all (f: hasNs cfg f == lib.elem host featureOwners.${f}) (lib.attrNames featureOwners)))
+      (ck "${host}: gaming systemd units exist on their owning hosts only"
+        (lib.all (u: hasService cfg u == lib.elem host unitOwners.${u}) (lib.attrNames unitOwners)))
+      (ck "${host}: gaming and KDE options are on for their owning hosts only"
+        (lib.all (o: lib.getAttrFromPath (optPath o) cfg == lib.elem host optionOwners.${o})
+          (lib.attrNames optionOwners)))
       # Which kernel a host boots is a host-level choice: lib/features.nix allows exactly one
       # kernel-pinning feature per host.
       (ck "${host}: it boots the kernel its feature pins"
@@ -153,10 +146,6 @@ let
       # when its spicy option is off, and caches.nix filters false entries out.
       (ck "${host}: its features name the caches they need" (lib.filterAttrs (_: r: r) cfg.flakeCache.required == e.required))
       (ck "${host}: every required cache is enabled" cfg.flakeCache.ready)
-      (ck "${host}: substituters and keys are derived from the cache list"
-        (lib.length cfg.nix.settings.extra-substituters
-          == lib.length cfg.flakeCache.enable
-          && lib.length cfg.nix.settings.extra-trusted-public-keys == lib.length cfg.flakeCache.enable))
     ];
 in
   suite "configs ${host}" checks

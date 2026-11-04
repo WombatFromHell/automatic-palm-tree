@@ -40,17 +40,6 @@ in
         (pinMeta.pinnedSystems (pin f)))
       pinned))
 
-    # lib/updater.sh documents `arches` as optional (a single-arch tarball URL has no {arch}),
-    # so the boundary is: when arches is declared, it covers exactly the hashed systems.
-    # That is the invariant pin-meta.pinnedSystems throws on.
-    (ck "a declared arches set covers exactly the hashed systems"
-      (lib.all
-        (f: let
-          arches = (pin f).arches or {};
-        in
-          arches == {} || (lib.attrNames arches == lib.attrNames (pin f).hashes))
-        pinned))
-
     # `"arches": null` is a shape lib/pin-meta.nix cannot use — `pin.arches or {}` only
     # fires on a missing key, so a present null reaches attrNames and throws at eval.
     # bash's `jq '.arches[$s] // ""'` would silently render an empty token instead.

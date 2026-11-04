@@ -3,15 +3,14 @@
 # refuses. No real eval, no real fetch — `nix store prefetch-file`, `nix-prefetch-url` and `curl`
 # are stubbed, so the assertions are the metadata contract, not the network.
 
+load helpers
+
 setup() {
-  repo="$PWD"
-  stubs="$(mktemp -d)"
-  calls="$stubs/calls"
-  : >"$calls"
+  harness_stub_dir
   export CALLS="$calls"
 
   # Quoted heredoc so the stub bodies survive unevaluated.
-  cat >"$stubs/nix" <<'EOF'
+  stub nix <<'EOF'
 #!/usr/bin/env bash
 echo "nix $*|pwd=$(pwd)" >> "$CALLS"
 if [ "$1" = store ]; then
@@ -20,24 +19,22 @@ if [ "$1" = store ]; then
 fi
 exit 0
 EOF
-  cat >"$stubs/nix-prefetch-url" <<'EOF'
+  stub nix-prefetch-url <<'EOF'
 #!/usr/bin/env bash
 echo "nix-prefetch-url $*" >> "$CALLS"
 printf 'sha256-STUBASSET\n'
 EOF
-  cat >"$stubs/curl" <<'EOF'
+  stub curl <<'EOF'
 #!/usr/bin/env bash
 echo "curl $*" >> "$CALLS"
 printf '{"tag_name":"%s"}\n' "${LATEST_TAG:-0.0}"
 EOF
-  chmod +x "$stubs/nix" "$stubs/nix-prefetch-url" "$stubs/curl"
 
   feature="$stubs/features/hm-test"
   mkdir -p "$feature"
   ln -s "$repo/lib/updater.sh" "$feature/update.sh"
 }
 
-teardown() { rm -rf "$stubs"; }
 
 # A nar pin on a fixed commit: `version` is the revision itself, so nothing is auto-discoverable.
 write_meta() {

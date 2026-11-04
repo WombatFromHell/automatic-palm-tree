@@ -1,13 +1,11 @@
 #!/usr/bin/env bats
 # bootstrap.sh against PATH stubs: argv and exit codes only. No root, no real /nix, no curl, no eval.
+load helpers
 
+# nix answers only the two calls bootstrap makes: `store info` and the registry eval.
 setup() {
-  repo="$PWD"
-  stubs="$(mktemp -d)"
-  calls="$stubs/calls"
-  : >"$calls"
-  # nix answers only the two calls bootstrap makes: `store info` and the registry eval.
-  cat >"$stubs/nix" <<EOF
+  harness_stub_dir
+  stub nix <<EOF
 #!/usr/bin/env bash
 echo "nix \$*" >> "$calls"
 if [ "\$1 \$2" = "store info" ]; then
@@ -24,33 +22,29 @@ EOF
   for tool in sudo home-manager nixos-rebuild nix-channel nix-shell systemd-run; do
     env_name="${tool^^}"
     env_name="${env_name//-/_}"
-    cat >"$stubs/$tool" <<EOF
+    stub "$tool" <<EOF
 #!/usr/bin/env bash
 echo "$tool \$*" >> "$calls"
 exit \${${env_name}_EXIT:-0}
 EOF
-    chmod +x "$stubs/$tool"
   done
-  chmod +x "$stubs/nix"
 }
-
-teardown() { rm -rf "$stubs"; }
 
 run_boot() { PATH="$stubs:$PATH" bash "$repo/bootstrap.sh" "$@"; }
 
 @test "bare host: sudo nixos-rebuild boot with the bootloader flag and the registry caches" {
   run run_boot methyl
   [ "$status" -eq 0 ]
-  grep -q "sudo nixos-rebuild boot --install-bootloader --flake .*#methyl" "$calls"
-  grep -q -- "--option extra-substituters https://cache.example/x 1" "$calls"
-  grep -q -- "--option extra-trusted-public-keys cache.example:2" "$calls"
+  assert_call "sudo nixos-rebuild boot --install-bootloader --flake .*#methyl"
+  assert_call "--option extra-substituters https://cache.example/x 1"
+  assert_call "--option extra-trusted-public-keys cache.example:2"
 }
 
 @test "user@host: home-manager switch, caches injected" {
   run run_boot josh@example.test
   [ "$status" -eq 0 ]
-  grep -q "home-manager switch --flake .*#josh@example.test" "$calls"
-  grep -q -- "--option extra-substituters" "$calls"
+  assert_call "home-manager switch --flake .*#josh@example.test"
+  assert_call "--option extra-substituters"
 }
 
 @test "--standalone refuses a bare host: it has no NixOS config to rebuild" {
@@ -95,14 +89,14 @@ run_boot() { PATH="$stubs:$PATH" bash "$repo/bootstrap.sh" "$@"; }
   printf '#!/usr/bin/env bash\necho "curl $*" >> "%s"\nprintf "#!/bin/sh\\nexit 0\\n"\n' "$calls" >"$stubs/curl"
   chmod +x "$stubs/curl"
   PATH="$stubs:/usr/bin:/bin" bash "$repo/bootstrap.sh" --standalone --rebind=/mnt/data1/nix || true
-  grep -q "install ostree --enable-flakes --persistence /mnt/data1/nix" "$calls"
+  assert_call "install ostree --enable-flakes --persistence /mnt/data1/nix"
 }
 
 @test "a failing systemd-run still runs the rebuild, unwrapped" {
   SYSTEMD_RUN_EXIT=1 run run_boot methyl
   [ "$status" -eq 0 ]
-  grep -q "^sudo nixos-rebuild boot" "$calls"
-  run ! grep -q "systemd-run .*sudo nixos-rebuild" "$calls"
+  assert_call "^sudo nixos-rebuild boot"
+  assert_no_call "systemd-run .*sudo nixos-rebuild"
 }
 
 @test "--standalone with no target says it is ready" {
@@ -123,6 +117,6 @@ run_boot() { PATH="$stubs:$PATH" bash "$repo/bootstrap.sh" "$@"; }
   cp "$repo/bootstrap.sh" "$tmp/"
   printf '{\n  inputs.home-manager.url = "github:nix-community/home-manager/release-25.05";\n}\n' >"$tmp/flake.nix"
   PATH="$stubs:$PATH" bash "$tmp/bootstrap.sh" --standalone --install || true
-  grep -q "home-manager/archive/release-25.05.tar.gz" "$calls"
+  assert_call "home-manager/archive/release-25.05.tar.gz"
   rm -rf "$tmp"
 }

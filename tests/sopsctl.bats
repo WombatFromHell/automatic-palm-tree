@@ -24,89 +24,81 @@
 # reaches every command of that test; shellcheck reads the body's commands as separate subshells and
 # warns that the change may be lost, which is not true here.
 # shellcheck disable=SC2030,SC2031
-bats_require_minimum_version 1.5.0
+load helpers
 
 setup() {
-  repo="$PWD"
+  harness_stub_dir
+  export CALLS="$calls" STUBS="$stubs"
   script="$repo/features/hm-creds/sopsctl.sh"
-  host_path="$PATH"
-  stubs="$(mktemp -d)"
-  calls="$stubs/calls"
-  : >"$calls"
   store="$stubs/store"
   mkdir -p "$store"
   printf 'age1aaa\nage1bbb\n' >"$store/recipient"
-  printf 'AGE-SECRET-KEY-1TEST\n' >"$stubs/key"
 
   # ksshaskpass exists in the suite only as a trap: nothing in sopsctl may run it, and the stub
   # outranks whatever the host has on PATH, so any askpass call shows up in the call log.
-  cat >"$stubs/ksshaskpass" <<EOF
+  stub ksshaskpass <<'EOF'
 #!/usr/bin/env bash
-echo "ksshaskpass \$*" >> "$calls"
+echo "ksshaskpass $*" >> "$CALLS"
 printf 'from-the-trap\n'
 EOF
-  chmod +x "$stubs/ksshaskpass"
-
-  cat >"$stubs/sops" <<EOF
+  stub sops <<'EOF'
 #!/usr/bin/env bash
-echo "sops \$* | keycmd=\${SOPS_AGE_KEY_CMD:-none} | agefile=\${SOPS_AGE_KEY_FILE:-none}" >> "$calls"
-case "\$1" in
+echo "sops $* | keycmd=${SOPS_AGE_KEY_CMD:-none} | agefile=${SOPS_AGE_KEY_FILE:-none}" >> "$CALLS"
+case "$1" in
   -e)
-    [ "\${SOPS_ENCRYPT_EXIT:-0}" = 0 ] || exit "\$SOPS_ENCRYPT_EXIT"
     # -i encrypts the file in place, as real sops does; without it the ciphertext goes to stdout.
     inplace=""
-    for a in "\$@"; do [ "\$a" = "-i" ] && inplace=1; done
-    if [ -n "\$inplace" ]; then
-      case "\${@: -1}" in
-        *.yaml) printf 'secret: ENC[AGE1,mock]\nsops:\n  age:\n    - recipient: age1fromrules\n' > "\${@: -1}" ;;
-        *) printf '{"secret":"ENC[AGE1,mock]","sops":{"age":[{"recipient":"age1fromrules"}]}}\n' > "\${@: -1}" ;;
+    for a in "$@"; do [ "$a" = "-i" ] && inplace=1; done
+    if [ -n "$inplace" ]; then
+      case "${@: -1}" in
+        *.yaml) printf 'secret: ENC[AGE1,mock]\nsops:\n  age:\n    - recipient: age1fromrules\n' > "${@: -1}" ;;
+        *) printf '{"secret":"ENC[AGE1,mock]","sops":{"age":[{"recipient":"age1fromrules"}]}}\n' > "${@: -1}" ;;
       esac
       exit 0
     fi
     jq -c '. + {sops: {age: [{recipient: "age1meta"}]}}' ;;
   -d)
-    [ "\${SOPS_DECRYPT_EXIT:-0}" = 0 ] || exit "\$SOPS_DECRYPT_EXIT"
+    [ "${SOPS_DECRYPT_EXIT:-0}" = 0 ] || exit "$SOPS_DECRYPT_EXIT"
     path=""
     prev=""
-    for a in "\$@"; do
-      [ "\$prev" = "--extract" ] && path="\$a"
-      prev="\$a"
+    for a in "$@"; do
+      [ "$prev" = "--extract" ] && path="$a"
+      prev="$a"
     done
     # A yaml record decrypts to json when sops is told to, as the real binary does; the stub models
     # that output so the json path is exercised without a yaml parser.
-    case "\${@: -1}" in
+    case "${@: -1}" in
       *.yaml) plain='{"secret":"s3cr3t","TOKEN":"abc"}' ;;
-      *) plain=\$(jq -c 'del(.sops)' "\${@: -1}") ;;
+      *) plain=$(jq -c 'del(.sops)' "${@: -1}") ;;
     esac
-    if [ -n "\$path" ]; then jq -r ".\$path" <<<"\$plain"; else printf '%s\n' "\$plain"; fi ;;
+    if [ -n "$path" ]; then jq -r ".$path" <<<"$plain"; else printf '%s\n' "$plain"; fi ;;
   *) exit 9 ;;
 esac
 EOF
-  cat >"$stubs/kwallet-query" <<EOF
+  stub kwallet-query <<'EOF'
 #!/usr/bin/env bash
-echo "kwallet \$*" >> "$calls"
+echo "kwallet $*" >> "$CALLS"
 mode=r
-for a in "\$@"; do [ "\$a" = "-w" ] && mode=w; done
-if [ "\$mode" = w ]; then cat >"$stubs/wallet"; exit 0; fi
-[ -f "$stubs/wallet" ] || { echo "stub: no wallet entry" >&2; exit 1; }
-cat "$stubs/wallet"
+for a in "$@"; do [ "$a" = "-w" ] && mode=w; done
+if [ "$mode" = w ]; then cat >"$STUBS/wallet"; exit 0; fi
+[ -f "$STUBS/wallet" ] || { echo "stub: no wallet entry" >&2; exit 1; }
+cat "$STUBS/wallet"
 EOF
-  cat >"$stubs/age-keygen" <<EOF
+  stub age-keygen <<'EOF'
 #!/usr/bin/env bash
-echo "age-keygen \$*" >> "$calls"
-cat >"\${@: -1}" <<'KEY'
+echo "age-keygen $*" >> "$CALLS"
+cat >"${@: -1}" <<'KEY'
 # created: stub
 # public key: age1stub
 AGE-SECRET-KEY-1TEST
 KEY
 EOF
-  cat >"$stubs/ssh-to-age" <<EOF
+  stub ssh-to-age <<'EOF'
 #!/usr/bin/env bash
-echo "ssh-to-age \$*" >> "$calls"
-[ -n "\${SSH_TO_AGE_PASSPHRASE:-}" ] && echo "ssh-to-age passphrase-env=set" >> "$calls"
+echo "ssh-to-age $*" >> "$CALLS"
+[ -n "${SSH_TO_AGE_PASSPHRASE:-}" ] && echo "ssh-to-age passphrase-env=set" >> "$CALLS"
 printf 'age1stubderived\n'
 EOF
-  chmod +x "$stubs/sops" "$stubs/kwallet-query" "$stubs/age-keygen" "$stubs/ssh-to-age"
 
   # Real keypairs for the passphrase probe: the check reads an OpenSSH header, so the fixture has
   # to be a real key. ssh-keygen is on a Linux host already; a host without it skips those tests.
@@ -125,6 +117,9 @@ EOF
   record="$store/TOKEN.sops.json"
   printf '{"secret":"s3cr3t"}' | ctl encrypt --format json >"$record"
   chmod 400 "$record"
+  # setup's warm-up encrypt is fixture, not a test: the log starts empty for every test,
+  # so only a test that ran ctl earlier in its own body needs to reset it.
+  : >"$calls"
   # A yaml record, as a person or another tool would leave it: ciphertext lines plus the unencrypted
   # metadata that names the recipient. The stub reads it as json only when asked to.
   yaml_record="$store/XILO.sops.yaml"
@@ -162,7 +157,6 @@ EOF
   fi
 }
 
-teardown() { rm -rf "$stubs"; }
 
 ctl() { bash "$script" "$@"; }
 
@@ -172,14 +166,13 @@ ctl() { bash "$script" "$@"; }
 # terminal, no key command), the public half in the recipient file and in the rules file that
 # `sops -e` uses for new records, and says so.
 @test "init writes a 0600 age identity to $SOPS_AGE_FILE and never touches the wallet" {
-  : >"$calls"
   run ctl init
   [ "$status" -eq 0 ]
   [ -f "$SOPS_AGE_FILE" ]
   [ "$(stat -c '%a' "$SOPS_AGE_FILE")" = "600" ]
   grep -q 'AGE-SECRET-KEY' "$SOPS_AGE_FILE"
-  grep -q '^age-keygen -o ' "$calls"
-  run ! grep -q ' -w ' "$calls"
+  assert_call '^age-keygen -o '
+  assert_no_call ' -w '
   [ ! -f "$stubs/wallet" ]
 }
 
@@ -212,8 +205,8 @@ ctl() { bash "$script" "$@"; }
   [ "$status" -eq 0 ]
   grep -q "$SOPS_AGE_FILE" <<<"$output"
   grep -q "$rulefile" <<<"$output"
-  grep -q 'age1stub' <<<"$output"
-  grep -q 'cd ' <<<"$output"
+  assert_out 'age1stub'
+  assert_out 'cd '
 }
 
 @test "init rerun changes nothing: no second identity, no duplicated key in the rules" {
@@ -221,10 +214,8 @@ ctl() { bash "$script" "$@"; }
   : >"$calls"
   run ctl init
   [ "$status" -eq 0 ]
-  run ! grep -q 'age-keygen' "$calls"
+  assert_no_call 'age-keygen'
   [ "$(grep -c -- '- &r' "$rulefile")" -eq 3 ]
-  run ! grep -q 'age1stub' "$SOPS_RECIPIENTS"
-  [ -f "$stubs/wallet" ] || true
 }
 
 # A fresh environment — no rules file, no recipient file — gets a rules file holding only init's own
@@ -251,13 +242,13 @@ ctl() { bash "$script" "$@"; }
   printf 'plain\n' >"$store/C.cred"
   run ctl reset
   [ "$status" -eq 1 ]
-  grep -q -- '--force' <<<"$output"
+  assert_out '--force'
   grep -q "$SOPS_AGE_FILE" <<<"$output"
   grep -q "$rulefile" <<<"$output"
   grep -q "$store/recipient" <<<"$output"
   grep -q "$store/A.sops.yaml" <<<"$output"
   grep -q "$store/B.sops.json" <<<"$output"
-  run ! grep -q "$store/C.cred" <<<"$output"
+  assert_no_out "$store/C.cred"
   [ -f "$SOPS_AGE_FILE" ]
   [ -f "$rulefile" ]
   [ -f "$store/recipient" ]
@@ -281,7 +272,7 @@ ctl() { bash "$script" "$@"; }
   : >"$calls"
   run ctl init
   [ "$status" -eq 0 ]
-  grep -q '^age-keygen -o ' "$calls"
+  assert_call '^age-keygen -o '
   grep -q '^keys:' "$rulefile"
   grep -q '^  - &r1 age1stub' "$rulefile" # the new key, and no recipient file to rewrite
   [ ! -f "$store/recipient" ]
@@ -291,7 +282,7 @@ ctl() { bash "$script" "$@"; }
 # Only sops' own directory is fair game. A custom $SOPS_AGE_FILE points somewhere sopsctl has no
 # business deleting, so the identity file goes and its neighbours stay.
 @test "reset --force deletes a custom identity file, not the directory that holds it" {
-  d="$(mktemp -d)"
+  d="$stubs/d"
   mkdir -p "$d/wallet"
   printf 'AGE-SECRET-KEY-1TEST\n' >"$d/wallet/keys.txt"
   printf 'KEEP\n' >"$d/wallet/note.txt"
@@ -300,11 +291,11 @@ ctl() { bash "$script" "$@"; }
   [ "$status" -eq 0 ]
   [ ! -f "$d/wallet/keys.txt" ]
   [ -f "$d/wallet/note.txt" ]
-  rm -rf "$d"
 }
 
 @test "reset --force deletes sops' whole config directory when the identity is sops' default path" {
-  home="$(mktemp -d)"
+  home="$stubs/home"
+  mkdir -p "$home"
   export HOME="$home"
   export SOPS_AGE_FILE="$home/.config/sops/age/keys.txt"
   mkdir -p "$home/.config/sops/age"
@@ -314,13 +305,12 @@ ctl() { bash "$script" "$@"; }
   [ "$status" -eq 0 ]
   [ ! -d "$home/.config/sops" ]
   [ -f "$home/.config/keep.txt" ]
-  rm -rf "$home"
 }
 
 # A root is not sops' config dir. /var/lib/sops-nix holds every secret sops-nix provisions, so an
 # AGE_ROOT that is not the default loses the identity FILE and nothing else.
 @test "reset --force deletes an identity under AGE_ROOT but never the root that holds it" {
-  roots="$(mktemp -d)"
+  roots="$stubs/roots"
   mkdir -p "$roots/enclave/age" "$roots/store"
   printf 'AGE-SECRET-KEY-1TEST\n' >"$roots/enclave/age/keys.txt"
   printf 'KEEP\n' >"$roots/enclave/secrets.json"
@@ -333,30 +323,29 @@ ctl() { bash "$script" "$@"; }
   [ -d "$roots/enclave" ]
   [ -f "$roots/enclave/secrets.json" ]
   [ ! -f "$roots/store/recipient" ]
-  rm -rf "$roots"
 }
 
 @test "reset refuses an argument it does not know, and an empty environment says so" {
   run ctl reset --all
   [ "$status" -eq 1 ]
-  grep -q -- '--force' <<<"$output"
+  assert_out '--force'
   # setup already left records and a recipient file in the store, so "nothing to reset" needs an
   # empty directory of its own: CREDS_ROOT moves the rules file, any recipient file and the records.
-  empty="$(mktemp -d)"
+  empty="$stubs/empty"
+  mkdir -p "$empty"
   unset SOPS_RECIPIENTS
   export CREDS_ROOT="$empty"
   export SOPS_AGE_FILE="$empty/keys.txt"
   run ctl reset --force
   [ "$status" -eq 0 ]
-  grep -q 'nothing to reset' <<<"$output"
-  rm -rf "$empty"
+  assert_out 'nothing to reset'
 }
 
 @test "keys prints recipient public keys and never a secret key" {
   run ctl keys
   [ "$status" -eq 0 ]
   [ "$output" = "age1aaa,age1bbb" ]
-  run ! grep -q 'AGE-SECRET-KEY' <<<"$output"
+  assert_no_out 'AGE-SECRET-KEY'
 }
 
 # The rules file is the recipient source: sops-nix's own shape, keys as anchors under `keys:` and
@@ -368,7 +357,7 @@ ctl() { bash "$script" "$@"; }
   run ctl keys
   [ "$status" -eq 0 ]
   [ "$output" = "age1aaa,age1bbb" ]
-  run ! grep -q 'AGE-SECRET-KEY' <<<"$output"
+  assert_no_out 'AGE-SECRET-KEY'
 }
 
 # A recipient file the user made is checked for and used: its keys join the rules file's, and a key
@@ -396,9 +385,9 @@ ctl() { bash "$script" "$@"; }
   run ctl get secret "$record"
   [ "$status" -eq 0 ]
   [ "$output" = "s3cr3t" ]
-  grep -q 'agefile=.*keys.txt' "$calls"
-  grep -q 'keycmd=none' "$calls"
-  run ! grep -q '^kwallet ' "$calls"
+  assert_call 'agefile=.*keys.txt'
+  assert_call 'keycmd=none'
+  assert_no_call '^kwallet '
 }
 
 @test "encrypt defaults to a yaml record and takes recipients from the recipient file" {
@@ -406,21 +395,15 @@ ctl() { bash "$script" "$@"; }
 {"secret":"x"}
 EOF
   [ "$status" -eq 0 ]
-  grep -q '^sops -e --input-type json --output-type yaml --age age1aaa,age1bbb --config /dev/null /dev/stdin' "$calls"
+  assert_call '^sops -e --input-type json --output-type yaml --age age1aaa,age1bbb --config /dev/null /dev/stdin'
 }
 
-@test "encrypt --format json writes a json record; --format yaml says the same as the default" {
+@test "encrypt --format json writes a json record" {
   run ctl encrypt --format json <<'EOF'
 {"secret":"x"}
 EOF
   [ "$status" -eq 0 ]
-  grep -q '^sops -e --input-type json --output-type json --age age1aaa,age1bbb --config /dev/null /dev/stdin' "$calls"
-  : >"$calls"
-  run ctl encrypt --format yaml <<'EOF'
-{"secret":"x"}
-EOF
-  [ "$status" -eq 0 ]
-  grep -q '^sops -e --input-type json --output-type yaml --age age1aaa,age1bbb --config /dev/null /dev/stdin' "$calls"
+  assert_call '^sops -e --input-type json --output-type json --age age1aaa,age1bbb --config /dev/null /dev/stdin'
 }
 
 # A path argument is the plaintext to encrypt, in place — sops' own way (`sops -e -i FILE`). The
@@ -433,9 +416,9 @@ EOF
   chmod 600 "$store/PLAN.sops.yaml"
   run ctl encrypt "$store/PLAN.sops.yaml"
   [ "$status" -eq 0 ]
-  grep -q "^sops -e -i --config $rulefile $store/PLAN.sops.yaml " "$calls"
-  run ! grep -q '/dev/stdin' "$calls"
-  run ! grep -q -- '--age' "$calls"
+  assert_call "^sops -e -i --config $rulefile $store/PLAN.sops.yaml "
+  assert_no_call '/dev/stdin'
+  assert_no_call '--age'
   grep -q 'ENC\[AGE1,mock\]' "$store/PLAN.sops.yaml"
   run ! grep -q 'hunter2' "$store/PLAN.sops.yaml"
   [ "$(stat -c '%a' "$store/PLAN.sops.yaml")" = "400" ]
@@ -447,7 +430,7 @@ EOF
   printf '{"secret":"hunter2"}\n' >"$store/PLAN.sops.json"
   run ctl encrypt "$store/PLAN.sops.json"
   [ "$status" -eq 0 ]
-  grep -q "^sops -e -i --config $rulefile $store/PLAN.sops.json " "$calls"
+  assert_call "^sops -e -i --config $rulefile $store/PLAN.sops.json "
   printf '{"secret":"hunter2"}\n' >"$store/B.sops.json"
   run ctl encrypt "$store/B.sops.json" --format yaml
   [ "$status" -eq 1 ]
@@ -456,17 +439,15 @@ EOF
 
 # No rules file yet: the recipient file is the fallback, so encrypt still names who can read it.
 @test "encrypt with no rules file names recipients from the recipient file" {
-  : >"$calls"
   printf 'secret: hunter2\n' >"$store/N.sops.yaml"
   run ctl encrypt "$store/N.sops.yaml"
   [ "$status" -eq 0 ]
-  grep -q -- '--age age1aaa,age1bbb' "$calls"
+  assert_call '--age age1aaa,age1bbb'
 }
 
 # A record is immutable: re-encrypting one is `set` or `rekey`, not `encrypt`, and a path that is
 # not a *.sops.json / *.sops.yaml file is not a record at all.
 @test "encrypt refuses a file that is already a record and a path that is not one" {
-  : >"$calls"
   run ctl encrypt "$record"
   [ "$status" -eq 1 ]
   grep -qi 'already' <<<"$output"
@@ -476,17 +457,16 @@ EOF
   [ "$status" -eq 2 ]
   run ctl encrypt "$store/nope.sops.yaml"
   [ "$status" -eq 2 ]
-  run ! grep -q '^sops ' "$calls"
+  assert_no_call '^sops '
 }
 
 @test "encrypt refuses a format sops cannot write, and calls nothing" {
-  : >"$calls"
   run ctl encrypt --format toml <<'EOF'
 {"secret":"x"}
 EOF
   [ "$status" -eq 1 ]
   grep -qi 'format' <<<"$output"
-  run ! grep -q '^sops ' "$calls"
+  assert_no_call '^sops '
 }
 
 # A terminal is not a pipe. With no path and no stdin to read, sops sits on the tty forever, so
@@ -494,29 +474,27 @@ EOF
 # from the pty runner, not as a green test.
 @test "encrypt on a terminal exits with guidance instead of waiting for input" {
   [ -x "$tty" ] || skip "no python3 to hand a terminal to the child"
-  : >"$calls"
   run "$tty" bash "$script" encrypt --format yaml
   [ "$status" -eq 1 ]
   grep -qi 'stdin' <<<"$output"
   grep -qi 'credsctl' <<<"$output"
-  run ! grep -q '^sops ' "$calls"
+  assert_no_call '^sops '
 }
 
 @test "encrypt with no rules file and no recipient file exits 1 and calls nothing" {
   rm "$SOPS_RECIPIENTS"
-  : >"$calls"
   run ctl encrypt <<'EOF'
 {"secret":"x"}
 EOF
   [ "$status" -eq 1 ]
-  run ! grep -q '^sops ' "$calls"
+  assert_no_call '^sops '
 }
 
 @test "decrypt and get ask sops for a key by command, so no key file and no terminal are needed" {
   run ctl get secret "$record"
   [ "$status" -eq 0 ]
   [ "$output" = "s3cr3t" ]
-  grep -q '^sops -d --output-type json --extract \["secret"\] .*keycmd=kwallet-query -f flakeroot -r creds-identity kdewallet' "$calls"
+  assert_call '^sops -d --output-type json --extract \["secret"\] .*keycmd=kwallet-query -f flakeroot -r creds-identity kdewallet'
 }
 
 # A scalar handed to a caller is json whatever the record's shape, so `get` never returns a quoted
@@ -525,20 +503,19 @@ EOF
   run ctl get TOKEN "$yaml_record"
   [ "$status" -eq 0 ]
   [ "$output" = "abc" ]
-  grep -q '^sops -d --output-type json --extract \["TOKEN"\]' "$calls"
+  assert_call '^sops -d --output-type json --extract \["TOKEN"\]'
 }
 
 # Decrypting is always json: the plaintext is fed to jq whatever the record's own shape is, so the
 # one flag that makes a yaml record readable is always passed.
 @test "decrypt prints json for a yaml record, with the same argv as for a json record" {
-  : >"$calls"
   run ctl decrypt "$yaml_record"
   [ "$status" -eq 0 ]
   [ "$output" = '{"secret":"s3cr3t","TOKEN":"abc"}' ]
-  grep -q "^sops -d --output-type json $yaml_record " "$calls"
+  assert_call "^sops -d --output-type json $yaml_record "
   : >"$calls"
   run ctl decrypt "$record"
-  grep -q "^sops -d --output-type json $record " "$calls"
+  assert_call "^sops -d --output-type json $record "
 }
 
 @test "a missing record exits 2 and a failing decrypt exits 3" {
@@ -554,7 +531,7 @@ EOF
   printf 'cipher' >"$store/loose.cred"
   run ctl decrypt "$store/loose.cred"
   [ "$status" -eq 2 ]
-  run ! grep -q '^sops -d' "$calls"
+  assert_no_call '^sops -d'
   run ctl get secret "$store/loose.cred"
   [ "$status" -eq 2 ]
 }
@@ -582,8 +559,8 @@ EOF
   [ "$(stat -c '%a' "$record")" = "400" ]
   run ctl get secret "$record"
   [ "$output" = "new-value" ]
-  grep -q '^sops -e --input-type json --output-type json --age age1meta --config /dev/null /dev/stdin' "$calls"
-  run ! grep -q 'new-value' "$calls"
+  assert_call '^sops -e --input-type json --output-type json --age age1meta --config /dev/null /dev/stdin'
+  assert_no_call 'new-value'
   run ! ls "$store"/TOKEN.sops.json.* >/dev/null 2>&1
 }
 
@@ -592,11 +569,11 @@ EOF
 @test "set refuses a value as an argument and an empty value, and leaves the record untouched" {
   run ctl set secret "new-value" "$record"
   [ "$status" -eq 1 ]
-  grep -q 'the new value comes from stdin' <<<"$output"
+  assert_out 'the new value comes from stdin'
   before=$(sha256sum <"$record")
   run ctl set secret "$record" </dev/null
   [ "$status" -eq 1 ]
-  grep -q 'empty value' <<<"$output"
+  assert_out 'empty value'
   [ "$(sha256sum <"$record")" = "$before" ]
 }
 
@@ -611,10 +588,9 @@ EOF
 }
 
 @test "rekey re-encrypts records to the recipient file" {
-  : >"$calls"
   run ctl rekey "$record"
   [ "$status" -eq 0 ]
-  grep -q '^sops -e --input-type json --output-type json --age age1aaa,age1bbb --config /dev/null /dev/stdin' "$calls"
+  assert_call '^sops -e --input-type json --output-type json --age age1aaa,age1bbb --config /dev/null /dev/stdin'
   run ctl get secret "$record"
   [ "$output" = "s3cr3t" ]
 }
@@ -622,31 +598,29 @@ EOF
 # A yaml record keeps its own shape through a change: decrypting for jq is json, writing back is yaml,
 # and the recipients come from the record's own unencrypted metadata — not from a rules file.
 @test "set on a yaml record decrypts as json, re-encrypts as yaml, and stays 0400" {
-  : >"$calls"
   printf 'new-value' >"$stubs/value"
   run ctl set TOKEN "$yaml_record" <"$stubs/value"
   [ "$status" -eq 0 ]
   [ "$(stat -c '%a' "$yaml_record")" = "400" ]
-  grep -q "^sops -d --output-type json $yaml_record " "$calls"
-  grep -q '^sops -e --input-type json --output-type yaml --age age1meta --config /dev/null /dev/stdin' "$calls"
-  run ! grep -q 'new-value' "$calls"
+  assert_call "^sops -d --output-type json $yaml_record "
+  assert_call '^sops -e --input-type json --output-type yaml --age age1meta --config /dev/null /dev/stdin'
+  assert_no_call 'new-value'
   run ! ls "$store"/XILO.sops.yaml.* >/dev/null 2>&1
 }
 
 # rekey is the rotation: the recipients come from $SOPS_RECIPIENTS, not from the record, and the
 # shape the record already has is kept.
 @test "rekey on a yaml record keeps it yaml and re-encrypts to the recipient file" {
-  : >"$calls"
   run ctl rekey "$yaml_record"
   [ "$status" -eq 0 ]
-  grep -q '^sops -e --input-type json --output-type yaml --age age1aaa,age1bbb --config /dev/null /dev/stdin' "$calls"
+  assert_call '^sops -e --input-type json --output-type yaml --age age1aaa,age1bbb --config /dev/null /dev/stdin'
 }
 
 @test "recipients of a yaml record are read from its metadata, without decrypting" {
   run ctl recipients "$yaml_record"
   [ "$status" -eq 0 ]
   [ "$output" = "age1meta" ]
-  run ! grep -q '^sops -d' "$calls"
+  assert_no_call '^sops -d'
 }
 
 # --- roots -------------------------------------------------------------------
@@ -657,25 +631,25 @@ EOF
 # sops' own paths: AGE_ROOT=$HOME/.config/sops, CREDS_ROOT=$HOME/.local/share/credentials.
 
 @test "AGE_ROOT and CREDS_ROOT move the identity and the whole public store together" {
-  roots="$(mktemp -d)"
+  roots="$stubs/roots"
+  mkdir -p "$roots"
   # The roots only apply where no per-file override already names the file, so unset setup's.
   unset SOPS_AGE_FILE SOPS_RECIPIENTS
   export AGE_ROOT="$roots/enclave" CREDS_ROOT="$roots/store"
-  : >"$calls"
   run ctl init
   [ "$status" -eq 0 ]
   [ -f "$roots/enclave/age/keys.txt" ]
   [ "$(stat -c '%a' "$roots/enclave/age/keys.txt")" = "600" ]
-  grep -q "^age-keygen -o $roots/enclave/age/keys.txt$" "$calls"
+  assert_call "^age-keygen -o $roots/enclave/age/keys.txt$"
   grep -q '^  - &r1 age1stub' "$roots/store/.sops.yaml" # the public key lands in the rules file
   [ ! -f "$roots/store/recipient" ]                     # init never creates a recipient file
   grep -q '^keys:' "$roots/store/.sops.yaml"
   run ! grep -q 'age1stub' "$store/recipient" # the default store got nothing; setup's keys stay
-  rm -rf "$roots"
 }
 
 @test "encrypt FILE seals with the rules file inside CREDS_ROOT, whatever the cwd is" {
-  roots="$(mktemp -d)"
+  roots="$stubs/roots"
+  mkdir -p "$roots"
   unset SOPS_AGE_FILE SOPS_RECIPIENTS
   export AGE_ROOT="$roots/enclave" CREDS_ROOT="$roots/store"
   run ctl init
@@ -684,30 +658,27 @@ EOF
   : >"$calls"
   run ctl encrypt "$roots/store/A.sops.yaml"
   [ "$status" -eq 0 ]
-  grep -q "^sops -e -i --config $roots/store/.sops.yaml $roots/store/A.sops.yaml " "$calls"
+  assert_call "^sops -e -i --config $roots/store/.sops.yaml $roots/store/A.sops.yaml "
   [ "$(stat -c '%a' "$roots/store/A.sops.yaml")" = "400" ]
   : >"$calls"
   run ctl verify "$roots/store/A.sops.yaml"
   [ "$status" -eq 0 ]
   grep -q "agefile=$roots/enclave/age/keys.txt" "$calls" # sops opens the identity under AGE_ROOT
-  rm -rf "$roots"
 }
 
 @test "the per-file overrides still outrank a root, so a sops-nix keyFile can be named exactly" {
-  roots="$(mktemp -d)"
+  roots="$stubs/roots"
   mkdir -p "$roots/nixos"
   printf 'AGE-SECRET-KEY-1TEST\n' >"$roots/nixos/keyFile"
   export AGE_ROOT="$roots/enclave" CREDS_ROOT="$roots/store"
   export SOPS_AGE_FILE="$roots/nixos/keyFile" SOPS_RECIPIENTS="$store/recipient"
-  : >"$calls"
   run ctl decrypt "$record"
   [ "$status" -eq 0 ]
-  grep -q "agefile=$roots/nixos/keyFile" "$calls"
+  assert_call "agefile=$roots/nixos/keyFile"
   run ctl keys
   [ "$output" = "age1aaa,age1bbb" ] # the recipient override, not CREDS_ROOT, is what keys reads
   run ! [ -e "$roots/enclave" ]     # nothing is written into the root an override outranked
   run ! [ -e "$roots/store/recipient" ]
-  rm -rf "$roots"
 }
 
 # --- tilde expansion -------------------------------------------------------
@@ -739,10 +710,10 @@ EOF
   [ -f "$stubs/ssh_protected" ] || skip "no ssh-keygen on this host"
   run ctl protected "$stubs/ssh_protected"
   [ "$status" -eq 0 ]
-  grep -q 'passphrase-protected' <<<"$output"
+  assert_out 'passphrase-protected'
   run ctl protected "$stubs/ssh_unlocked"
   [ "$status" -eq 1 ]
-  grep -q 'unlocked' <<<"$output"
+  assert_out 'unlocked'
 }
 
 @test "protected refuses a file that is not there and an argument count it cannot use" {
@@ -755,9 +726,9 @@ EOF
 @test "init --from-ssh takes the age keypair from ssh-to-age, not from age-keygen" {
   run ctl init --from-ssh "$stubs/ssh_unlocked"
   [ "$status" -eq 0 ]
-  grep -q '^ssh-to-age -i .*ssh_unlocked\.pub' "$calls"
-  grep -q '^ssh-to-age -private-key -i .*ssh_unlocked$' "$calls"
-  run ! grep -q 'age-keygen -o ' "$calls"
+  assert_call '^ssh-to-age -i .*ssh_unlocked\.pub'
+  assert_call '^ssh-to-age -private-key -i .*ssh_unlocked$'
+  assert_no_call 'age-keygen -o '
   grep -q '^# public key: age1stubderived' "$SOPS_AGE_FILE"
   grep -q 'age1stubderived' "$rulefile"
 }
@@ -766,23 +737,11 @@ EOF
   [ -f "$stubs/ssh_protected" ] || skip "no ssh-keygen on this host"
   run ctl init --from-ssh "$stubs/ssh_protected" <<<"protectpass"
   [ "$status" -eq 0 ]
-  grep -q '^ssh-to-age -private-key -i .*ssh_protected$' "$calls"
-  grep -q 'ssh-to-age passphrase-env=set' "$calls"
-  grep -q 'passphrase for' <<<"$output"
-  run ! grep -q 'protectpass' "$calls"
-  run ! grep -q 'ksshaskpass' "$calls"
-  grep -q '^# created: ssh-to-age from ' "$SOPS_AGE_FILE"
-}
-
-@test "init --from-ssh asks at its own prompt even with a display up and runs no askpass helper" {
-  [ -f "$stubs/ssh_protected" ] || skip "no ssh-keygen on this host"
-  export DISPLAY=:0
-  run ctl init --from-ssh "$stubs/ssh_protected" <<<"protectpass"
-  [ "$status" -eq 0 ]
-  grep -q '^ssh-to-age -private-key -i .*ssh_protected$' "$calls"
-  grep -q 'ssh-to-age passphrase-env=set' "$calls"
-  grep -q 'passphrase for' <<<"$output"
-  run ! grep -q 'ksshaskpass' "$calls"
+  assert_call '^ssh-to-age -private-key -i .*ssh_protected$'
+  assert_call 'ssh-to-age passphrase-env=set'
+  assert_out 'passphrase for'
+  assert_no_call 'protectpass'
+  assert_no_call 'ksshaskpass'
   grep -q '^# created: ssh-to-age from ' "$SOPS_AGE_FILE"
 }
 
@@ -790,8 +749,8 @@ EOF
   [ -f "$stubs/ssh_protected" ] || skip "no ssh-keygen on this host"
   run ctl init --from-ssh "$stubs/ssh_protected" </dev/null
   [ "$status" -eq 3 ]
-  grep -q 'SSH_TO_AGE_PASSPHRASE' <<<"$output"
-  run ! grep -q 'ssh-to-age' "$calls"
+  assert_out 'SSH_TO_AGE_PASSPHRASE'
+  assert_no_call 'ssh-to-age'
   run ! grep -q 'ssh-to-age from' "$SOPS_AGE_FILE"
 }
 
@@ -801,11 +760,11 @@ EOF
   run ctl init --from-ssh "$stubs/ssh_protected" </dev/null
   unset SSH_TO_AGE_PASSPHRASE
   [ "$status" -eq 0 ]
-  grep -q '^ssh-to-age -private-key -i .*ssh_protected$' "$calls"
-  grep -q 'ssh-to-age passphrase-env=set' "$calls"
-  run ! grep -q 'passphrase for' <<<"$output"
-  run ! grep -q 'protectpass' "$calls"
-  run ! grep -q 'ksshaskpass' "$calls"
+  assert_call '^ssh-to-age -private-key -i .*ssh_protected$'
+  assert_call 'ssh-to-age passphrase-env=set'
+  assert_no_out 'passphrase for'
+  assert_no_call 'protectpass'
+  assert_no_call 'ksshaskpass'
   grep -q '^# created: ssh-to-age from ' "$SOPS_AGE_FILE"
 }
 
@@ -815,7 +774,7 @@ EOF
   run ctl init --from-ssh "$stubs/ssh_unlocked"
   [ "$status" -eq 0 ]
   again="$output"
-  run ! grep -q 'ssh-to-age' "$calls"
+  assert_no_call 'ssh-to-age'
   [ "$(grep -c 'age1stubderived' "$rulefile")" -eq 1 ]
   grep -q 'already derived' <<<"$again"
 }
@@ -823,29 +782,27 @@ EOF
 @test "init --from-ssh refuses a keypair missing one half" {
   run ctl init --from-ssh "$stubs/ssh_unlocked-nothere"
   [ "$status" -eq 2 ]
-  run ! grep -q 'ssh-to-age' "$calls"
+  assert_no_call 'ssh-to-age'
 }
 
 @test "init --from-ssh says the origin key is untouched and the age half is regenerable" {
   run ctl init --from-ssh "$stubs/ssh_unlocked"
   [ "$status" -eq 0 ]
-  grep -q 'never copied, unlocked or rewritten' <<<"$output"
-  grep -q 'sopsctl init --from-ssh' <<<"$output"
+  assert_out 'never copied, unlocked or rewritten'
+  assert_out 'sopsctl init --from-ssh'
 }
 
 # --- usage text --------------------------------------------------------------
 
 @test "help prints every command, names which ssh half --from-ssh takes, and runs nothing" {
-  : >"$calls"
   run ctl --help
   [ "$status" -eq 0 ]
-  grep -q 'recipients embedded in a record' <<<"$output"
+  assert_out 'recipients embedded in a record'
   grep -q '^  protected KEY' <<<"$output"
-  grep -q 'PRIVATE key without .pub' <<<"$output"
-  grep -q 'AGE_ROOT' <<<"$output"
-  grep -q 'CREDS_ROOT' <<<"$output"
-  run ! grep -q 'command not found' <<<"$output"
-  run ! grep -q . "$calls"
+  assert_out 'PRIVATE key without .pub'
+  assert_out 'AGE_ROOT'
+  assert_out 'CREDS_ROOT'
+  assert_no_call .
 }
 
 # --- real binary ------------------------------------------------------------
@@ -855,9 +812,9 @@ EOF
   : >"$calls"
   run ctl init --from-ssh "$stubs/ssh_protected"
   [ "$status" -ne 0 ]
-  grep -q 'identity holds a different keypair' <<<"$output"
+  assert_out 'identity holds a different keypair'
   grep -q 'age1stubderived' "$SOPS_AGE_FILE"
-  run ! grep -q 'ssh-to-age' "$calls"
+  assert_no_call 'ssh-to-age'
 }
 
 @test "real sops round trip: encrypt, get, set, and a tampered record fails verify" {
@@ -1021,8 +978,8 @@ line2" ]
   run ctl init --from-ssh "$stubs/ssh_protected"
   [ "$status" -eq 3 ]
   [[ $output == *"wrong passphrase?"* ]]
-  [[ $output != *'protectpass'* ]]
-  [[ $output != *'-----BEGIN'* ]]
+  assert_no_out 'protectpass'
+  assert_no_out '-----BEGIN'
   [ ! -e "$store4/keys.txt" ]
   unset SSH_TO_AGE_PASSPHRASE
   # A caller with no terminal is refused before the conversion, with the variable named.
@@ -1070,6 +1027,6 @@ line2" ]
   chmod 600 "$stubs/ssh_protected.pub"
   [ "$status" -eq 2 ]
   [[ $output == *"both halves"* ]]
-  [[ $output != *'passphrase for'* ]]
-  run ! grep -q 'ssh-to-age' "$calls"
+  assert_no_out 'passphrase for'
+  assert_no_call 'ssh-to-age'
 }

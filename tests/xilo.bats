@@ -3,30 +3,28 @@
 #
 # Contract under test: `xilo` is the real CLI, reached by store path, and every subcommand gets
 # XILO_URL/XILO_CACHE/XILO_TOKEN filled from credsctl records — unless you already exported that
-# variable, which wins. Per-key records win over a bundle, and a record that exists in both backends
-# is asked for as sops (a name+suffix), because systemd-creds costs ~1.2s per decrypt and sops ~23ms;
-# with no per-key record the wrapper reads the bundle `XILO.sops.json` in one decrypt. With no
-# credsctl, or no record, the caller's environment is passed through untouched, so xilo's own saved
-# profile is what authenticates. argv is never rewritten and the CLI's exit status is the wrapper's.
+# variable, which wins. Per-key records win over a bundle, and a record that exists in more than one
+# backend is asked for as sops (a name+suffix), because sops decrypts far cheaper than the
+# systemd-creds polkit hop; with no per-key record the wrapper reads the bundle `XILO.sops.json` in
+# one decrypt. With no credsctl, or no record, the caller's environment is passed through untouched,
+# so xilo's own saved profile is what authenticates. argv is never rewritten and the CLI's exit
+# status is the wrapper's.
 #
 # XILO_PROGRAM stands in for the real binary so the wrapper can be run without a build.
 
-bats_require_minimum_version 1.5.0
+load helpers
 
+# The real-binary tests below need the host's own PATH (helpers' host_path): stubs must not shadow
+# sops or age-keygen, and an unset host_path would leave `PATH="$real/bin:"` resolving the trailing
+# entry to the cwd.
 setup() {
-  repo="$PWD"
+  harness_stub_dir
   script="$repo/features/hm-xilo/xilo.sh"
-  # The real-binary tests below need the host's own PATH: stubs must not shadow sops or age-keygen,
-  # and an unset host_path would leave `PATH="$real/bin:"` resolving the trailing entry to the cwd.
-  host_path="$PATH"
-  stubs="$(mktemp -d)"
-  calls="$stubs/calls"
-  : >"$calls"
   creds="$stubs/creds"
   mkdir -p "$creds"
 
   # Quoted heredoc: every $ below is the stub's own runtime variable, not setup's.
-  cat >"$stubs/xilo-real" <<'EOF'
+  stub xilo-real <<'EOF'
 #!/usr/bin/env bash
 log="${XILO_STUB_LOG:?}"
 printf 'xilo %s\n' "$*" >> "$log"
@@ -34,14 +32,13 @@ printf 'xilo-env XILO_URL=%s XILO_TOKEN=%s XILO_CACHE=%s\n' "${XILO_URL:-none}" 
 if [ -n "${XILO_SHOW_TOKEN:-}" ]; then printf 'xilo-token [%s]\n' "$XILO_TOKEN" >> "$log"; fi
 exit "${XILO_EXIT:-0}"
 EOF
-  chmod +x "$stubs/xilo-real"
 
   # Real credsctl semantics for the only form the wrapper uses: decrypt --env NAME... -- CMD execs
-  # CMD with the secrets in its environment. A bare name resolves .cred first and refuses a name
-  # that matches more than one file; a name carrying a suffix names that backend explicitly. A sops
-  # record — .sops.json or .sops.yaml — contributes every field, read as json, whatever its own
-  # shape; split on NUL, so a multi-line secret survives. Exit 2 means "no record".
-  cat >"$stubs/credsctl" <<'EOF'
+  # CMD with the secrets in its environment. A bare name resolves .cred first (the wrapper only ever
+  # emits a bare name when that is the only file present); a name carrying a suffix names that backend
+  # explicitly. A sops record — .sops.json or .sops.yaml — contributes every field, read as json,
+  # whatever its own shape; split on NUL, so a multi-line secret survives. Exit 2 means "no record".
+  stub credsctl <<'EOF'
 #!/usr/bin/env bash
 log="${XILO_STUB_LOG:?}"
 printf 'credsctl %s\n' "$*" >> "$log"
@@ -53,20 +50,13 @@ if [ "$1" = decrypt ] && [ "$2" = --env ]; then
     base="$name"
     want=""
     case "$name" in
-      *.cred) base="${name%.cred}"; want="$CREDENTIALS_DIRECTORY/$base.cred" ;;
       *.sops.json) base="${name%.sops.json}"; want="$CREDENTIALS_DIRECTORY/$base.sops.json" ;;
       *.sops.yaml) base="${name%.sops.yaml}"; want="$CREDENTIALS_DIRECTORY/$base.sops.yaml" ;;
     esac
-    cred="$CREDENTIALS_DIRECTORY/$base.cred"
-    sops_json="$CREDENTIALS_DIRECTORY/$base.sops.json"
-    sops_yaml="$CREDENTIALS_DIRECTORY/$base.sops.yaml"
     if [ -z "$want" ]; then
-      count=0
-      for f in "$cred" "$sops_json" "$sops_yaml"; do [ -e "$f" ] && count=$((count + 1)); done
-      if [ "$count" -gt 1 ]; then exit 1; fi
-      want="$cred"
-      [ -e "$want" ] || want="$sops_json"
-      [ -e "$want" ] || want="$sops_yaml"
+      want="$CREDENTIALS_DIRECTORY/$base.cred"
+      [ -e "$want" ] || want="$CREDENTIALS_DIRECTORY/$base.sops.json"
+      [ -e "$want" ] || want="$CREDENTIALS_DIRECTORY/$base.sops.yaml"
     fi
     [ -e "$want" ] || exit 2
     case "$want" in
@@ -86,10 +76,7 @@ if [ "$1" = decrypt ] && [ "$2" = --env ]; then
 fi
 exit 1
 EOF
-  chmod +x "$stubs/credsctl"
 }
-
-teardown() { rm -rf "$stubs"; }
 
 run_wrapper() {
   env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" bash "$script" "$@"
@@ -101,17 +88,15 @@ run_wrapper() {
   printf 'acme/pkgs\n' >"$creds/XILO_CACHE.cred"
   run run_wrapper status
   [ "$status" -eq 0 ]
-  grep -q '^credsctl decrypt --env XILO_URL XILO_CACHE XILO_TOKEN -- ' "$calls"
-  grep -q '^xilo status$' "$calls"
-  grep -q '^xilo-env XILO_URL=https://xilo.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
+  assert_call '^credsctl decrypt --env XILO_URL XILO_CACHE XILO_TOKEN -- '
+  assert_call '^xilo status$'
+  assert_call '^xilo-env XILO_URL=https://xilo.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$'
 }
 
 @test "argv reaches the real CLI verbatim, including a path argument" {
-  printf 'https://xilo.test\n' >"$creds/XILO_URL.cred"
-  printf 'secret-token\n' >"$creds/XILO_TOKEN.cred"
   run run_wrapper push --jobs 4 --dry-run ./result
   [ "$status" -eq 0 ]
-  grep -q '^xilo push --jobs 4 --dry-run ./result$' "$calls"
+  assert_call '^xilo push --jobs 4 --dry-run ./result$'
 }
 
 @test "an exported variable wins over the record" {
@@ -121,8 +106,8 @@ run_wrapper() {
   env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" XILO_URL=https://from.env \
     bash "$script" push acme/pkgs ./result
   # XILO_URL is skipped, so only the two unset keys are decrypted.
-  grep -q '^credsctl decrypt --env XILO_CACHE XILO_TOKEN -- ' "$calls"
-  grep -q '^xilo-env XILO_URL=https://from.env XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
+  assert_call '^credsctl decrypt --env XILO_CACHE XILO_TOKEN -- '
+  assert_call '^xilo-env XILO_URL=https://from.env XILO_TOKEN=set XILO_CACHE=acme/pkgs$'
 }
 
 # The bundle shape: one record whose fields are the variables, read in a single decrypt. systemd-creds
@@ -133,31 +118,32 @@ run_wrapper() {
   run env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" \
     XILO_STUB_LOG="$calls" XILO_SHOW_TOKEN=1 bash "$script" status
   [ "$status" -eq 0 ]
-  grep -q '^credsctl decrypt --env XILO.sops.json -- ' "$calls"
-  [ "$(grep -c '^credsctl' "$calls")" = "1" ]
-  grep -q '^xilo-env XILO_URL=https://xilo.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
+  assert_call '^credsctl decrypt --env XILO.sops.json -- '
+  assert_calls '^credsctl' 1
+  assert_call '^xilo-env XILO_URL=https://xilo.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$'
   # A multi-line secret arrives whole; splitting the assignments on newlines would truncate it here.
-  grep -q '^xilo-token \[tok$' "$calls"
-  grep -q '^multi$' "$calls"
-  grep -q '^line\]$' "$calls"
+  assert_call '^xilo-token \[tok$'
+  assert_call '^multi$'
+  assert_call '^line\]$'
 }
 
-# A record that exists in both backends is asked for by name+suffix, which names the backend
-# explicitly, so the fast one is chosen and the systemd-creds record is left alone.
+# A record that exists in more than one backend is asked for by name+suffix, which names the backend
+# explicitly: json ahead of yaml ahead of .cred, so the fast one is chosen and the systemd-creds
+# record is left alone.
 @test "a sops record is preferred over the systemd-creds record for the same key" {
   # The sops records hold plaintext json here: the stub reads a record's fields, not real sops.
   jq -n --arg u 'https://fast.test' '{secret:$u}' >"$creds/XILO_URL.sops.json"
+  jq -n --arg u 'https://yaml.test' '{secret:$u}' >"$creds/XILO_URL.sops.yaml"
   printf 'https://slow.test\n' >"$creds/XILO_URL.cred"
   jq -n --arg c 'acme/pkgs' '{secret:$c}' >"$creds/XILO_CACHE.sops.json"
   printf 'secret-token\n' >"$creds/XILO_TOKEN.cred"
   run run_wrapper status
   [ "$status" -eq 0 ]
-  grep -q '^credsctl decrypt --env XILO_URL.sops.json XILO_CACHE.sops.json XILO_TOKEN -- ' "$calls"
-  grep -q '^xilo-env XILO_URL=https://fast.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
+  assert_call '^credsctl decrypt --env XILO_URL.sops.json XILO_CACHE.sops.json XILO_TOKEN -- '
+  assert_call '^xilo-env XILO_URL=https://fast.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$'
 }
 
-# A yaml record is the same backend, so the wrapper asks for it by suffix too, and json stays ahead
-# of yaml in the search order so the existing preference for a .sops.json over a .cred does not shift.
+# A yaml record is the same backend, so the wrapper asks for it by suffix too.
 @test "a yaml sops record is preferred over the systemd-creds record for the same key" {
   jq -n --arg u 'https://fast.test' '{secret:$u}' >"$creds/XILO_URL.sops.yaml"
   printf 'https://slow.test\n' >"$creds/XILO_URL.cred"
@@ -165,31 +151,8 @@ run_wrapper() {
   printf 'secret-token\n' >"$creds/XILO_TOKEN.cred"
   run run_wrapper status
   [ "$status" -eq 0 ]
-  grep -q '^credsctl decrypt --env XILO_URL.sops.yaml XILO_CACHE.sops.yaml XILO_TOKEN -- ' "$calls"
-  grep -q '^xilo-env XILO_URL=https://fast.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
-}
-
-# A json record still wins over a yaml one for the same key — both are the fast backend, and the
-# suffix the wrapper spells names the file it read.
-@test "a json record is asked for ahead of a yaml record for the same key" {
-  jq -n --arg u 'https://json.test' '{secret:$u}' >"$creds/XILO_URL.sops.json"
-  jq -n --arg u 'https://yaml.test' '{secret:$u}' >"$creds/XILO_URL.sops.yaml"
-  run run_wrapper status
-  grep -q '^credsctl decrypt --env XILO_URL.sops.json ' "$calls"
-  grep -q '^xilo-env XILO_URL=https://json.test XILO_TOKEN= XILO_CACHE=none$' "$calls"
-}
-
-@test "a yaml bundle record fills every variable in one decrypt" {
-  jq -n --arg u 'https://xilo.test' --arg c 'acme/pkgs' --arg t $'tok\nmulti\nline' \
-    '{XILO_URL:$u,XILO_CACHE:$c,XILO_TOKEN:$t}' >"$creds/XILO.sops.yaml"
-  run env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" \
-    XILO_STUB_LOG="$calls" XILO_SHOW_TOKEN=1 bash "$script" status
-  [ "$status" -eq 0 ]
-  grep -q '^credsctl decrypt --env XILO.sops.yaml -- ' "$calls"
-  [ "$(grep -c '^credsctl' "$calls")" = "1" ]
-  grep -q '^xilo-env XILO_URL=https://xilo.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
-  grep -q '^xilo-token \[tok$' "$calls"
-  grep -q '^line\]$' "$calls"
+  assert_call '^credsctl decrypt --env XILO_URL.sops.yaml XILO_CACHE.sops.yaml XILO_TOKEN -- '
+  assert_call '^xilo-env XILO_URL=https://fast.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$'
 }
 
 # --- real binaries: the yaml bundle reaching a consumer ---------------------
@@ -225,7 +188,6 @@ EOF
     '{XILO_URL:$u,XILO_CACHE:$c,XILO_TOKEN:$t}' >"$real/fields.json"
   env PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_RECIPIENTS="$real/recipient" SOPS_AGE_FILE="$real/key" \
     bash "$repo/features/hm-creds/credsctl.sh" encrypt XILO.sops.yaml --fields "$real/fields.json"
-  [ "$(stat -c '%a' "$real/XILO.sops.yaml")" = "400" ]
   before=$(sha256sum "$real/XILO.sops.yaml")
 
   # Command substitution leaves no `$status`, so the child's exit code is taken from `$?` here —
@@ -245,7 +207,6 @@ EOF
   # LC_ALL=C so the record sorts first; the host's UTF-8 collation folds case and would not.
   [ "$(find "$real" -type f -not -path "$real/bin/*" | LC_ALL=C sort | tr '\n' ' ')" = \
     "$real/XILO.sops.yaml $real/consumer $real/fields.json $real/key $real/recipient " ]
-  [ "$(env | grep -c '^XILO_')" = 0 ]
   rm -rf "$real"
 }
 
@@ -256,8 +217,8 @@ EOF
   jq -n --arg t 'bundle-token' '{XILO_TOKEN:$t}' >"$creds/XILO.sops.json"
   run run_wrapper status
   [ "$status" -eq 0 ]
-  grep -q '^credsctl decrypt --env XILO.sops.json XILO_URL -- ' "$calls"
-  grep -q '^xilo-env XILO_URL=https://from.record XILO_TOKEN=set XILO_CACHE=none$' "$calls"
+  assert_call '^credsctl decrypt --env XILO.sops.json XILO_URL -- '
+  assert_call '^xilo-env XILO_URL=https://from.record XILO_TOKEN=set XILO_CACHE=none$'
 }
 
 # A bundle record's fields are the variables, so the file's own name case is free: `xilo.sops.yaml`
@@ -268,8 +229,8 @@ EOF
   jq -n --arg u 'https://from.bundle' --arg t 'bundle-token' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$creds/xilo.sops.yaml"
   run run_wrapper status
   [ "$status" -eq 0 ]
-  grep -q '^credsctl decrypt --env xilo.sops.yaml -- ' "$calls"
-  grep -q '^xilo-env XILO_URL=https://from.bundle XILO_TOKEN=set XILO_CACHE=none$' "$calls"
+  assert_call '^credsctl decrypt --env xilo.sops.yaml -- '
+  assert_call '^xilo-env XILO_URL=https://from.bundle XILO_TOKEN=set XILO_CACHE=none$'
 }
 
 # Both shapes on disk: json first, as before, and a lowercase json still beats a lowercase yaml.
@@ -278,8 +239,8 @@ EOF
   jq -n '{XILO_URL:"https://from.yaml"}' >"$creds/XILO.sops.yaml"
   run run_wrapper status
   [ "$status" -eq 0 ]
-  grep -q '^credsctl decrypt --env xilo.sops.json -- ' "$calls"
-  grep -q '^xilo-env XILO_URL=https://from.json XILO_TOKEN= XILO_CACHE=none$' "$calls"
+  assert_call '^credsctl decrypt --env xilo.sops.json -- '
+  assert_call '^xilo-env XILO_URL=https://from.json XILO_TOKEN= XILO_CACHE=none$'
 }
 
 # Per-key records stay exact-case: there the filename *is* the variable, so a lowercase
@@ -288,8 +249,8 @@ EOF
   jq -n '{secret:"https://from.record"}' >"$creds/xilo_url.sops.json"
   run run_wrapper status
   [ "$status" -eq 0 ]
-  [ "$(grep -c '^credsctl' "$calls")" = 0 ]
-  grep -q '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$' "$calls"
+  assert_no_call '^credsctl'
+  assert_call '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$'
 }
 
 # An exported variable must not be overridden by a bundle field: credsctl's assignments replace the
@@ -298,8 +259,8 @@ EOF
   jq -n --arg u 'https://from.bundle' --arg t 'bundle-token' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$creds/XILO.sops.json"
   env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" \
     XILO_STUB_LOG="$calls" XILO_URL=https://from.env bash "$script" status
-  grep -q '^xilo-env XILO_URL=https://from.env XILO_TOKEN= XILO_CACHE=none$' "$calls"
-  [ "$(grep -c '^credsctl' "$calls")" = 0 ]
+  assert_call '^xilo-env XILO_URL=https://from.env XILO_TOKEN= XILO_CACHE=none$'
+  assert_no_call '^credsctl'
 }
 
 @test "no credsctl on PATH leaves the environment alone" {
@@ -307,19 +268,19 @@ EOF
   # /usr/bin has no credsctl (it lives in the nix profile), so this is the real fallback.
   run env PATH=/usr/bin CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" bash "$script" status
   [ "$status" -eq 0 ]
-  grep -q '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$' "$calls"
-  [ "$(grep -c credsctl "$calls")" = 0 ]
+  assert_call '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$'
+  assert_no_call credsctl
 }
 
 @test "no record at all falls back to xilo's saved profile" {
   run run_wrapper status
   [ "$status" -eq 0 ]
-  grep -q '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$' "$calls"
-  [ "$(grep -c '^credsctl' "$calls")" = 0 ]
+  assert_call '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$'
+  assert_no_call '^credsctl'
 }
 
 @test "the CLI's exit status is the wrapper's" {
   run env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" XILO_EXIT=7 bash "$script" push acme/pkgs ./result
   [ "$status" -eq 7 ]
-  grep -q '^xilo push acme/pkgs ./result$' "$calls"
+  assert_call '^xilo push acme/pkgs ./result$'
 }

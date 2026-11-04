@@ -27,11 +27,10 @@
 # secret means `rm <name>.<ext>` and encrypting again. Plaintext only ever goes to stdout.
 set -uo pipefail
 
-# The store: CREDS_DIR for a record store you point somewhere else, CREDENTIALS_DIRECTORY (what
-# systemd sets for generated credentials) as the real location, CREDS_ROOT as the whole store a flake
-# deploys (./secrets — records beside the rules file sopsctl reads from the same root), and systemd's
-# root), and systemd's own store as the default. One chain here, so every caller -- xilo-wrapped,
-# njust's _push -- reads the same store.
+# The store, one chain so every caller -- xilo-wrapped, njust's _push -- reads the same directory:
+# CREDS_DIR for a store you point somewhere else, CREDENTIALS_DIRECTORY (what systemd sets for
+# generated credentials), CREDS_ROOT for the whole store a flake deploys (./secrets, records beside
+# the rules file sopsctl reads from), and systemd's own store as the default.
 creds_dir="${CREDS_DIR:-${CREDENTIALS_DIRECTORY:-${CREDS_ROOT:-$HOME/.local/share/credentials}}}"
 # A leading ~ arrives literal when it is quoted or comes from a variable, so a root expands here too:
 # the same expansion sopsctl does for AGE_ROOT and CREDS_ROOT, so one CREDS_ROOT means the same
@@ -87,17 +86,17 @@ usage() {
 # One row of `list`. systemd's own rows carry encrypted/signed flags we cannot derive from a file,
 # so they come from systemd-creds; every other record is described from the file itself.
 show_record() {
-  local mode
-  mode=$(stat -c '%a' "$1")
-  printf '%-20s %s  %sB  %s\n' "$(basename "$1")" \
-    "$([[ $mode == 400 ]] && echo secure || echo insecure)" "$(stat -c %s "$1")" "$1"
+  local mode size
+  read -r mode size < <(stat -c '%a %s' "$1")
+  printf '%-20s %s  %sB  %s\n' "${1##*/}" \
+    "$([[ $mode == 400 ]] && echo secure || echo insecure)" "$size" "$1"
 }
 
 cmd_list() {
   # systemd-creds only ever reports its own store (~/.local/share/credentials). Listing it beside
   # $CREDS_DIR is honest only when they are the same directory; pointed elsewhere, the records
   # there are listed here and systemd's store is not reported at all.
-  local sys_dir="${XDG_USER_DATA_DIRECTORY:-$HOME/.local/share}/credentials" f
+  local sys_dir="$HOME/.local/share/credentials" f
   shopt -s nullglob
   if [[ $creds_dir == "$sys_dir" ]]; then
     systemd-creds list --user || die "systemd-creds list failed" 3
@@ -128,8 +127,8 @@ cmd_encrypt() {
 
   if [[ $fields == 1 ]]; then
     # A bundle is several secrets in one sops record whose field names ARE the environment variables
-    # they get handed to, so one decrypt fills a whole set (~23ms, against ~1.2s per .cred record).
-    # There is no prompt path: json typed at a terminal is echoed, so the object is piped or read
+    # they get handed to, so one decrypt fills a whole set (the cost is in the header above). There
+    # is no prompt path: json typed at a terminal is echoed, so the object is piped or read
     # from FILE. jq checks the shape before anything is encrypted — a key must be a name a shell can
     # expand (never sops' own metadata key) and a value a non-empty string; a multi-line value is
     # stored as escapes and comes back as real newlines.
@@ -202,14 +201,12 @@ record_for() {
   fi
   local found=()
   for f in "$cred" "$sops_json" "$sops_yaml"; do
-    [[ -e $f ]] && found+=("${f##*/}")
+    [[ -e $f ]] && found+=("$f")
   done
   [[ ${#found[@]} -le 1 ]] ||
-    die "more than one record for $base: ${found[*]} — remove one, or name the backend you mean"
-  REPLY=$cred
-  [[ -e $REPLY ]] || REPLY=$sops_json
-  [[ -e $REPLY ]] || REPLY=$sops_yaml
-  [[ -e $REPLY ]] || die "no record named '$1' in $creds_dir" 2
+    die "more than one record for $base: ${found[*]##*/} — remove one, or name the backend you mean"
+  REPLY=${found[0]:-}
+  [[ -n $REPLY ]] || die "no record named '$1' in $creds_dir" 2
 }
 
 # Resolve every name before touching anything, so a name with no record removes nothing rather
@@ -225,20 +222,11 @@ cmd_rm() {
   rm -f -- "${targets[@]}"
 }
 
-# The plaintext of one resolved record. Backend choice is here and nowhere else; the credential ID
-# systemd-creds checks is the record's bare name, read back from the file resolved. A sops record
-# comes back as its whole json — one sops process per record, whichever fields are asked for.
-decrypt_cred() {
-  systemd-creds decrypt --user --name "$(base_name "${1##*/}")" "$1"
-}
-
-decrypt_sops() { sopsctl decrypt "$1"; }
-
 # Names, then optionally `-- CMD ARGS...`. Without a command the secrets go to stdout (one record
 # per line, or KEY=VALUE with --env). With a command they are never printed: they are exported into
 # the environment of CMD, which replaces this process.
 cmd_decrypt() {
-  local env_format=0 names=() cmd=() assigns=() name base plain json fields assign key got
+  local env_format=0 names=() cmd=() assigns=() name base plain json assign key got
   # --env is a marker, not a prefix: it may appear before any name.
   while [[ $# -gt 0 && ${1:-} != -- ]]; do
     [[ ${1:-} == --env ]] && {
@@ -257,6 +245,9 @@ cmd_decrypt() {
   fi
   [[ ${#names[@]} -gt 0 ]] || die "decrypt needs at least one credential name"
 
+  # Backend choice is here and nowhere else: a .cred record is decrypted by systemd-creds under the
+  # bare name it was encrypted under (which is `base_name` of the name asked for), and a sops record
+  # comes back as its whole json — one sops process per record, whichever fields are asked for.
   # shortcut: buffered per record like encrypt, so a trailing newline is stripped — encrypt strips
   # it on write too, so no record carries one. Upgrade to a stream if a record must keep exact bytes.
   for name in "${names[@]}"; do
@@ -265,11 +256,11 @@ cmd_decrypt() {
       die "'$name' is not a usable environment variable name — --env takes a bare credential name (XILO, or XILO.sops.yaml), resolved inside $creds_dir; a path belongs to sopsctl"
     record_for "$name"
     if [[ $REPLY == *.cred ]]; then
-      plain=$(decrypt_cred "$REPLY") || die "cannot decrypt $REPLY" 3
+      plain=$(systemd-creds decrypt --user --name "$base" "$REPLY") || die "cannot decrypt $REPLY" 3
       assigns+=("$base=$plain")
       continue
     fi
-    json=$(decrypt_sops "$REPLY") ||
+    json=$(sopsctl decrypt "$REPLY") ||
       die "cannot decrypt $REPLY — sops needs a key: the identity file at \$SOPS_AGE_FILE, or \$SOPS_KEYS_CMD when there is none; a machine-local .cred record needs no key at all" 3
     if [[ $env_format == 0 ]]; then
       # Plain decrypt prints one secret and nothing else; a bundle has no single secret to print,
@@ -295,7 +286,7 @@ cmd_decrypt() {
       got=1
     done < <(printf '%s' "$json" |
       jq -j 'to_entries[] | select(.value | type == "string" and length > 0) | "\(.key)=\(.value)\u0000"')
-    [[ ${got:-0} == 1 ]] || die "record '$name' holds no field a shell can name" 3
+    [[ $got == 1 ]] || die "record '$name' holds no field a shell can name" 3
   done
 
   # With a command the secrets reach it through its environment only, never through stdout.

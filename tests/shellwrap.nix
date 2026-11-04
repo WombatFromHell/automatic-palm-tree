@@ -11,11 +11,8 @@
 # command a script runs must be named in `runtimeInputs` or the shipped binary cannot find it:
 # credsctl runs jq and sopsctl, sopsctl runs sops, age, jq and ssh-to-age (the passphrase of a
 # protected ssh origin goes to ssh-to-age in its environment, so no askpass helper is shipped). The
-# bats suites run the raw files on
-# the host PATH, which hides exactly that, so the runtime paths are asserted on the built wrapper.
-#
-# xilo's real store path is a placeholder: the marker substitution and the shellcheck are what is
-# under test, and neither needs the upstream CLI, so nothing is fetched.
+# bats suites run the raw files on the host PATH, which hides exactly that, so the runtime paths are
+# asserted on the built wrapper.
 let
   s = import ./support.nix;
   inherit (s) pkgs;
@@ -23,38 +20,50 @@ let
 
   creds = (import ../features/hm-creds/home.nix) {inherit pkgs;};
 
-  shipped = name:
+  # xilo's real store path is a placeholder: the marker substitution and the shellcheck are what is
+  # under test, and neither needs the upstream CLI, so nothing is fetched. The wrapper is still taken
+  # from hm-xilo's own module, so this guard cannot pass while the module ships something else.
+  xiloCli = pkgs.writeShellScriptBin "xilo" "";
+
+  xilo = (import ../features/hm-xilo/home.nix) {
+    inherit pkgs;
+    inputs = {
+      xilo = {
+        packages.${pkgs.stdenv.hostPlatform.system}.default = xiloCli;
+      };
+    };
+  };
+
+  shipped = packages: name:
     findFirst
     (p: p.name or "" == name)
-    (throw "hm-creds ships no '${name}' — the bats suite tests a script nothing installs")
-    creds.home.packages;
+    (throw "no '${name}' is shipped — the bats suite tests a script nothing installs")
+    packages;
+
+  credsctl = shipped creds.home.packages "credsctl";
+  sopsctl = shipped creds.home.packages "sopsctl";
+  # hm-xilo's own wrapper, marker and all — the same substitution the real profile ships.
+  wrapped = shipped xilo.home.packages "xilo-wrapped";
 in
-  pkgs.symlinkJoin {
-    name = "shellwrap";
-    paths = [
-      (shipped "credsctl")
-      (shipped "sopsctl")
-      (pkgs.writeShellApplication {
-        name = "xilo-wrapped";
-        text =
-          builtins.replaceStrings ["__XILO_PROGRAM__"]
-          ["${pkgs.writeShellScriptBin "xilo" ""}/bin/xilo"] (builtins.readFile ../features/hm-xilo/xilo.sh);
-      })
-      # A missing runtimeInput is a runtime `command not found` nobody sees until a unit or an elevated
-      # push runs the script, which is the whole point of the portable backend.
-      (pkgs.runCommand "shellwrap-deps"
-        {} ''
-          mkdir -p "$out"
-          grep -q "${pkgs.jq}/bin" "${shipped "credsctl"}/bin/credsctl" ||
-            { echo "credsctl: jq is not a runtimeInput, so the shipped script cannot run it" >&2; exit 1; }
-          for d in ${toString [pkgs.sops pkgs.age pkgs.jq pkgs.ssh-to-age]}; do
-            grep -q "$d/bin" "${shipped "sopsctl"}/bin/sopsctl" ||
-              { echo "sopsctl: $d is not a runtimeInput, so the shipped script cannot run it" >&2; exit 1; }
-          done
-          # The passphrase route is ssh-to-age's environment variable, so no askpass helper belongs on
-          # the shipped PATH; KDE's is the only candidate package that kept one.
-          ! grep -q 'ksshaskpass-' "${shipped "sopsctl"}/bin/sopsctl" ||
-            { echo "sopsctl: an askpass helper is a runtimeInput, but ssh-to-age never runs SSH_ASKPASS" >&2; exit 1; }
-        '')
-    ];
-  }
+  # Nothing reads a joined tree: every fact below is a grep against the wrapper's own text, and
+  # interpolating a path makes it a build input already. A missing runtimeInput is a runtime
+  # `command not found` nobody sees until a unit or an elevated push runs the script, which is the
+  # whole point of the portable backend.
+  pkgs.runCommand "shellwrap"
+  {} ''
+    mkdir -p "$out"
+    grep -q "${pkgs.jq}/bin" "${credsctl}/bin/credsctl" ||
+      { echo "credsctl: jq is not a runtimeInput, so the shipped script cannot run it" >&2; exit 1; }
+    for d in ${toString [pkgs.sops pkgs.age pkgs.jq pkgs.ssh-to-age]}; do
+      grep -q "$d/bin" "${sopsctl}/bin/sopsctl" ||
+        { echo "sopsctl: $d is not a runtimeInput, so the shipped script cannot run it" >&2; exit 1; }
+    done
+    # The passphrase route is ssh-to-age's environment variable, so no askpass helper belongs on
+    # the shipped PATH; KDE's is the only candidate package that kept one.
+    ! grep -q 'ksshaskpass-' "${sopsctl}/bin/sopsctl" ||
+      { echo "sopsctl: an askpass helper is a runtimeInput, but ssh-to-age never runs SSH_ASKPASS" >&2; exit 1; }
+    # The wrapper execs the CLI by store path, baked in by hm-xilo's marker substitution. A marker
+    # that survived ships a literal the shell cannot run, and every `xilo` dies at exec.
+    grep -q "${xiloCli}/bin/xilo" "${wrapped}/bin/xilo-wrapped" ||
+      { echo "xilo-wrapped: the __XILO_PROGRAM__ marker was not substituted, so the shipped wrapper execs a path that does not exist" >&2; exit 1; }
+  ''

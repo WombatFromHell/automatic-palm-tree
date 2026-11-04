@@ -5,22 +5,18 @@ let
   s = import ./support.nix;
   inherit (s) lib pkgs ck suite;
 
-  # Three fixture Home Manager configs over typed host facts (support.nix's hmFixture): a NixOS
-  # side where the wrap must be a no-op, a standalone side with the default wrapper, and a
-  # standalone side choosing an Nvidia one. All set passwordStore, the one path where Home
-  # Manager overrides the package its program option installs.
+  # Three fixture Home Manager configs over typed host facts, built by lib/builders.nix through
+  # support.nix's hmCfg: a NixOS side where the wrap must be a no-op, a standalone side with the
+  # default wrapper, and a standalone side choosing an Nvidia one. All set passwordStore, the one
+  # path where Home Manager overrides the package its program option installs.
+  gpuFeatures = ["hm-nixgl" "hm-brave" "hm-zed" "hm-ghostty"];
   fixture = {brave-browser.passwordStore = "basic";};
-  nixosHost = s.hmFixture true fixture;
-  standalone = s.hmFixture false fixture;
-  nvidiaHost = s.hmFixture false (fixture // {nixgl.wrapper = "nvidiaPrime";});
-
-  # The derivation before the wrap, called the way production does: pinMeta comes from
-  # support.nix's overlay, and hm-brave reads pkgs.unstable.
-  raw = {
-    brave = pkgs.unstable.callPackage ../features/hm-brave/_package.nix {};
-    zed = (pkgs.callPackage ../features/hm-zed/_package.nix {}).noFHS;
-    ghostty = pkgs.callPackage ../features/hm-ghostty/_package.nix {};
-  };
+  nixosHost = s.hmCfg (s.fixtureHost true gpuFeatures fixture);
+  standalone = s.hmCfg (s.fixtureHost false gpuFeatures fixture);
+  nvidiaHost = s.hmCfg (s.fixtureHost false gpuFeatures (fixture // {nixgl.wrapper = "nvidiaPrime";}));
+  # The derivation before the wrap, called the way production does (support.nix's rawFeaturePkgs):
+  # pinMeta comes from the overlay, and hm-brave reads pkgs.unstable.
+  raw = s.rawFeaturePkgs;
 
   # hm-brave's installPhase wraps its bin entries only when flags are present, so this is the
   # overridden-but-unwrapped derivation.
@@ -38,24 +34,28 @@ let
   finalBrave = cfg: cfg.programs.chromium.finalPackage;
 
   # Ghostty's launcher resolves its AppDir from /proc/self/exe, so the wrap must still run the
-  # launcher from the AppDir itself. The .drv text is the eval-only form of that fact: Home
-  # Manager's wrapper links the tree (`cp -rs`) and makeWrapper execs the original launcher
-  # through nixGL's combined wrapper. A pattern may not contain a store path (FiFOD guard), so
-  # the names are spelled out here rather than read off the derivation; the .drv is one line, so
-  # plain .* is enough (builtins.match has no (?s) flag).
-  wrappedGhosttyDrvText = builtins.readFile (standalone.lib.nixGL.wrapGpu raw.ghostty).drvPath;
-  appDirNamed = "${raw.ghostty.pname}-${raw.ghostty.version}.drv";
+  # launcher from the AppDir itself. The buildCommand text is the eval-only form of that fact:
+  # Home Manager's wrapper links the tree (`cp -rs`) and makeWrapper execs the original launcher
+  # through nixGL's combined wrapper. Reading drvAttrs avoids realizing the .drv, so the suite
+  # stays eval-only as its header claims. A pattern may not contain a store path (FiFOD guard), so
+  # the names are spelled out here rather than read off the derivation.
+  # The nixGL wrapper is a script derivation (buildCommand); the feature packages are stdenv
+  # derivations whose work lives in installPhase.
+  buildText = p: p.drvAttrs.buildCommand;
+  phaseText = p: p.drvAttrs.installPhase;
+  appDirNamed = "${raw.ghostty.pname}-${raw.ghostty.version}";
+  ghosttyWrapText = buildText (standalone.lib.nixGL.wrapGpu raw.ghostty);
   launcherInAppDir =
-    builtins.match ".*${appDirNamed}.*" wrappedGhosttyDrvText
-    != null
-    && builtins.match ".*cp -rs.*" wrappedGhosttyDrvText != null
-    && builtins.match ".*makeWrapper.*nixGLCombinedWrapper.*" wrappedGhosttyDrvText != null;
+    lib.hasInfix appDirNamed ghosttyWrapText
+    && lib.hasInfix "cp -rs" ghosttyWrapText
+    # Order-sensitive: the wrapper must exec through nixGL's combined wrapper, not merely mention it.
+    && builtins.match ".*makeWrapper.*nixGLCombinedWrapper.*" ghosttyWrapText != null;
 
-  occurrences = cfg: name: lib.length (lib.filter (p: (p.pname or p.name) == name) cfg.home.packages);
+  occurrences = cfg: name: lib.count (p: (p.pname or p.name) == name) cfg.home.packages;
 
   # pnames as Home Manager sees them: brave's derivation is brave-bin, zed's zed-editor-bin.
-  featureNames = ["brave-bin" "zed-editor-bin" "ghostty-bin"];
   names = lib.attrNames raw;
+  featureNames = map (n: raw.${n}.pname) names;
 
   # Identity or a distinct derivation, per feature, on one side.
   side = cfg: wrapped: lib.all (n: ((pkgOf cfg).${n}.outPath != raw.${n}.outPath) == wrapped) names;
@@ -124,9 +124,9 @@ in
     # hm-brave's installPhase only wraps its bin entries when flags are present; without this
     # the override would silently drop --password-store.
     (ck "brave's derivation wraps its bin entries when commandLineArgs are set"
-      (builtins.match ".*makeWrapper.*--password-store=basic.*" (builtins.readFile braveWithArgs.drvPath)
+      (builtins.match ".*makeWrapper.*--password-store=basic.*" (phaseText braveWithArgs)
         != null
-        && builtins.match ".*ln -s .*/opt/brave.com/brave/brave.*" (builtins.readFile raw.brave.drvPath) != null))
+        && builtins.match ".*ln -s .*/opt/brave.com/brave/brave.*" (phaseText raw.brave) != null))
 
     # Identity alone is not enough: a wrapper that copied bin/ghostty into an empty tree would
     # keep the pname and still resolve no resources at runtime.

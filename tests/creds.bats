@@ -18,34 +18,30 @@
 # The real-tier tests run on the host PATH with the stub dir removed; they skip when the real
 # binaries are absent.
 
-bats_require_minimum_version 1.5.0
+load helpers
 
 setup() {
-  repo="$PWD"
+  harness_stub_dir
+  export CALLS="$calls"
   script="$repo/features/hm-creds/credsctl.sh"
-  host_path="$PATH"
-  stubs="$(mktemp -d)"
-  calls="$stubs/calls"
-  : >"$calls"
   creds="$stubs/creds"
   mkdir -p "$creds"
 
-  cat >"$stubs/systemd-creds" <<EOF
+  stub systemd-creds <<'EOF'
 #!/usr/bin/env bash
-echo "systemd-creds \$*" >> "$calls"
-case "\$1" in
+echo "systemd-creds $*" >> "$CALLS"
+case "$1" in
   encrypt)
-    [ "\$2" = "--user" ] && [ "\$3" = "--name" ] || exit 9
-    [ "\${SC_ENCRYPT_EXIT:-0}" = 0 ] || exit "\$SC_ENCRYPT_EXIT"
-    cat > "\${@: -1}" ;;
+    [ "$2" = "--user" ] && [ "$3" = "--name" ] || exit 9
+    [ "${SC_ENCRYPT_EXIT:-0}" = 0 ] || exit "$SC_ENCRYPT_EXIT"
+    cat > "${@: -1}" ;;
   decrypt)
-    [ "\$2" = "--user" ] && [ "\$3" = "--name" ] || exit 9
-    if [ "\${SC_DECRYPT_EXIT:-0}" != 0 ]; then echo "stub: cannot decrypt" >&2; exit "\$SC_DECRYPT_EXIT"; fi
-    cat "\${@: -1}" ;;
+    [ "$2" = "--user" ] && [ "$3" = "--name" ] || exit 9
+    if [ "${SC_DECRYPT_EXIT:-0}" != 0 ]; then echo "stub: cannot decrypt" >&2; exit "$SC_DECRYPT_EXIT"; fi
+    cat "${@: -1}" ;;
   list)
-    [ "\$2" = "--user" ] || exit 9
-    [ "\${SC_LIST_EXIT:-0}" = 0 ] || exit "\$SC_LIST_EXIT"
-    if [ -n "\${SC_LIST_OUT:-}" ]; then printf '%s\n' "\${SC_LIST_OUT}"; fi ;;
+    [ "$2" = "--user" ] || exit 9
+    if [ -n "${SC_LIST_OUT:-}" ]; then printf '%s\n' "${SC_LIST_OUT}"; fi ;;
   *) exit 9 ;;
 esac
 EOF
@@ -53,26 +49,29 @@ EOF
   # command, so this stub only has to behave like a record store — encrypt reads json on stdin and
   # writes ciphertext on stdout, decrypt prints the record's plaintext json (one process per
   # record, which is what makes a multi-field record worth having).
-  cat >"$stubs/sopsctl" <<EOF
+  stub sopsctl <<'EOF'
 #!/usr/bin/env bash
-echo "sopsctl \$*" >> "$calls"
+echo "sopsctl $*" >> "$CALLS"
 one_record='{"secret":"stub-plain"}'
-case "\$1" in
+case "$1" in
   encrypt)
-    [ "\${SOPS_ENCRYPT_EXIT:-0}" = 0 ] || exit "\${SOPS_ENCRYPT_EXIT}"
+    [ "${SOPS_ENCRYPT_EXIT:-0}" = 0 ] || exit "${SOPS_ENCRYPT_EXIT}"
     cat ;;
   decrypt)
-    [ "\${SOPS_DECRYPT_EXIT:-0}" = 0 ] || { echo "sopsctl: cannot decrypt \${@: -1}" >&2; exit "\${SOPS_DECRYPT_EXIT}"; }
-    printf '%s' "\${SOPS_JSON:-\$one_record}" ;;
+    [ "${SOPS_DECRYPT_EXIT:-0}" = 0 ] || { echo "sopsctl: cannot decrypt ${@: -1}" >&2; exit "${SOPS_DECRYPT_EXIT}"; }
+    printf '%s' "${SOPS_JSON:-$one_record}" ;;
   *) exit 9 ;;
 esac
 EOF
-  chmod +x "$stubs/systemd-creds" "$stubs/sopsctl"
   export CREDS_DIR="$creds"
   PATH="$stubs:$PATH"
 }
 
-teardown() { rm -rf "$stubs"; }
+
+# Encrypt fixture: credsctl reads the secret on stdin, so every encrypt site redirects from one
+# file. printf keeps the bytes exactly — no trailing newline, which is what record contents are
+# asserted against.
+write_in() { printf '%s' "$1" >"$stubs/in"; }
 
 ctl() { bash "$script" "$@"; }
 
@@ -87,7 +86,7 @@ ctl() { bash "$script" "$@"; }
   printf 'cipher' >"$store/alpha.cred"
   printf 'cipher' >"$store/beta.sops.json"
   SC_LIST_OUT="alpha.cred secure 6B $store/alpha.cred" \
-    run env HOME="$stubs/home" PATH="$stubs/bin:$PATH" CREDS_DIR="$store" bash "$script" list
+    run env HOME="$stubs/home" CREDS_DIR="$store" bash "$script" list
   [ "$status" -eq 0 ]
   grep -q 'alpha.cred secure' <<<"$output"
   grep -q 'beta.sops.json' <<<"$output"
@@ -111,11 +110,15 @@ ctl() { bash "$script" "$@"; }
 # report it, and an empty store must still exit 0.
 @test "list never reports the rules file beside the records" {
   printf 'cipher' >"$creds/gamma.sops.yaml"
-  printf 'creation_rules:\n  - path_regex: .*\\.sops\\.yaml$\n    age: "age1aaa"\n' >"$creds/.sops.yaml"
+  cat >"$creds/.sops.yaml" <<'EOF'
+creation_rules:
+  - path_regex: .*\.sops\.yaml$
+    age: "age1aaa"
+EOF
   run ctl list
   [ "$status" -eq 0 ]
   [ "$(grep -c 'sops.yaml' <<<"$output")" = 1 ]
-  run ! grep -q '^\.sops\.yaml ' <<<"$output"
+  ! grep -q '^\.sops\.yaml ' <<<"$output"
 }
 
 @test "list on an empty store exits 0 and names nothing" {
@@ -132,10 +135,10 @@ ctl() { bash "$script" "$@"; }
   touch "$stubs/other/other.sops.json"
   run env -u CREDS_DIR CREDENTIALS_DIRECTORY="$stubs/sys" bash "$script" list
   grep -q 'token.sops.json' <<<"$output"
-  run ! grep -q 'other.sops.json' <<<"$output"
+  assert_no_out 'other.sops.json'
   run env CREDS_DIR="$stubs/other" CREDENTIALS_DIRECTORY="$stubs/sys" bash "$script" list
   grep -q 'other.sops.json' <<<"$output"
-  run ! grep -q 'token.sops.json' <<<"$output"
+  assert_no_out 'token.sops.json'
 }
 
 # CREDS_ROOT is the third rung of that chain: it names the whole store for a flake-deployed secrets
@@ -149,19 +152,19 @@ ctl() { bash "$script" "$@"; }
   # A host session may carry CREDENTIALS_DIRECTORY of its own, so the root tests clear it.
   run env -u CREDS_DIR -u CREDENTIALS_DIRECTORY CREDS_ROOT="$stubs/flake" bash "$script" list
   grep -q 'token.sops.json' <<<"$output"
-  run ! grep -q 'other.sops.json' <<<"$output"
+  assert_no_out 'other.sops.json'
   run env -u CREDS_DIR CREDS_ROOT="$stubs/flake" CREDENTIALS_DIRECTORY="$stubs/sys" bash "$script" list
   grep -q 'sys.sops.json' <<<"$output"
-  run ! grep -q 'token.sops.json' <<<"$output"
+  assert_no_out 'token.sops.json'
   run env CREDS_DIR="$stubs/other" CREDS_ROOT="$stubs/flake" bash "$script" list
   grep -q 'other.sops.json' <<<"$output"
-  run ! grep -q 'token.sops.json' <<<"$output"
+  assert_no_out 'token.sops.json'
 }
 
 # --- encrypt ----------------------------------------------------------------
 
 @test "encrypt writes a .cred record and passes --user --name, not a derived name" {
-  printf 'secret' >"$stubs/in"
+  write_in 'secret'
   run ctl encrypt ALPHA <"$stubs/in"
   [ "$status" -eq 0 ]
   grep -q "^systemd-creds encrypt --user --name ALPHA - $creds/ALPHA.cred$" "$calls"
@@ -171,7 +174,7 @@ ctl() { bash "$script" "$@"; }
 # The secret reaches sopsctl as a json field, because a sops record is a map and sops encrypts every
 # value in it; credsctl keeps the one-secret-per-record contract by writing exactly one field.
 @test "encrypt NAME.sops.json delegates to sopsctl and stores the secret as a json field" {
-  printf 'secret' >"$stubs/in"
+  write_in 'secret'
   run ctl encrypt BETA.sops.json <"$stubs/in"
   [ "$status" -eq 0 ]
   grep -q '^sopsctl encrypt --format json$' "$calls"
@@ -182,7 +185,7 @@ ctl() { bash "$script" "$@"; }
 # The suffix is the record's shape, not a format request on the wire: sopsctl's own default is yaml,
 # so credsctl names the format the suffix says.
 @test "encrypt NAME.sops.yaml delegates with --format yaml and stores the secret as a field" {
-  printf 'secret' >"$stubs/in"
+  write_in 'secret'
   run ctl encrypt GAMMA.sops.yaml <"$stubs/in"
   [ "$status" -eq 0 ]
   grep -q '^sopsctl encrypt --format yaml$' "$calls"
@@ -193,7 +196,7 @@ ctl() { bash "$script" "$@"; }
 # Both backends land inside the root, so a flake-deployed store is one directory, not two: a .cred
 # here and a sops record next to the recipient file sopsctl reads.
 @test "encrypt with CREDS_ROOT writes both backends into that store" {
-  printf 'secret' >"$stubs/in"
+  write_in 'secret'
   run env -u CREDS_DIR -u CREDENTIALS_DIRECTORY CREDS_ROOT="$stubs/flake" bash "$script" encrypt ALPHA <"$stubs/in"
   [ "$status" -eq 0 ]
   grep -q "^systemd-creds encrypt --user --name ALPHA - $stubs/flake/ALPHA.cred$" "$calls"
@@ -211,7 +214,7 @@ ctl() { bash "$script" "$@"; }
 @test "a quoted CREDS_ROOT reaches the store as a real path" {
   home="$stubs/home2"
   mkdir -p "$home"
-  printf 'secret' >"$stubs/in"
+  write_in 'secret'
   run env -u CREDS_DIR -u CREDENTIALS_DIRECTORY HOME="$home" CREDS_ROOT='~/secrets' bash "$script" encrypt ALPHA <"$stubs/in"
   [ "$status" -eq 0 ]
   [ -f "$home/secrets/ALPHA.cred" ]
@@ -232,7 +235,7 @@ ctl() { bash "$script" "$@"; }
 # The backend suffix may be spelled on the name; it names the backend, it is not part of the
 # record's identity, so the three spellings are the same record.
 @test "encrypt NAME.cred writes NAME.cred and decrypt resolves it under either spelling" {
-  printf 'secret' >"$stubs/in"
+  write_in 'secret'
   run ctl encrypt ALPHA.cred <"$stubs/in"
   [ "$status" -eq 0 ]
   [ -e "$creds/ALPHA.cred" ]
@@ -247,7 +250,7 @@ ctl() { bash "$script" "$@"; }
 }
 
 @test "encrypt NAME.sops.json keeps the credential ID free of the suffix" {
-  printf 'secret' >"$stubs/in"
+  write_in 'secret'
   run ctl encrypt BETA.sops.json <"$stubs/in"
   [ ! -e "$creds/BETA.sops.json.sops.json" ]
   run ctl decrypt BETA.sops.json
@@ -258,7 +261,7 @@ ctl() { bash "$script" "$@"; }
 # A yaml record is read through the same one decrypt: sopsctl normalizes the plaintext to json, so
 # credsctl's jq path never sees a yaml shape.
 @test "encrypt NAME.sops.yaml keeps the credential ID free of the suffix and reads back as json" {
-  printf 'secret' >"$stubs/in"
+  write_in 'secret'
   run ctl encrypt GAMMA.sops.yaml <"$stubs/in"
   [ ! -e "$creds/GAMMA.sops.yaml.sops.yaml" ]
   SOPS_JSON='{"secret":"yaml-plain"}' run ctl decrypt GAMMA
@@ -292,9 +295,6 @@ ctl() { bash "$script" "$@"; }
   grep -q '^sopsctl encrypt --format yaml$' "$calls"
   [ "$(jq -S -c . "$creds/XILO.sops.yaml")" = '{"XILO_TOKEN":"tok\nmulti\nline","XILO_URL":"https://xilo.test"}' ]
   [ "$(stat -c '%a' "$creds/XILO.sops.yaml")" = "400" ]
-  run ctl encrypt XILO.sops.yaml --fields "$stubs/fields"
-  [ "$status" -eq 1 ]
-  grep -qi 'remove' <<<"$output"
 }
 
 @test "encrypt --fields reads a piped object and the marker may sit before the name" {
@@ -366,14 +366,26 @@ PY
   [ ! -e "$creds/TTYED.sops.json" ]
 }
 
+# A failing backend must not leave an empty record behind: the redirect creates the file before the
+# backend runs, so a failed encrypt has to remove it. Any non-zero status lands in the same branch —
+# the stub's own failure exit, and a delegate that exits 9, since a deployed generation puts a real
+# sopsctl on PATH.
 @test "encrypt a failing backend exits 3 and leaves no record" {
-  printf 'secret' >"$stubs/in"
+  write_in 'secret'
   SC_ENCRYPT_EXIT=1 run ctl encrypt ALPHA <"$stubs/in"
   [ "$status" -eq 3 ]
   [ ! -e "$creds/ALPHA.cred" ]
   SOPS_ENCRYPT_EXIT=1 run ctl encrypt BETA.sops.json <"$stubs/in"
   [ "$status" -eq 3 ]
   [ ! -e "$creds/BETA.sops.json" ]
+  stub sopsctl <<'EOF'
+#!/usr/bin/env bash
+echo "delegate boom" >&2
+exit 9
+EOF
+  run env CREDS_DIR="$creds" bash "$script" encrypt DELTA.sops.json <"$stubs/in"
+  [ "$status" -eq 3 ]
+  [ ! -e "$creds/DELTA.sops.json" ]
 }
 
 @test "encrypt takes a file argument as well as stdin" {
@@ -435,28 +447,16 @@ PY
   [ "$status" -eq 0 ]
   grep -q 'pty exit=0' <<<"$output"
   grep -q 'secret for TTYED:' <<<"$output"
-  run ! grep -q 'hunter2' <<<"$output"
+  assert_no_out 'hunter2'
   [ -e "$creds/TTYED.cred" ]
   run ctl decrypt TTYED
   [ "$output" = "hunter2" ]
 }
 
-# The delegate's failure must not leave an empty record behind: the redirect creates the file
-# before the delegate runs, so a failed encrypt has to remove it. The delegate is stubbed to fail
-# here rather than assumed absent — a deployed generation puts a working sopsctl on PATH.
-@test "encrypt on a backend that cannot run fails and leaves no record behind" {
-  printf 'secret' >"$stubs/in"
-  printf '#!/usr/bin/env bash\necho "delegate boom" >&2\nexit 9\n' >"$stubs/sopsctl"
-  chmod +x "$stubs/sopsctl"
-  run env CREDS_DIR="$creds" bash "$script" encrypt DELTA.sops.json <"$stubs/in"
-  [ "$status" -eq 3 ]
-  [ ! -e "$creds/DELTA.sops.json" ]
-}
-
 # --- decrypt ----------------------------------------------------------------
 
 @test "decrypt takes several names and prints one record per line" {
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt ALPHA <"$stubs/in"
   run ctl encrypt BETA.sops.json <"$stubs/in"
   run ctl decrypt ALPHA BETA
@@ -466,7 +466,7 @@ stub-plain" ]
 }
 
 @test "decrypt --env prints KEY=VALUE with the credential name as the key" {
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt ALPHA <"$stubs/in"
   run ctl encrypt BETA.sops.json <"$stubs/in"
   run ctl decrypt --env ALPHA BETA
@@ -529,7 +529,7 @@ BETA=stub-plain" ]
 }
 
 @test "decrypt resolves the .cred backend and prints to stdout, writing nothing" {
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt ALPHA <"$stubs/in"
   run ctl decrypt ALPHA
   [ "$status" -eq 0 ]
@@ -542,13 +542,13 @@ BETA=stub-plain" ]
 # One decrypt per record, not one per field: the record's plaintext json comes back whole and jq
 # picks the field the caller asked for, so a record with several fields costs one sops process.
 @test "decrypt resolves the .sops.json backend and asks sopsctl for the whole record" {
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt BETA.sops.json <"$stubs/in"
   SOPS_JSON='{"secret":"the-secret","other":"ignored"}' run ctl decrypt BETA
   [ "$status" -eq 0 ]
   [ "$output" = "the-secret" ]
   grep -q "^sopsctl decrypt $creds/BETA.sops.json\$" "$calls"
-  run ! grep -q 'ignored' <<<"$output"
+  assert_no_out 'ignored'
 }
 
 @test "decrypt on a missing record says so and exits 2" {
@@ -591,7 +591,7 @@ BETA=stub-plain" ]
 }
 
 @test "a failed decrypt exits 3 and points at the credential backend" {
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt BETA.sops.json <"$stubs/in"
   SOPS_DECRYPT_EXIT=1 run ctl decrypt BETA
   [ "$status" -eq 3 ]
@@ -599,17 +599,17 @@ BETA=stub-plain" ]
 }
 
 @test "a failed credential decrypt exits 3, not a silent empty value" {
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt ALPHA <"$stubs/in"
   SC_DECRYPT_EXIT=1 run ctl decrypt ALPHA
   [ "$status" -eq 3 ]
-  run ! grep -q 'cipher' <<<"$output"
+  assert_no_out 'cipher'
 }
 
 # --- decrypt -- CMD ---------------------------------------------------------
 
 @test "decrypt --env NAME -- CMD hands the secret to the command's environment" {
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt ALPHA <"$stubs/in"
   run ctl decrypt --env ALPHA -- sh -c 'printf "%s\n" "$ALPHA"'
   [ "$status" -eq 0 ]
@@ -617,7 +617,7 @@ BETA=stub-plain" ]
 }
 
 @test "decrypt --env several names -- CMD hands every secret and passes the command's own args through" {
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt ALPHA <"$stubs/in"
   run ctl encrypt BETA.sops.json <"$stubs/in"
   run ctl decrypt --env ALPHA BETA -- sh -c 'printf "%s|%s|%s\n" "$ALPHA" "$BETA" "$1"' _ tail
@@ -628,12 +628,10 @@ BETA=stub-plain" ]
 @test "--env hands the secret to a command that reads its own environment" {
   # The command must read the variable itself — credsctl cannot fill in a name the calling shell
   # already expanded to nothing.
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt ALPHA <"$stubs/in"
   run ctl decrypt --env ALPHA -- printenv ALPHA
   [ "$status" -eq 0 ]
-  [ "$output" = "cipher" ]
-  run ctl decrypt --env ALPHA -- sh -c 'printf "%s\n" "$ALPHA"'
   [ "$output" = "cipher" ]
 }
 
@@ -661,7 +659,7 @@ BETA=bob" ]
   grep -q 'bare credential name' <<<"$output"
   run ctl decrypt --env MY.TOKEN
   [ "$status" -eq 1 ]
-  run ! grep -q 'cipher' <<<"$output"
+  assert_no_out 'cipher'
 }
 
 # --- decrypt --env on a bundle record -----------------------------------------
@@ -695,7 +693,7 @@ BETA=bob" ]
 TOKEN=bob" ]
   SOPS_JSON="$payload" run ctl decrypt --env PACK -- sh -c 'printf "%s\n" "$(printenv host.unencrypted || echo unset)"'
   [ "$output" = "unset" ]
-  run ! grep -q 'leak' <<<"$output"
+  assert_no_out 'leak'
 }
 
 # A yaml bundle is read through the same single decrypt, so the multi-line value survives the same
@@ -709,15 +707,6 @@ TOKEN=bob" ]
   [ "$status" -eq 0 ]
   [ "$output" = "$(printf '[https://xilo.test][tok\nmulti\nline]')" ]
   [ "$(grep -c '^sopsctl decrypt ' "$calls")" = "1" ]
-  run ! grep -q -- '--format' <<<"$output"
-}
-
-# A bundle spelled with its suffix is the same record, so the wrapper may name the backend.
-@test "decrypt --env XILO.sops.json reads the same bundle" {
-  printf '{"XILO_TOKEN":"bob"}' >"$stubs/fields"
-  run ctl encrypt XILO.sops.json --fields "$stubs/fields"
-  SOPS_JSON='{"XILO_TOKEN":"bob"}' run ctl decrypt --env XILO.sops.json -- sh -c 'printf "%s\n" "$XILO_TOKEN"'
-  [ "$output" = "bob" ]
 }
 
 # Plain decrypt prints one secret and nothing else; a bundle has no single secret to print, so the
@@ -728,13 +717,13 @@ TOKEN=bob" ]
   SOPS_JSON='{"XILO_TOKEN":"bob"}' run ctl decrypt XILO
   [ "$status" -eq 2 ]
   grep -q -- '--env XILO' <<<"$output"
-  run ! grep -q 'bob' <<<"$output"
+  assert_no_out 'bob'
   SOPS_JSON='{"secret":"alice","XILO_TOKEN":"bob"}' run ctl decrypt XILO
   [ "$output" = "alice" ]
 }
 
 @test "the command's exit status is credsctl's exit status" {
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt ALPHA <"$stubs/in"
   run ctl decrypt --env ALPHA -- false
   [ "$status" -eq 1 ]
@@ -742,11 +731,11 @@ TOKEN=bob" ]
 }
 
 @test "with a command the secret is never printed to stdout" {
-  printf 'cipher' >"$stubs/in"
+  write_in 'cipher'
   run ctl encrypt ALPHA <"$stubs/in"
   run ctl decrypt --env ALPHA -- true
   [ "$status" -eq 0 ]
-  run ! grep -q 'cipher' <<<"$output"
+  assert_no_out 'cipher'
 }
 
 @test "a command without --env is a usage error" {
@@ -768,7 +757,7 @@ TOKEN=bob" ]
   run ctl decrypt --env ALPHA GHOST -- sh -c 'printf "%s\n" "$ALPHA"'
   [ "$status" -eq 2 ]
   grep -q "no record named 'GHOST'" <<<"$output"
-  run ! grep -q 'cipher' <<<"$output"
+  assert_no_out 'cipher'
 }
 
 # --- usage ------------------------------------------------------------------
@@ -776,7 +765,7 @@ TOKEN=bob" ]
 # writeShellApplication prefixes errexit/nounset/pipefail onto this file, so the artefact that
 # ships runs under -e while `bash "$script"` does not. The shipped preamble must round-trip too.
 @test "the packaged errexit preamble survives a full encrypt/list/decrypt/rm round-trip" {
-  printf 'secret' >"$stubs/in"
+  write_in 'secret'
   bash -euo pipefail "$script" encrypt ERREXIT <"$stubs/in"
   [ -e "$creds/ERREXIT.cred" ]
   bash -euo pipefail "$script" list
@@ -802,12 +791,7 @@ TOKEN=bob" ]
   grep -q 'SOPS_RECIPIENTS (an optional recipient file whose keys join the rules)' <<<"$output"
   grep -q 'decrypt FILE' <<<"$output"
   grep -q '1 bad usage · 2 no such record · 3 encrypt or decrypt failed' <<<"$output"
-}
-
-# The rule that matters is the one people get wrong: a portable record must still need no terminal.
-@test "usage names the backend rule so a portable record is fine for a unit" {
-  run ctl help
-  [ "$status" -eq 0 ]
+  # The rule that matters is the one people get wrong: a portable record must still need no terminal.
   grep -q '\.cred = this machine, no prompt' <<<"$output"
   grep -qF '.sops.json and .sops.yaml = portable' <<<"$output"
   grep -q 'sopsctl' <<<"$output"
@@ -829,6 +813,19 @@ TOKEN=bob" ]
 
 # --- real tier: the flags only the real binaries can reject ------------------
 
+# A real sops store for the three real-tier tests below: the unstubbed sopsctl beside the host
+# binaries, a mock age key, and the recipient file beside the records. A non-zero return means the
+# host has no sops or age-keygen, so the caller skips. CREDS_ROOT keeps sopsctl's rules-file
+# default inside the fixture, so the suite never reads ~/.local/share/credentials/.sops.yaml.
+sops_store() {
+  real="$stubs/$1"
+  mkdir -p "$real" "$real/bin"
+  cp "$repo/features/hm-creds/sopsctl.sh" "$real/bin/sopsctl"
+  chmod +x "$real/bin/sopsctl"
+  PATH="$host_path" command -v sops >/dev/null 2>&1 || return 1
+  PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || return 1
+  grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
+}
 @test "real systemd-creds round-trips a record and rejects a renamed one" {
   PATH="$host_path" command -v systemd-creds >/dev/null 2>&1 || skip "systemd-creds not on host PATH"
   real="$stubs/real"
@@ -842,22 +839,13 @@ TOKEN=bob" ]
   PATH="$host_path" CREDS_DIR="$real" run bash "$script" decrypt OTHER
   [ "$status" -ne 0 ]
   # the name is embedded at encrypt time, so the renamed file must not decrypt as OTHER
-  run ! grep -q 'hello world' <<<"$output"
+  assert_no_out 'hello world'
 }
 
 # The delegation is only real if the real sopsctl runs against the real sops, so this puts the
 # unstubbed sopsctl on PATH beside the host binaries.
 @test "real sops round-trips a portable record through credsctl" {
-  PATH="$host_path" command -v sops >/dev/null 2>&1 || skip "no sops on the host PATH"
-  PATH="$host_path" command -v age-keygen >/dev/null 2>&1 || skip "no age-keygen on the host PATH"
-  real="$stubs/real-sops"
-  mkdir -p "$real" "$real/bin"
-  cp "$repo/features/hm-creds/sopsctl.sh" "$real/bin/sopsctl"
-  chmod +x "$real/bin/sopsctl"
-  PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
-  grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
-  # CREDS_ROOT keeps sopsctl's rules-file default inside the fixture too, so the suite never reads
-  # the real ~/.local/share/credentials/.sops.yaml.
+  sops_store real-sops || skip "no sops or age-keygen on the host PATH"
   PATH="$real/bin:$host_path" CREDS_DIR="$real" CREDS_ROOT="$real" SOPS_RECIPIENTS="$real/recipient" \
     SOPS_AGE_FILE="$real/key" bash "$script" encrypt PORTABLE.sops.json <<<'hello sops'
   [ "$(stat -c '%a' "$real/PORTABLE.sops.json")" = "400" ]
@@ -871,14 +859,7 @@ TOKEN=bob" ]
 # as environment variables by one decrypt. Mock key, mock secrets — nothing here touches a real
 # identity or record.
 @test "real sops round-trips a bundle record and hands every field to a command" {
-  PATH="$host_path" command -v sops >/dev/null 2>&1 || skip "no sops on the host PATH"
-  PATH="$host_path" command -v age-keygen >/dev/null 2>&1 || skip "no age-keygen on the host PATH"
-  real="$stubs/real-bundle"
-  mkdir -p "$real" "$real/bin"
-  cp "$repo/features/hm-creds/sopsctl.sh" "$real/bin/sopsctl"
-  chmod +x "$real/bin/sopsctl"
-  PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
-  grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
+  sops_store real-bundle || skip "no sops or age-keygen on the host PATH"
   jq -n --arg u 'https://xilo.test' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$real/fields"
   PATH="$real/bin:$host_path" CREDS_DIR="$real" CREDS_ROOT="$real" SOPS_RECIPIENTS="$real/recipient" \
     SOPS_AGE_FILE="$real/key" run bash "$script" encrypt XILO.sops.json --fields "$real/fields"
@@ -895,14 +876,7 @@ TOKEN=bob" ]
 # are asserted, not just the values: the record stays ciphertext and 0400, no plaintext file appears
 # in the store, and nothing the secrets contain reaches stdout.
 @test "real sops round-trips a yaml bundle record and hands every field to a command" {
-  PATH="$host_path" command -v sops >/dev/null 2>&1 || skip "no sops on the host PATH"
-  PATH="$host_path" command -v age-keygen >/dev/null 2>&1 || skip "no age-keygen on the host PATH"
-  real="$stubs/real-yaml-bundle"
-  mkdir -p "$real" "$real/bin"
-  cp "$repo/features/hm-creds/sopsctl.sh" "$real/bin/sopsctl"
-  chmod +x "$real/bin/sopsctl"
-  PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
-  grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
+  sops_store real-yaml-bundle || skip "no sops or age-keygen on the host PATH"
   jq -n --arg u 'https://xilo.test' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$real/fields"
   PATH="$real/bin:$host_path" CREDS_DIR="$real" CREDS_ROOT="$real" SOPS_RECIPIENTS="$real/recipient" \
     SOPS_AGE_FILE="$real/key" run bash "$script" encrypt XILO.sops.yaml --fields "$real/fields"

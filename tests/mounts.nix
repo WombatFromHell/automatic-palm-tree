@@ -14,7 +14,7 @@ let
   featureHosts = lib.filter enabled hosts;
 
   # Unit names come from lib/filesystems.nix, the same source the feature module uses.
-  fs = import ../lib/filesystems.nix {inherit lib;};
+  inherit (s) fs;
   cred = "/etc/.smb-credentials";
 
   mountAt = h: a: lib.findFirst (m: m.where == a.where) null (cfg h).systemd.mounts;

@@ -16,13 +16,8 @@ let
   host = (import ../hosts/methyl-bazzite.nix) {inherit (s) hostLib;};
 
   # The derivations our feature _package.nix files produce, called exactly as production does
-  # (hm-brave reads pkgs.unstable, hm-zed picks the noFHS variant). Only their pname and outPath
-  # are forced, so nothing is built.
-  raw = {
-    brave = s.pkgs.unstable.callPackage ../features/hm-brave/_package.nix {};
-    zed = (s.pkgs.callPackage ../features/hm-zed/_package.nix {}).noFHS;
-    ghostty = s.pkgs.callPackage ../features/hm-ghostty/_package.nix {};
-  };
+  # (support.nix's rawFeaturePkgs). Only pname and outPath are forced, so nothing is built.
+  raw = s.rawFeaturePkgs;
   rawPkgs = lib.attrValues raw;
 
   # The copies of one derivation that reached PATH. Absence is allowed — which GUI features a

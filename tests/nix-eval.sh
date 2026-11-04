@@ -14,8 +14,8 @@
 #
 # Usage: tests/nix-eval.sh <memory-max-MB> -- <command> [args...]
 # Prints `peak=<MB>` on stderr: the highest the scope ever reached. Set TEST_SCOPE_NAME to name
-# the unit (must be a systemd unit name: no '/'). Falls back to an unscoped run when there is no
-# user systemd instance to scope under.
+# the unit (must be a systemd unit name: no '/'). Falls back to an unscoped run, reporting
+# `peak=n/a`, when no scope can be started.
 set -u
 
 cap="${1:?usage: nix-eval.sh <memory-max-MB> -- <command> [args...]}"
@@ -26,11 +26,15 @@ shift
 }
 shift
 
-# Availability: the user manager must be reachable. `systemctl --user is-system-running`
-# exits 1 on a degraded manager (this box), so check the bus socket instead.
-if ! [ -S "/run/user/$(id -u)/bus" ]; then
+# Availability: try to start a scope. The bus socket exists on this box while the manager is
+# unreachable, so stat-ing it reports "scopable" and every suite then FAILs on a systemd-run
+# error. A failed probe is the fact, so it runs unscoped and prints peak=n/a — the same line
+# tests/run.sh already turns into peak=n/a when no peak comes back.
+if ! systemd-run --user --scope -q --unit="nix-eval-probe-$$.scope" true >/dev/null 2>&1; then
   "$@"
-  exit $?
+  code=$?
+  echo "peak=n/a" >&2
+  exit "$code"
 fi
 
 # Output is a file rather than a command substitution: a substitution would wait for the

@@ -8,11 +8,34 @@
 # Gated by tests/run.sh on the build's exit status, not on an evaluated value.
 let
   s = import ./support.nix;
-  inherit (s) pkgs;
+  inherit (s) pkgs lib;
 
   # `src` is never read: unpackPhase below is replaced, so a placeholder keeps the derivation
   # honest without fetching the ~140MB AppImage.
   placeholderSrc = pkgs.writeTextDir "ghostty.AppImage" "";
+
+  # The AppImage runtime's own entry points and hooks, which installPhase deletes — planted here,
+  # asserted absent there, from one list.
+  scaffolds = ["AppRun" "AppRun.sh" "AppRun.lib" "dash" "sharun" ".env" ".DirIcon"];
+
+  # Resource trees the launcher resolves from its own AppDir, each with one file planted inside it.
+  # The fixture plants them and the assertions read that file, so the tree list is written once and
+  # a pruned tree fails rather than passing on an empty directory.
+  trees = {
+    "share/ghostty" = "expand.spec";
+    "share/terminfo/g" = "ghostty";
+    "share/glib-2.0/schemas" = "com.mitchellh.ghostty.gschema.xml";
+    "share/bat/syntaxes" = "ghostty.sublime-syntax";
+    "share/dbus-1/services" = "com.mitchellh.ghostty.service";
+    "share/systemd/user" = "app-com.mitchellh.ghostty.service";
+  };
+  plantTrees =
+    lib.concatMapStringsSep "\n"
+    (t: ''
+      mkdir -p squashfs-root/${t}
+      touch squashfs-root/${t}/${trees.${t}}
+    '')
+    (lib.attrNames trees);
 
   # callPackage finds pinMeta through support.nix's overlay, exactly as it does in production
   # where lib/default.nix injects it into the package set — so the derivation needs no argument.
@@ -25,10 +48,8 @@ let
         printf '#!/bin/sh\n' > squashfs-root/bin/ghostty
         chmod +x squashfs-root/bin/ghostty
 
-        # The AppImage runtime's own entry points and hooks, which installPhase deletes.
-        touch squashfs-root/AppRun squashfs-root/AppRun.sh squashfs-root/AppRun.lib \
-          squashfs-root/dash squashfs-root/sharun squashfs-root/.env squashfs-root/.DirIcon
-        touch squashfs-root/bin/ghostty.hook squashfs-root/bin/sharun.hook
+        touch ${lib.concatStringsSep " " (map (t: "squashfs-root/${t}") scaffolds)} \
+          squashfs-root/bin/ghostty.hook squashfs-root/bin/sharun.hook
 
         # The desktop entry and icon sit at the AppDir root, not under share/.
         printf '[Desktop Entry]\nType=Application\nName=Ghostty\nExec=ghostty\n' \
@@ -36,15 +57,7 @@ let
         printf 'png' > squashfs-root/com.mitchellh.ghostty.png
 
         # Resource trees the launcher resolves from its own AppDir; none is relocated.
-        mkdir -p squashfs-root/share/ghostty squashfs-root/share/terminfo/g \
-          squashfs-root/share/glib-2.0/schemas squashfs-root/share/bat/syntaxes \
-          squashfs-root/share/dbus-1/services squashfs-root/share/systemd/user
-        touch squashfs-root/share/ghostty/expand.spec
-        touch squashfs-root/share/terminfo/g/ghostty
-        touch squashfs-root/share/glib-2.0/schemas/com.mitchellh.ghostty.gschema.xml
-        touch squashfs-root/share/bat/syntaxes/ghostty.sublime-syntax
-        touch squashfs-root/share/dbus-1/services/com.mitchellh.ghostty.service
-        touch squashfs-root/share/systemd/user/app-com.mitchellh.ghostty.service
+        ${plantTrees}
       '';
     });
 in
@@ -62,14 +75,11 @@ in
     test ! -e "$P/com.mitchellh.ghostty.desktop"
     test ! -e "$P/com.mitchellh.ghostty.png"
 
-    for scaffold in AppRun AppRun.sh AppRun.lib dash sharun .env .DirIcon; do
+    for scaffold in ${lib.concatStringsSep " " scaffolds}; do
       test ! -e "$P/$scaffold"
     done
 
-    for tree in share/ghostty share/terminfo/g share/glib-2.0/schemas share/bat/syntaxes \
-      share/dbus-1/services share/systemd/user; do
-      test -d "$P/$tree"
-    done
+    ${lib.concatMapStringsSep "\n" (t: ''test -e "$P/${t}/${trees.${t}}"'') (lib.attrNames trees)}
 
     mkdir -p $out
   ''

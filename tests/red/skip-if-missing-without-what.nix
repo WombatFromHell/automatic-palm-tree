@@ -2,9 +2,7 @@
 # `skipIfMissing` writes `ConditionPathExists = what`, so it needs a device:
 # without `what` the deferred error must surface at eval, not in the unit file.
 let
-  s = import ../support.nix;
-  fs = import ../../lib/filesystems.nix {inherit (s) lib;};
-  u = fs.mkUnitMounts {} {
+  u = (import ../support.nix).fs.mkUnitMounts {} {
     "/mnt/x" = {
       automount = true;
       skipIfMissing = true;

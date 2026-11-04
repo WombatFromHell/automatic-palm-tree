@@ -3,7 +3,7 @@
 # tests/red/ must throw, with the message named in their first line
 # (`# expect: <substring>`). Nothing here builds a real package: the exceptions are
 # tests/appdir.nix, which builds a synthetic AppDir fixture and downloads nothing,
-# tests/shellwrap.nix, which builds the two writeShellApplication wrappers so nixpkgs' shellcheck
+# tests/shellwrap.nix, which builds the three writeShellApplication wrappers so nixpkgs' shellcheck
 # runs on the text that ships, and tests/yazi-install.nix, which unpacks the pinned yazi sources
 # and re-runs their postInstall — nothing compiles and no crate is fetched; the archive (~15 MB)
 # plus installShellFiles and imagemagick are what it pulls.
@@ -44,74 +44,53 @@ split_peak() {
   [ -n "$peak" ] || peak="peak=n/a"
 }
 
-for suite in tests/*.nix; do
-  case "$suite" in
-  tests/support.nix | tests/configs.nix | tests/appdir.nix | tests/shellwrap.nix | tests/yazi-install.nix) continue ;;
-  esac
-  if out=$(TEST_SCOPE_NAME="$(basename "$suite" .nix)" tests/nix-eval.sh "$mem" -- nix eval --impure --file "$suite" 2>&1); then
+# Every suite goes through the same gate: run it in the memory scope, print the verdict and the
+# peak on one line, and dump the tail of the output when it fails.
+gate() {
+  local label="$1" scope="$2"
+  shift 2
+  local out
+  if out=$(TEST_SCOPE_NAME="$scope" tests/nix-eval.sh "$mem" -- "$@" 2>&1); then
     split_peak "$out"
-    echo "ok   $suite  $body  $peak"
+    echo "ok   $label  $body  $peak"
   else
     split_peak "$out"
-    echo "FAIL $suite  $peak"
-    echo "$body" | tail -20
+    echo "FAIL $label  $peak"
+    printf '%s\n' "$body" | tail -20
     fail=1
   fi
+}
+
+# Eval-only suites, listed explicitly. The five .nix files not here are not eval-only:
+# support.nix is a fixture library, configs.nix evaluates one host per process, and
+# appdir/shellwrap/yazi-install build (below).
+eval_suites=(tests/caches.nix tests/filesystems.nix tests/home.nix tests/loader.nix tests/mounts.nix
+  tests/outputs.nix tests/pins.nix tests/warnings.nix tests/wrap.nix)
+for suite in "${eval_suites[@]}"; do
+  gate "$suite" "$(basename "$suite" .nix)" nix eval --impure --file "$suite"
 done
 
 # What a derivation puts in its $out is not an evaluated value, so tests/appdir.nix re-runs
 # features/hm-ghostty/_package.nix's real installPhase against a synthetic AppDir and the gate
 # reads the build's exit status. src is a placeholder, so no AppImage is ever fetched; this is
 # the only build the gate performs (~8s on a warm store).
-if out=$(TEST_SCOPE_NAME=appdir tests/nix-eval.sh "$mem" -- nix build --no-link --quiet -f tests/appdir.nix 2>&1); then
-  split_peak "$out"
-  echo "ok   tests/appdir.nix [fixture build]  $peak"
-else
-  split_peak "$out"
-  echo "FAIL tests/appdir.nix [fixture build]  $peak"
-  echo "$body" | tail -20
-  fail=1
-fi
+gate "tests/appdir.nix [fixture build]" appdir nix build --no-link --quiet -f tests/appdir.nix
 
 # The same build-tier logic for the shipped shell wrappers: writeShellApplication shellchecks the
 # text it wraps, so the thing that ships is the thing that is linted (~4s on a warm store, and no
 # upstream fetch -- xilo's store path is a placeholder in tests/shellwrap.nix).
-if out=$(TEST_SCOPE_NAME=shellwrap tests/nix-eval.sh "$mem" -- nix build --no-link --quiet -f tests/shellwrap.nix 2>&1); then
-  split_peak "$out"
-  echo "ok   tests/shellwrap.nix [wrapper build + shellcheck]  $peak"
-else
-  split_peak "$out"
-  echo "FAIL tests/shellwrap.nix [wrapper build + shellcheck]  $peak"
-  echo "$body" | tail -20
-  fail=1
-fi
+gate "tests/shellwrap.nix [wrapper build + shellcheck]" shellwrap nix build --no-link --quiet -f tests/shellwrap.nix
 
 # The same build-tier logic for the pinned yazi build: tests/yazi-install.nix unpacks the real
 # pinned sources and re-runs features/hm-yazi/_package.nix's real postInstall, so the completion
 # names, man pages, desktop entry and resized logos are checked against the revision actually
 # pinned rather than a tree the test drew (~10s on a warm store, ~15 MB of sources once).
-if out=$(TEST_SCOPE_NAME=yazi-install tests/nix-eval.sh "$mem" -- nix build --no-link --quiet -f tests/yazi-install.nix 2>&1); then
-  split_peak "$out"
-  echo "ok   tests/yazi-install.nix [postInstall fixture]  $peak"
-else
-  split_peak "$out"
-  echo "FAIL tests/yazi-install.nix [postInstall fixture]  $peak"
-  echo "$body" | tail -20
-  fail=1
-fi
+gate "tests/yazi-install.nix [postInstall fixture]" yazi-install nix build --no-link --quiet -f tests/yazi-install.nix
 
 # tests/configs.nix evaluates one host per process (see its header): forcing three hosts in
 # one eval needs ~4GB, which is over the cap.
 for host in methyl methyl-nixos propyl; do
-  if out=$(TEST_HOST="$host" TEST_SCOPE_NAME="configs-$host" tests/nix-eval.sh "$mem" -- nix eval --impure --file tests/configs.nix 2>&1); then
-    split_peak "$out"
-    echo "ok   tests/configs.nix [$host]  $body  $peak"
-  else
-    split_peak "$out"
-    echo "FAIL tests/configs.nix [$host]  $peak"
-    echo "$body" | tail -20
-    fail=1
-  fi
+  TEST_HOST="$host" gate "tests/configs.nix [$host]" "configs-$host" nix eval --impure --file tests/configs.nix
 done
 
 # The boot path must be a rebuild that installs the bootloader. nixos-rebuild-ng sets
@@ -142,10 +121,11 @@ chmod +x "$mock/sudo" "$mock/nixos-rebuild"
 scoped=$(PATH="$mock:$PATH" TEST_SCOPE_NAME=bootstrap-scoped tests/nix-eval.sh 600 -- bash bootstrap.sh methyl 2>&1)
 unscoped=$(PATH="$mock:$PATH" TEST_SCOPE_NAME=bootstrap-fallback tests/nix-eval.sh 600 -- env XDG_RUNTIME_DIR="$mock/no-bus" bash bootstrap.sh methyl 2>&1)
 rm -rf "$mock"
+# The rebuild's own argv (--install-bootloader, the cache options) is asserted in
+# tests/bootstrap.bats; what only the gate can see is the scope: the stub reports its cgroup, which
+# names the scope unit when the wrap happened and does not when there is no user bus.
 if printf '%s' "$scoped" | grep -q 'stub: nixos-rebuild boot' &&
-  printf '%s' "$scoped" | grep -q -- '--install-bootloader' &&
-  printf '%s' "$scoped" | grep -q -- '--option extra-substituters' &&
-  printf '%s' "$scoped" | grep -q 'flakeroot-rebuild' &&
+  printf '%s' "$scoped" | grep -q 'cgroup=.*flakeroot-rebuild' &&
   printf '%s' "$unscoped" | grep -q 'stub: nixos-rebuild boot' &&
   ! printf '%s' "$unscoped" | grep -q 'flakeroot-rebuild'; then
   echo "ok   bootstrap.sh [mocked rebuild: scope wrap + no-bus fallback]"

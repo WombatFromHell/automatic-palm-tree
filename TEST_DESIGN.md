@@ -2,12 +2,14 @@
 
 The suite asserts on **evaluated configuration values**, never on built output: `nix eval --impure
 --file` forces a config far enough to read option values, and that is the whole cost. No real
-`nix build` runs, so the gate is fast and works without a store. The exceptions are
-`tests/appdir.nix` (a fixture build that re-runs a derivation's own `installPhase` against a
-synthetic tree, downloading nothing) and `tests/shellwrap.nix` (a fixture build of the three
-`writeShellApplication` scripts Home Manager ships — `credsctl`, `sopsctl` and xilo's wrapper — so
-nixpkgs' shellcheck runs on the text that ships rather than on the raw files the bats suites
-exercise).
+`nix build` runs, so the gate is fast and works without a store. The exceptions are three fixture
+builds: `tests/appdir.nix` (re-runs a derivation's own `installPhase` against a synthetic tree,
+downloading nothing), `tests/yazi-install.nix` (re-runs hm-yazi's real `postInstall` over the two
+pinned sources, so the assertion is about the revision actually pinned), and `tests/shellwrap.nix` (a
+build of the three `writeShellApplication` scripts Home Manager ships — `credsctl`, `sopsctl` and
+xilo's wrapper — taken from the feature modules that ship them rather than re-declared here, so
+nixpkgs' shellcheck runs on the text that ships rather than on the raw files the credential suites
+exercise, and the guard cannot pass while a module ships something the suites never exercised).
 
 ## Gate shape
 
@@ -25,7 +27,9 @@ flowchart TD
   R --> B["bootstrap.sh invariant<br/>grep: --install-bootloader present,<br/>no env NIXOS_INSTALL_BOOTLOADER"]
   R --> A["appdir fixture build<br/>nix build of tests/appdir.nix, via the same scope<br/>the build's exit status is the assertion"]
   A --> G1
-  R --> I["bootstrap.sh, build-harness.sh, njust and the credential scripts<br/>bats tests/bootstrap.bats, tests/build-harness.bats, tests/njust.bats,<br/>tests/creds.bats, tests/sopsctl.bats against stubs<br/>skip when bats is absent"]
+  R --> Y["yazi-install fixture build<br/>nix build of tests/yazi-install.nix, via the same scope<br/>unpacks the pinned sources, compiles nothing"]
+  Y --> G1
+  R --> I["bootstrap.sh, build-harness.sh, njust, the credential scripts and the pin updater<br/>bats tests/bootstrap.bats, tests/build-harness.bats, tests/njust.bats,<br/>tests/creds.bats, tests/sopsctl.bats, tests/xilo.bats, tests/updater.bats<br/>against PATH stubs<br/>skip when bats is absent"]
   I --> G1
   G1 --> X["exit 0 = repo is green"]
   D1 --> X
@@ -74,9 +78,22 @@ derived with `SSH_TO_AGE_PASSPHRASE` exported (the variable ssh-to-age actually 
 absent, where the read must fail and nothing may be written — so the suite pins which input a unit
 has and a terminal does not.
 
+`tests/xilo.bats` runs `features/hm-xilo/xilo.sh` with `XILO_PROGRAM` standing in for the CLI, so the
+seam is asserted from the outside: the wrapper picks one file per key in priority order (`.sops.json`
+ahead of `.sops.yaml`, `.cred` last), adds the bundle record `XILO.sops.json`/`XILO.sops.yaml` in any
+case once, fills only the variables xilo did not already have, then execs `credsctl decrypt --env
+<names> -- <CLI>` so credsctl decrypts and the CLI inherits the variables — argv, the child's
+environment, and the CLI's exit status are asserted against a stub CLI, never inferred. The wrapper
+names no `systemd-creds`, KWallet, `SSH_ASKPASS` or `DISPLAY`, which is asserted by grepping the script
+itself; with no `credsctl` on PATH the environment passes through untouched, the fallback that keeps
+plain `xilo` unshadowed. The store path the *shipped* form bakes in is `tests/shellwrap.nix`'s job: it
+builds hm-xilo's own wrapper over a placeholder CLI and asserts the `__XILO_PROGRAM__` marker was
+substituted, so a wrapper that execs a literal nothing can run fails the gate instead of a person's
+first `xilo push`.
+
 ```mermaid
 flowchart LR
-  S["tests/support.nix<br/>lib, flake outputs, features, hosts, hostLib,<br/>hostsAt(dir), featuresAt(dir), pkgs (nixpkgs + pinMeta overlay),<br/>hasPkg, ck, suite,<br/>assertWarnStubs, failingAssertions"] --> L["tests/loader.nix"]
+  S["tests/support.nix<br/>lib, flake outputs, features, hosts, hostLib,<br/>hostsAt(dir), featuresAt(dir), pkgs (nixpkgs + pinMeta overlay),<br/>fs (modules/defaults/filesystems.nix), rawFeaturePkgs, ck, suite,<br/>fixtureHost(dir, features, overrides) and hmCfg(host, args)<br/>which route fixtures through lib/builders.nix,<br/>assertWarnStubs, failingAssertions"] --> L["tests/loader.nix"]
   S --> CA["tests/caches.nix<br/>bare module eval of modules/caches.nix"]
   S --> WA["tests/warnings.nix<br/>bare module eval of modules/warnings-gate.nix"]
   S --> C["tests/configs.nix"]
@@ -87,7 +104,8 @@ flowchart LR
   S --> PI["tests/pins.nix"]
   S --> WR["tests/wrap.nix<br/>nixGL wrap around a derived package"]
   S --> AP["tests/appdir.nix<br/>fixture build, not an eval"]
-  S --> SW["tests/shellwrap.nix<br/>fixture build of credsctl + sopsctl + xilo-wrapped<br/>the build's exit status is the shellcheck"]
+  S --> YZ["tests/yazi-install.nix<br/>fixture build over the pinned yazi sources"]
+  S --> SW["tests/shellwrap.nix<br/>fixture build of credsctl + sopsctl + xilo-wrapped, taken from<br/>the feature modules that ship them<br/>the build's exit status is the shellcheck, and the marker-substituted<br/>wrapper it produces is what tests/xilo.bats drives"]
   S --> RD["tests/red/*.nix"]
   FX["tests/fixtures/<dir>/hosts/*.nix<br/>shapes no real host uses"] --> L
 ```
@@ -106,12 +124,13 @@ stalls instead of being killed, and the gate hung on this box.
 Splitting is not cosmetic: forcing three host configs in one eval peaks at ~2.1GB, and a single
 `nix flake check --no-build` needs ~2.6GB (measured), both over the 1792MB cap — hence
 `configs.nix` runs one host per process. Going over the cap is a failure (exit 137), not a hang.
-`run.sh` prints each eval's `peak=` on its line. Measured today: the whole gate ~58s, largest
-per-eval peak 966MB (`tests/home.nix`, the standalone profile, which forces its Home Manager
+`run.sh` prints each eval's `peak=` on its line. Measured today: the whole gate ~44s, largest
+per-eval peak 921MB (`tests/home.nix`, the standalone profile, which forces its Home Manager
 users plus the host's own home module and the three `_package.nix` derivations it compares
-against), `wrap` 676MB, host configs 663–686MB, `mounts` 406MB, pure suites under 48MB, the appdir
-fixture build 85MB with no download, and the shellwrap fixture 244MB (nixpkgs' shellcheck is the
-work). The five bats suites print no `peak=`: they run stubs in the open environment (~1s each).
+against), `wrap` 707MB (derivation-text checks read drvAttrs, so no .drv is realized), host configs 655–680MB, pure suites under 33MB, the appdir
+fixture build 88MB with no download, the yazi-install fixture build 207MB (two pinned sources
+unpacked, nothing compiled), and the shellwrap fixture 243MB (nixpkgs' shellcheck is the work). The
+seven bats suites print no `peak=`: they run stubs in the open environment, a few seconds together.
 
 ## Build telemetry, outside the gate
 
@@ -185,28 +204,31 @@ flowchart TD
   end
   subgraph filesystems["filesystems.nix — pure lib, ~0.2s"]
     F1["mkMounts: entry keys win, entry options REPLACE defaults,<br/>subvol appended last, empty option list dropped"]
-    F2["mkUnitMounts: string shorthand, options joined to a comma string,<br/>skipIfMissing -> ConditionPathExists, sugar keys removed"]
+    F2["mkUnitMounts: string shorthand, options joined to a comma string,<br/>skipIfMissing -> ConditionPathExists, sugar keys removed;<br/>the same trees drive the two mount suites"]
     F3["automount whitelist: only where/description/wantedBy/unitConfig/<br/>automountConfig, so mount->automount->mount is not an ordering cycle"]
     F4["joinUnitMounts: groups concatenate in order, [] == {}"]
   end
   subgraph mounts["mounts.nix — forces the 3 hosts enabling nixos-automounts"]
-    M1["only those hosts have systemd.automounts; every automount has a<br/>mount at the same where (proves where -> unit-name derivation)"]
+    M1["only those hosts have systemd.automounts (from the host's automounts table, not a<br/>hardcoded name list); every automount has a<br/>mount at the same where (proves where -> unit-name derivation)"]
     M2["that mount requires and after <unit>.automount;<br/>automounts carry no requires/after/wants and no mountConfig;<br/>automounts are wanted by multi-user.target"]
     M3["mounts: mountConfig.TimeoutSec 5, ConditionPathExists shared with the<br/>automount; cifs options carry credentials=/etc/.smb-credentials"]
   end
   subgraph pins["pins.nix — pin metadata contract, ~0.1s"]
     PN1["metadata-backed features discovered; templates use only<br/>the tokens both expanders know ({repo} {version} {arch})"]
-    PN2["every pin expands to a resolved url for every pinned system;<br/>a declared arches set covers exactly the hashed systems and is a set, never null"]
+    PN2["every pin expands to a resolved url for every pinned system; arches boundaries are<br/>carried by pin-meta.pinSystemSystems, so no second coverage check here"]
     PN3["features/<name>/update.sh is absent or a symlink to lib/updater.sh<br/>the key is quoted — .update.sh would walk update then sh"]
   end
   subgraph wrap["wrap.nix — nixGL around derived packages, ~3s, peak ~925MB"]
-    WR1["three fixture Home Manager configs over typed host facts: a NixOS side, a<br/>standalone side with the default wrapper, and a standalone side setting<br/>features.nixgl.wrapper = nvidiaPrime (hm-nixgl, hm-brave, hm-zed, hm-ghostty in all three).<br/>hm-nixgl sets packages only on the non-NixOS side; wrapGpu is identity there and returns<br/>a distinct derivation here, and delegates to Home Manager's own lib.nixGL.wrap; defaultWrapper<br/>follows the host's option (mesa on both default sides, nvidiaPrime when set) — the Nvidia<br/>wrapper itself cannot be forced here, because nixGL's Nvidia wrapper reads the host driver<br/>version and gets null. pname and version survive the wrap; programs.chromium's<br/>commandLineArgs branch fires on both sides and the overridden package keeps its<br/>pname/version, and wrapGpu stays identity on the overridden derivation on the NixOS side<br/>(the branch is an option value, so it is asserted as one rather than by forcing Home<br/>Manager's chromium override chain); each package reaches home.packages exactly once;<br/>brave's .drv wraps its bin entries only when commandLineArgs are set;<br/>the wrapped Ghostty still links the AppDir (`cp -rs`) and execs its launcher through<br/>nixGL's combined wrapper, so its /proc/self/exe AppDir resolution survives the wrap"]
+    WR1["three fixture configs built by lib/builders.nix itself (support.fixtureHost + hmCfg,<br/>so a builder change breaks this suite): a NixOS side, a<br/>standalone side with the default wrapper, and a standalone side setting<br/>features.nixgl.wrapper = nvidiaPrime (hm-nixgl, hm-brave, hm-zed, hm-ghostty in all three).<br/>hm-nixgl sets packages only on the non-NixOS side; wrapGpu is identity there and returns<br/>a distinct derivation here, and delegates to Home Manager's own lib.nixGL.wrap; defaultWrapper<br/>follows the host's option (mesa on both default sides, nvidiaPrime when set) — the Nvidia<br/>wrapper itself cannot be forced here, because nixGL's Nvidia wrapper reads the host driver<br/>version and gets null. pname and version survive the wrap; programs.chromium's<br/>commandLineArgs branch fires on both sides and the overridden package keeps its<br/>pname/version, and wrapGpu stays identity on the overridden derivation on the NixOS side<br/>(the branch is an option value, so it is asserted as one rather than by forcing Home<br/>Manager's chromium override chain); each package reaches home.packages exactly once;<br/>brave's .drv wraps its bin entries only when commandLineArgs are set;<br/>the wrapped Ghostty still links the AppDir (`cp -rs`) and execs its launcher through<br/>nixGL's combined wrapper, so its /proc/self/exe AppDir resolution survives the wrap"]
   end
-  subgraph appdir["appdir.nix — fixture build, ~8s, peak ~83MB"]
-    AD1["features/hm-ghostty/_package.nix's real installPhase against a synthetic AppDir:<br/>bin/ghostty kept and executable, AppRun / sharun / dash / .env / .DirIcon and<br/>bin/*.hook dropped, desktop entry and icon moved into share/ not copied,<br/>and the resource trees left alone"]
+  subgraph appdir["appdir.nix — fixture build, ~8s, peak ~88MB"]
+    AD1["features/hm-ghostty/_package.nix's real installPhase against a synthetic AppDir built<br/>from one tree table (kept, relocated, dropped, left alone):<br/>bin/ghostty kept and executable, AppRun / sharun / dash / .env / .DirIcon and<br/>bin/*.hook dropped, desktop entry and icon moved into share/ not copied,<br/>and the resource trees left alone"]
+  end
+  subgraph yazi["yazi-install.nix — fixture build, peak ~207MB"]
+    YZ1["features/hm-yazi/_package.nix's real postInstall over the two pinned sources:<br/>buildPhase and installPhase replaced and every Rust input dropped, so nothing<br/>compiles and no crate is fetched — completion files land in share/ from the<br/>revision actually pinned, which is what a bump would break"]
   end
   subgraph shellwrap["shellwrap.nix — fixture build, ~4s, peak ~243MB"]
-    SW1["features/hm-creds/credsctl.sh and features/hm-xilo/xilo.sh wrapped exactly as<br/>home.nix ships them: writeShellApplication's checkPhase is the assertion, and xilo's<br/>store path is a placeholder so nothing upstream is fetched; the derivation's<br/>runtimeInputs are asserted too — jq for credsctl, sops/age/jq/ssh-to-age for sopsctl,<br/>and no askpass helper among them, since ssh-to-age never reads SSH_ASKPASS"]
+    SW1["credsctl.sh, sopsctl.sh and xilo.sh wrapped exactly as the feature modules ship<br/>them — taken from the modules, not re-declared, so a module that ships something<br/>else fails here: writeShellApplication's checkPhase is the assertion, xilo's store<br/>path is a placeholder so nothing upstream is fetched, and the built output is grepped<br/>for the substituted marker. runtimeInputs are asserted too — jq for credsctl,<br/>sops/age/jq/ssh-to-age for sopsctl, and no askpass helper among them, since<br/>ssh-to-age never reads SSH_ASKPASS"]
   end
   subgraph warnings["warnings.nix — bare module eval"]
     W1["modules/warnings-gate.nix: assertion true with no warnings,<br/>false with one, and its message carries every warning verbatim"]
@@ -222,7 +244,7 @@ flowchart LR
     R4["host file authoring a derived name"]
     R5["mergeHome handed a nixos-* feature"]
     R6["a home configuration has no NixOS system"]
-    R7["mkMounts options is a string, not a list"]
+    R7["mkMounts options is a string, not a list<br/>(a guard is # expect + why + the forcing expression; the fs guards<br/>use lazy (import ../support.nix) so only the lib thunk is forced)"]
     R8["mkUnitMounts options is a string, not a list"]
     R9["mkMounts entry is a string, not an attrset"]
     R10["mkUnitMounts entry is a number, not an attrset"]
@@ -257,22 +279,25 @@ flowchart TD
   N --> N6["other architectures: every host is x86_64-linux,<br/>so pin-meta's per-system boundaries are not exercised"]
   N --> N7["assertion text: NixOS assertions are data on .config.assertions,<br/>they never throw at eval, so we assert the collected list"]
   N --> N8["warnings observed at eval: they go to the CLI, not into a derivation log.<br/>The build tier fails them via modules/warnings-gate.nix"]
-  N --> N9["store layouts of features/*/_package.nix other than hm-ghostty:<br/>hm-brave's rpm extraction needs its real asset,<br/>so tests/appdir.nix is the only store layout proven today"]
+  N --> N9["store layouts of features/*/_package.nix beyond hm-ghostty and hm-yazi:<br/>hm-brave's rpm extraction needs its real asset,<br/>so appdir.nix and yazi-install.nix are the two store layouts proven today"]
 ```
 
-The seven `features/*/_package.nix` derivations are covered on their **input** side by
+The eight `features/*/_package.nix` derivations are covered on their **input** side by
 `tests/pins.nix` (pin metadata expands to a resolved URL for every pinned system) and by
 `tests/run.sh` diffing the bash and Nix URL expanders byte-for-byte. What a derivation then does
 with that asset is build-tier: `tests/appdir.nix` proves hm-ghostty's relocation by re-running its
-installPhase over a synthetic AppDir, and the wrap is proven at eval by `tests/wrap.nix`. The
-others unpack real vendor assets (rpm, tarballs), so a fixture could not stand in for them.
+installPhase over a synthetic AppDir, `tests/yazi-install.nix` proves hm-yazi's completion, man and
+icon layout by re-running its postInstall over the sources actually pinned, and the wrap is proven at
+eval by `tests/wrap.nix`. The others unpack real vendor assets (rpm, tarballs) whose fixture would
+have to download them, so they stay input-side only.
 
-Deliberately skipped: per-feature coverage of all 39 modules. Feature modules are exercised
-through the hosts that enable them — 37 of 39 are enabled by at least one host (`nixos-zram` is
-commented out in `hosts/methyl-base/base.nix`, `hm-dcal` is listed nowhere), so they evaluate
-and their effects are asserted. The two no host enables have no test: a feature no host asks for
-is not a shipping contract. If one of them becomes load-bearing, cover it by enabling it on a
-fixture host, not by isolating the module. Kernel choice is the exception:
+Deliberately skipped: per-feature coverage of all 40 modules. Feature modules are exercised
+through the hosts that enable them — 37 of 40 are enabled by at least one host, so they evaluate
+and their effects are asserted. Three have no host today: `nixos-zram` is commented out in
+`hosts/methyl-base/base.nix`, `hm-dcal` is listed nowhere, and `hm-ghostty` is enabled only by the
+fixture configs in `tests/wrap.nix`. A feature no host asks for is not a shipping contract. If one of
+them becomes load-bearing, cover it by enabling it on a fixture host, not by isolating the module.
+Kernel choice is the exception:
 `nixos-cachyos` and `nixos-kait2en` both write `boot.kernelPackages`, so listing both on one host
 is an authoring error — `lib/features.nix` throws on it (`tests/red/kernel-feature-collision.nix`)
 and `tests/configs.nix` asserts which kernel each host boots.

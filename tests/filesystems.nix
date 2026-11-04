@@ -1,8 +1,7 @@
 # Green suite: lib/filesystems.nix. Pure — only the lib is evaluated, no host config forced.
 let
   s = import ./support.nix;
-  inherit (s) lib ck suite;
-  fs = import ../lib/filesystems.nix {inherit lib;};
+  inherit (s) lib ck suite fs;
 
   mk = defaults: entry: (fs.mkMounts defaults {"/m" = entry;})."/m";
   unit = defaults: units: fs.mkUnitMounts defaults units;

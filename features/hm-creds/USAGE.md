@@ -2,9 +2,11 @@
 
 Everything here is installed by the `hm-creds` feature: `credsctl`, `sopsctl`, and `sops`.
 
-A record is one file holding exactly one secret, in `~/.local/share/credentials` (override with
-`CREDS_DIR`), alongside the `.sops.yaml` of creation rules that names who may read a new record. A
-`recipient` file you made yourself — one age public key per line — joins those rules; nothing writes
+A record is one file in `~/.local/share/credentials` (override with `CREDS_DIR`), alongside the
+`.sops.yaml` of creation rules that names who may read a new record. A `.cred` holds exactly one
+secret; a `.sops.json` / `.sops.yaml` record is a json map, so it can hold several secrets named by
+their fields. A `recipient` file you made yourself — one age public key per line — joins those rules;
+nothing writes
 it. Two roots move the whole environment for a store that lives elsewhere: `AGE_ROOT` for the
 identity directory (`$AGE_ROOT/age/keys.txt`, default `~/.config/sops`, e.g.
 `AGE_ROOT=/var/lib/sops-nix`) and `CREDS_ROOT` for the rules, records and recipient file (default
@@ -22,9 +24,6 @@ The extension picks the backend:
 `.cred` is what machine-local automation uses, because a systemd unit or an elevated `sudo` run can
 decrypt it with no prompt. The portable record that avoids a prompt is `.sops.json`: the key lives in a
 file sops reads by itself, so units, `sudo` runs and shell prompts all work.
-
-Records written before this commit carry the `.age` extension and are invisible to `credsctl` until
-the migration re-encrypts them as `.sops.json`.
 
 ## sopsctl
 

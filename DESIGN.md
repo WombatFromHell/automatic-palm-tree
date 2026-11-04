@@ -397,16 +397,18 @@ flowchart LR
 ## Credential records (`features/hm-creds`)
 
 `home.nix` ships two scripts on `PATH` (`config.packages` in the shared `mkHomeConfig`), and both
-speak one record shape: **one file holds exactly one secret**, mode `0400`, in
-`~/.local/share/credentials` (`CREDS_DIR`, or `CREDENTIALS_DIRECTORY` inside a generated unit —
-the same chain xilo reads). Records are immutable, so changing a value is `rm` then `encrypt`;
+speak one record shape at mode `0400`: a `.cred` holds **exactly one secret**, a `*.sops.*` record is
+a map whose **fields are the secrets**, in `~/.local/share/credentials` (`CREDS_DIR`, or
+`CREDENTIALS_DIRECTORY` inside a generated unit — the same chain xilo reads). Records are immutable,
+so changing a value is `rm` then `encrypt`;
 plaintext only ever goes to stdout. `credsctl` owns the store — `list`, `encrypt NAME [FILE]`,
 `decrypt NAME [NAME...]`, `decrypt --env NAME... [-- CMD]`, `rm` — and exit codes
 1 usage / 2 no such record / 3 encrypt or decrypt failed. The **extension picks the backend**:
 `<name>.cred` is `systemd-creds`, sealed to this machine (UID + machine-id) and read silently by a
 unit; `<name>.sops.json` and `<name>.sops.yaml` are sops through `sopsctl` — the suffix is the shape
-on disk, the fields are read as json either way — portable across hosts because sops fetches its
-keys by running a command, which is also why a systemd unit or an elevated push can read one.
+on disk, the fields are read as json either way — portable across hosts because sops opens the age
+identity file itself (`SOPS_KEYS_CMD` runs only when that file is missing or unreadable), which is also
+why a systemd unit or an elevated push can read one.
 `sopsctl` owns every sops detail; `credsctl` never repeats one.
 
 A record is one file, but sops looks its keys up as two files, and they belong to different halves.
@@ -456,9 +458,8 @@ needs> -- <the upstream CLI>` — a name plus its suffix picks the backend — f
 variables it did not already have. A suffix on a name names the backend,
 so `XILO_URL.sops.json` is preferred over `XILO_URL.cred` for the same key, and a bundle record
 (`XILO.sops.json`, whose field names are the variables) fills every key nothing else covers. That is
-the reason to prefer sops here: one decrypt reads a record in milliseconds and fills the whole set,
-where systemd-creds costs ~1.2s per decrypt, so several secrets in that backend are several slow
-decrypts; systemd-creds stays the backend for secrets a unit mounts. It resolves
+the reason to prefer sops here: one decrypt fills the whole set, where systemd-creds costs one
+decrypt per secret; systemd-creds stays the backend for secrets a unit mounts. It resolves
 the same store — `CREDENTIALS_DIRECTORY`, else `~/.local/share/credentials` — so both scripts
 agree without either knowing the other; `CREDS_DIR` moves the store for `credsctl` only, which is
 why a unit sets `CREDENTIALS_DIRECTORY` (its `CredKey`/`CredExec` chain) and not `CREDS_DIR`. With
@@ -468,7 +469,12 @@ profile authenticates, so plain `xilo` is never shadowed.
 The gate pins all of it: `tests/creds.bats` and `tests/sopsctl.bats` drive the scripts against
 PATH stubs that record argv — the flags `systemd-creds`, `sops`, `age-keygen` and `ssh-to-age`
 actually receive are asserted, the exit codes are the assertion, and one real round trip per
-backend runs on the host `PATH` and `skip`s when that binary is absent — while `tests/shellwrap.nix`
-asserts the shipped derivation's `runtimeInputs` (`jq` for `credsctl`; `sops`, `age`, `jq`,
-`ssh-to-age` for `sopsctl`) plus that no askpass helper is among them, so a wrapped credential
-path can never grow one.
+backend runs on the host `PATH` and `skip`s when that binary is absent. `sopsctl.bats` also plants
+a `ksshaskpass` stub whose only job is to fail loudly, so a derivation that ever reaches an askpass
+helper is caught here rather than on someone's terminal. `tests/xilo.bats` runs the wrapper with a
+stub CLI behind `XILO_PROGRAM`, so argv, the child's environment, and the CLI's exit status are
+asserted rather than inferred. `tests/shellwrap.nix` builds all three scripts from the feature
+modules that ship them, which is where shellcheck, the shipped `runtimeInputs` (`jq` for `credsctl`;
+`sops`, `age`, `jq`, `ssh-to-age` for `sopsctl`, and no askpass helper among them) and xilo's baked
+store path are proved — a wrapper whose store-path marker survived would exec a literal nothing can
+run, and it fails the gate instead of a person's first push.

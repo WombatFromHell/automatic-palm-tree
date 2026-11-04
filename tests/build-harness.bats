@@ -4,11 +4,10 @@
 # Scoping itself is tests/nix-eval.sh's job (covered by the gate's own suites), so these run through
 # the real nix-eval.sh with a stub `nix` on PATH — ~0MB, ~1s.
 
+load helpers
+
 setup() {
-  repo="$PWD"
-  stubs="$(mktemp -d)"
-  calls="$stubs/calls"
-  : >"$calls"
+  harness_stub_dir
   export CALLS="$calls"
   out="$stubs/out"
   mkdir -p "$out"
@@ -16,30 +15,27 @@ setup() {
   # Quoted heredoc: the stub body must survive unevaluated (an unquoted heredoc expands `$((...))`
   # and `$i` when the file is written). `nix` records argv and answers `path-info` with a fake
   # recursive size.
-  cat >"$stubs/nix" <<'EOF'
+  stub nix <<'EOF'
 #!/usr/bin/env bash
 echo "nix $* NIX_SHOW_STATS=${NIX_SHOW_STATS:-unset} NIX_CONFIG=${NIX_CONFIG:-unset}" >> "$CALLS"
 if [ "$1" = path-info ]; then printf '/nix/store/fake 2.0 KiB 1.0 MiB\n'; exit 0; fi
 exit ${NIX_EXIT:-0}
 EOF
-  chmod +x "$stubs/nix"
 }
-
-teardown() { rm -rf "$stubs"; }
 
 run_harness() { PATH="$stubs:$PATH" bash "$repo/tests/build-harness.sh" "$@"; }
 
 @test "eval mode runs nix build --dry-run, nothing linked" {
   run run_harness -- '.#x'
   [ "$status" -eq 0 ]
-  grep -q "^nix build --no-link --dry-run .#x" "$calls"
+  assert_call "^nix build --no-link --dry-run .#x"
   [[ $output == *"mode=eval"* ]]
 }
 
 @test "--build links an out-path and reports what landed in it" {
   run run_harness --build --link "$out" -- '.#x'
   [ "$status" -eq 0 ]
-  grep -q "^nix build --out-link $out .#x" "$calls"
+  assert_call "^nix build --out-link $out .#x"
   [[ $output == *"mode=build"* ]]
   [[ $output == *"out=$out"* ]]
   [[ $output == *"installed=1.0 MiB"* ]]
@@ -47,15 +43,15 @@ run_harness() { PATH="$stubs:$PATH" bash "$repo/tests/build-harness.sh" "$@"; }
 
 @test "NIX_CONFIG carries the flakes flag; --stats turns on NIX_SHOW_STATS" {
   run run_harness -- '.#x'
-  grep -q "NIX_CONFIG=experimental-features = nix-command flakes" "$calls"
-  grep -q "NIX_SHOW_STATS=unset" "$calls"
+  assert_call "NIX_CONFIG=experimental-features = nix-command flakes"
+  assert_call "NIX_SHOW_STATS=unset"
   run run_harness --stats -- '.#x'
-  grep -q "NIX_SHOW_STATS=1" "$calls"
+  assert_call "NIX_SHOW_STATS=1"
 }
 
 @test "extra arguments after the attribute reach nix verbatim" {
   run run_harness --build --link "$out" -- '.#x' --option gc-auto 1000
-  grep -q -- "--option gc-auto 1000" "$calls"
+  assert_call "--option gc-auto 1000"
 }
 
 @test "a missing '--' or a missing attribute is refused without running anything" {
