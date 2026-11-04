@@ -4,8 +4,9 @@
 # shellcheck disable=SC2016
 # features/hm-creds/credsctl.sh against PATH stubs plus one real round-trip per backend.
 #
-# Contract under test: a record is one file holding one secret in $CREDS_DIR; the extension picks
-# the backend (<name>.cred = systemd-creds, <name>.sops.json = sops through sopsctl); records are
+# Contract under test: a record is one file in $CREDS_DIR; the extension picks the backend
+# (<name>.cred = systemd-creds, one secret per file; <name>.sops.json = sops through sopsctl, and a
+# sops record may hold several secrets as fields whose names are environment variables); records are
 # immutable, so encrypt never overwrites and always writes 0400 — a change is remove + re-add;
 # plaintext only ever goes to stdout. A name may carry its backend suffix: the suffix picks the
 # backend, it is not part of the record's identity. Exit codes: 1 usage, 2 no such record,
@@ -50,18 +51,19 @@ esac
 EOF
   # The portable backend is a delegation: sopsctl owns the sops flags, the recipients and the key
   # command, so this stub only has to behave like a record store — encrypt reads json on stdin and
-  # writes ciphertext on stdout, get prints one field.
+  # writes ciphertext on stdout, decrypt prints the record's plaintext json (one process per
+  # record, which is what makes a multi-field record worth having).
   cat >"$stubs/sopsctl" <<EOF
 #!/usr/bin/env bash
 echo "sopsctl \$*" >> "$calls"
+one_record='{"secret":"stub-plain"}'
 case "\$1" in
   encrypt)
     [ "\${SOPS_ENCRYPT_EXIT:-0}" = 0 ] || exit "\${SOPS_ENCRYPT_EXIT}"
     cat ;;
-  get)
-    [ "\$2" = secret ] || exit 9
-    [ "\${SOPS_GET_EXIT:-0}" = 0 ] || { echo "sopsctl: cannot decrypt \$3" >&2; exit "\${SOPS_GET_EXIT}"; }
-    printf '%s' "\${SOPS_PLAIN:-stub-plain}" ;;
+  decrypt)
+    [ "\${SOPS_DECRYPT_EXIT:-0}" = 0 ] || { echo "sopsctl: cannot decrypt \${@: -1}" >&2; exit "\${SOPS_DECRYPT_EXIT}"; }
+    printf '%s' "\${SOPS_JSON:-\$one_record}" ;;
   *) exit 9 ;;
 esac
 EOF
@@ -96,11 +98,24 @@ ctl() { bash "$script" "$@"; }
 @test "list on an overridden CREDS_DIR lists that directory and asks systemd for nothing" {
   printf 'cipher' >"$creds/alpha.cred"
   printf 'cipher' >"$creds/beta.sops.json"
+  printf 'cipher' >"$creds/gamma.sops.yaml"
   run ctl list
   [ "$status" -eq 0 ]
   grep -q 'alpha.cred .* insecure' <<<"$output"
   grep -q 'beta.sops.json .* insecure' <<<"$output"
+  grep -q 'gamma.sops.yaml .* insecure' <<<"$output"
   [ "$(grep -c 'systemd-creds list' "$calls")" = 0 ]
+}
+
+# The rules file sopsctl init writes sits beside the records and is not a record: a list must not
+# report it, and an empty store must still exit 0.
+@test "list never reports the rules file beside the records" {
+  printf 'cipher' >"$creds/gamma.sops.yaml"
+  printf 'creation_rules:\n  - path_regex: .*\\.sops\\.yaml$\n    age: "age1aaa"\n' >"$creds/.sops.yaml"
+  run ctl list
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'sops.yaml' <<<"$output")" = 1 ]
+  run ! grep -q '^\.sops\.yaml ' <<<"$output"
 }
 
 @test "list on an empty store exits 0 and names nothing" {
@@ -139,9 +154,20 @@ ctl() { bash "$script" "$@"; }
   printf 'secret' >"$stubs/in"
   run ctl encrypt BETA.sops.json <"$stubs/in"
   [ "$status" -eq 0 ]
-  grep -q '^sopsctl encrypt$' "$calls"
+  grep -q '^sopsctl encrypt --format json$' "$calls"
   [ "$(cat "$creds/BETA.sops.json")" = '{"secret":"secret"}' ]
   [ "$(stat -c '%a' "$creds/BETA.sops.json")" = "400" ]
+}
+
+# The suffix is the record's shape, not a format request on the wire: sopsctl's own default is yaml,
+# so credsctl names the format the suffix says.
+@test "encrypt NAME.sops.yaml delegates with --format yaml and stores the secret as a field" {
+  printf 'secret' >"$stubs/in"
+  run ctl encrypt GAMMA.sops.yaml <"$stubs/in"
+  [ "$status" -eq 0 ]
+  grep -q '^sopsctl encrypt --format yaml$' "$calls"
+  [ "$(cat "$creds/GAMMA.sops.yaml")" = '{"secret":"secret"}' ]
+  [ "$(stat -c '%a' "$creds/GAMMA.sops.yaml")" = "400" ]
 }
 
 @test "encrypt never overwrites: a record is removed and re-added to change it" {
@@ -178,7 +204,118 @@ ctl() { bash "$script" "$@"; }
   [ ! -e "$creds/BETA.sops.json.sops.json" ]
   run ctl decrypt BETA.sops.json
   [ "$output" = "stub-plain" ]
-  grep -q '^sopsctl get secret ' "$calls"
+  grep -q "^sopsctl decrypt $creds/BETA.sops.json\$" "$calls"
+}
+
+# A yaml record is read through the same one decrypt: sopsctl normalizes the plaintext to json, so
+# credsctl's jq path never sees a yaml shape.
+@test "encrypt NAME.sops.yaml keeps the credential ID free of the suffix and reads back as json" {
+  printf 'secret' >"$stubs/in"
+  run ctl encrypt GAMMA.sops.yaml <"$stubs/in"
+  [ ! -e "$creds/GAMMA.sops.yaml.sops.yaml" ]
+  SOPS_JSON='{"secret":"yaml-plain"}' run ctl decrypt GAMMA
+  [ "$output" = "yaml-plain" ]
+  grep -q "^sopsctl decrypt $creds/GAMMA.sops.yaml\$" "$calls"
+  run ctl rm GAMMA.sops.yaml
+  [ ! -e "$creds/GAMMA.sops.yaml" ]
+}
+
+# --- encrypt --fields: a bundle record ----------------------------------------
+
+# A bundle is one sops record holding several secrets, its field names being the environment
+# variables they are handed to. One decrypt then covers all of them, which is why the portable
+# backend beats one .cred per secret (~23ms total instead of ~1.2s each). Values keep their
+# newlines: jq writes them escaped, sops encrypts the escapes, decrypt returns real newlines.
+@test "encrypt NAME.sops.json --fields writes a bundle record from a json object" {
+  want=$'{"XILO_CACHE":"acme/pkgs","XILO_TOKEN":"tok\\nmulti\\nline","XILO_URL":"https://xilo.test"}'
+  jq -S -n --arg u 'https://xilo.test' --arg c 'acme/pkgs' --arg t $'tok\nmulti\nline' \
+    '{XILO_URL:$u,XILO_CACHE:$c,XILO_TOKEN:$t}' >"$stubs/fields"
+  run ctl encrypt XILO.sops.json --fields "$stubs/fields"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$creds/XILO.sops.json")" = "$want" ]
+  grep -q '^sopsctl encrypt --format json$' "$calls"
+  [ "$(stat -c '%a' "$creds/XILO.sops.json")" = "400" ]
+}
+
+@test "encrypt NAME.sops.yaml --fields writes a bundle record in the yaml shape" {
+  jq -n --arg u 'https://xilo.test' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$stubs/fields"
+  run ctl encrypt XILO.sops.yaml --fields "$stubs/fields"
+  [ "$status" -eq 0 ]
+  grep -q '^sopsctl encrypt --format yaml$' "$calls"
+  [ "$(jq -S -c . "$creds/XILO.sops.yaml")" = '{"XILO_TOKEN":"tok\nmulti\nline","XILO_URL":"https://xilo.test"}' ]
+  [ "$(stat -c '%a' "$creds/XILO.sops.yaml")" = "400" ]
+  run ctl encrypt XILO.sops.yaml --fields "$stubs/fields"
+  [ "$status" -eq 1 ]
+  grep -qi 'remove' <<<"$output"
+}
+
+@test "encrypt --fields reads a piped object and the marker may sit before the name" {
+  run ctl encrypt --fields PAIR.sops.json <<<'{"A":"one","B":"two"}'
+  [ "$status" -eq 0 ]
+  [ "$(jq -S -c . "$creds/PAIR.sops.json")" = '{"A":"one","B":"two"}' ]
+}
+
+# Validation happens before anything is encrypted: a value that is not a secret, or a key no shell
+# can name, is a usage error, not a record that decrypts to nothing.
+@test "encrypt --fields refuses values that are not secrets" {
+  printf '{"A":1}' >"$stubs/number"
+  printf '{"A":""}' >"$stubs/emptyvalue"
+  printf '{"my.token":"x"}' >"$stubs/dotted"
+  printf '{"sops":"x"}' >"$stubs/metadata"
+  printf '[{"A":"x"}]' >"$stubs/array"
+  printf '{}' >"$stubs/nokeys"
+  for f in number emptyvalue dotted metadata array nokeys; do
+    run ctl encrypt BAD.sops.json --fields "$stubs/$f"
+    [ "$status" -eq 1 ]
+    grep -q 'fields must be' <<<"$output"
+  done
+  [ ! -e "$creds/BAD.sops.json" ]
+}
+
+@test "encrypt --fields is refused on a .cred name and never overwrites a bundle" {
+  printf '{"A":"one"}' >"$stubs/fields"
+  run ctl encrypt ALPHA --fields "$stubs/fields"
+  [ "$status" -eq 1 ]
+  grep -qi '\.sops' <<<"$output"
+  [ ! -e "$creds/ALPHA.cred" ]
+  run ctl encrypt XILO.sops.json --fields "$stubs/fields"
+  run ctl encrypt XILO.sops.json --fields "$stubs/fields"
+  [ "$status" -eq 1 ]
+  grep -qi 'remove' <<<"$output"
+  [ "$(cat "$creds/XILO.sops.json")" = '{"A":"one"}' ]
+}
+
+# A json object has no prompt path: typed at a terminal it would be echoed, so --fields needs the
+# object piped or in a file. The pty proves the refusal instead of trusting the guard clause.
+@test "encrypt --fields refuses a terminal instead of echoing a secret" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  run python3 - "$script" "$creds" <<'PY'
+import os, pty, select, sys, time
+script, creds = sys.argv[1], sys.argv[2]
+pid, fd = pty.fork()
+if pid == 0:
+    os.environ["CREDS_DIR"] = creds
+    os.execv("/usr/bin/bash", ["bash", script, "encrypt", "TTYED.sops.json", "--fields"])
+seen = b""
+deadline = time.time() + 5
+while time.time() < deadline:
+    if not select.select([fd], [], [], 1)[0]:
+        break
+    try:
+        chunk = os.read(fd, 1024)
+    except OSError:
+        break
+    if not chunk:
+        break
+    seen += chunk
+_, status = os.waitpid(pid, 0)
+print("status=%d" % os.WEXITSTATUS(status))
+print(seen.decode(errors="replace"))
+PY
+  [ "$status" -eq 0 ]
+  grep -q '^status=1$' <<<"$output"
+  grep -qi 'piped\|file' <<<"$output"
+  [ ! -e "$creds/TTYED.sops.json" ]
 }
 
 @test "encrypt a failing backend exits 3 and leaves no record" {
@@ -326,12 +463,14 @@ BETA=stub-plain" ]
   [ ! -e "$creds/ALPHA.cred" ]
 }
 
-@test "rm refuses a name that resolves to two records" {
+@test "rm refuses a name that resolves to more than one record" {
   printf 'cipher' >"$creds/EPSILON.cred"
   printf 'cipher' >"$creds/EPSILON.sops.json"
+  printf 'cipher' >"$creds/EPSILON.sops.yaml"
   run ctl rm EPSILON
   [ "$status" -eq 1 ]
-  grep -q 'both EPSILON.cred and EPSILON.sops.json exist' <<<"$output"
+  grep -q 'more than one record for EPSILON' <<<"$output"
+  grep -q 'EPSILON.sops.yaml' <<<"$output"
   [ -e "$creds/EPSILON.cred" ]
 }
 
@@ -352,13 +491,16 @@ BETA=stub-plain" ]
   [ "$(find "$creds" -type f | wc -l)" = "1" ]
 }
 
-@test "decrypt resolves the .sops.json backend and asks sopsctl for the secret field" {
+# One decrypt per record, not one per field: the record's plaintext json comes back whole and jq
+# picks the field the caller asked for, so a record with several fields costs one sops process.
+@test "decrypt resolves the .sops.json backend and asks sopsctl for the whole record" {
   printf 'cipher' >"$stubs/in"
   run ctl encrypt BETA.sops.json <"$stubs/in"
-  SOPS_PLAIN='the-secret' run ctl decrypt BETA
+  SOPS_JSON='{"secret":"the-secret","other":"ignored"}' run ctl decrypt BETA
   [ "$status" -eq 0 ]
   [ "$output" = "the-secret" ]
-  grep -q "^sopsctl get secret $creds/BETA.sops.json$" "$calls"
+  grep -q "^sopsctl decrypt $creds/BETA.sops.json\$" "$calls"
+  run ! grep -q 'ignored' <<<"$output"
 }
 
 @test "decrypt on a missing record says so and exits 2" {
@@ -367,18 +509,43 @@ BETA=stub-plain" ]
   grep -qi "$creds" <<<"$output"
 }
 
-@test "decrypt refuses a record with both extensions instead of guessing" {
+@test "decrypt refuses a record with more than one extension instead of guessing" {
   printf 'cipher' >"$creds/EPSILON.cred"
   printf 'cipher' >"$creds/EPSILON.sops.json"
+  printf 'cipher' >"$creds/EPSILON.sops.yaml"
   run ctl decrypt EPSILON
   [ "$status" -eq 1 ]
-  grep -qi 'both' <<<"$output"
+  grep -qi 'more than one' <<<"$output"
+}
+
+# A suffix spelled on the name is an explicit request, not a guess, so it resolves even when both
+# files exist — that is how the xilo wrapper asks for the fast backend for a key it has in both.
+@test "decrypt with an explicit suffix picks that backend when both records exist" {
+  printf 'slow' >"$creds/EPSILON.cred"
+  printf 'cipher' >"$creds/EPSILON.sops.json"
+  SOPS_JSON='{"secret":"fast"}' run ctl decrypt EPSILON.sops.json
+  [ "$status" -eq 0 ]
+  [ "$output" = "fast" ]
+  grep -q "^sopsctl decrypt $creds/EPSILON.sops.json\$" "$calls"
+  run ! grep -q '^systemd-creds decrypt' "$calls"
+}
+
+# .sops.yaml names the same backend as .sops.json; which file wins is the suffix's choice, not a guess.
+@test "decrypt with a .sops.yaml suffix picks the yaml record over the .cred and the .sops.json" {
+  printf 'slow' >"$creds/EPSILON.cred"
+  printf 'cipher' >"$creds/EPSILON.sops.json"
+  printf 'cipher' >"$creds/EPSILON.sops.yaml"
+  SOPS_JSON='{"secret":"yaml"}' run ctl decrypt EPSILON.sops.yaml
+  [ "$status" -eq 0 ]
+  [ "$output" = "yaml" ]
+  grep -q "^sopsctl decrypt $creds/EPSILON.sops.yaml\$" "$calls"
+  run ! grep -q '^systemd-creds decrypt' "$calls"
 }
 
 @test "a failed decrypt exits 3 and points at the credential backend" {
   printf 'cipher' >"$stubs/in"
   run ctl encrypt BETA.sops.json <"$stubs/in"
-  SOPS_GET_EXIT=1 run ctl decrypt BETA
+  SOPS_DECRYPT_EXIT=1 run ctl decrypt BETA
   [ "$status" -eq 3 ]
   grep -qi '.cred' <<<"$output"
 }
@@ -440,9 +607,84 @@ BETA=bob" ]
   run ctl decrypt --env MY.TOKEN -- sh -c 'printf "%s\n" "$MY.TOKEN"'
   [ "$status" -eq 1 ]
   grep -q 'not a usable environment variable name' <<<"$output"
+  # A path is not a name: --env resolves inside the store, so the message says which form to use.
+  run ctl decrypt --env "$creds/MY.TOKEN.cred" -- sh -c 'printf "%s\n" "$MY.TOKEN"'
+  [ "$status" -eq 1 ]
+  grep -q 'bare credential name' <<<"$output"
   run ctl decrypt --env MY.TOKEN
   [ "$status" -eq 1 ]
   run ! grep -q 'cipher' <<<"$output"
+}
+
+# --- decrypt --env on a bundle record -----------------------------------------
+
+# The fields are the variables, so one record fills an entire set. Assignments are read NUL-separated:
+# split on newlines and a multi-line secret would arrive as two broken variables.
+@test "decrypt --env on a bundle record exports every field from one decrypt" {
+  bundle=$(jq -c -n --arg u 'https://xilo.test' --arg c 'acme/pkgs' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_CACHE:$c,XILO_TOKEN:$t}')
+  jq -n --arg u 'https://xilo.test' --arg c 'acme/pkgs' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_CACHE:$c,XILO_TOKEN:$t}' >"$stubs/fields"
+  run ctl encrypt XILO.sops.json --fields "$stubs/fields"
+  [ "$status" -eq 0 ]
+  SOPS_JSON="$bundle"
+  export SOPS_JSON
+  run ctl decrypt --env XILO -- sh -c 'printf "[%s][%s][%s]\n" "$XILO_URL" "$XILO_TOKEN" "$XILO_CACHE"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '[https://xilo.test][tok\nmulti\nline][acme/pkgs]')" ]
+  [ "$(grep -c '^sopsctl decrypt ' "$calls")" = "1" ]
+}
+
+# A record a person or another tool wrote may hold fields encrypt would never accept: a number, an
+# empty value, a key no shell can name. Those are not secrets — they are skipped, never exported and
+# never printed. `secret` is the record's own secret, so it takes the record's name.
+@test "decrypt --env on a bundle record maps a secret field to the record name and skips what a shell cannot name" {
+  printf 'cipher' >"$creds/PACK.sops.json"
+  # One line, export and value together: the payload is literal JSON for the stub, and shellcheck's
+  # SC2089/SC2090 only fire when a quoted assignment is exported on a separate line.
+  export SOPS_JSON='{"secret":"alice","TOKEN":"bob","host.unencrypted":"leak","count":3,"empty":""}'
+  run ctl decrypt --env PACK
+  [ "$status" -eq 0 ]
+  [ "$output" = "PACK=alice
+TOKEN=bob" ]
+  run ctl decrypt --env PACK -- sh -c 'printf "%s\n" "$(printenv host.unencrypted || echo unset)"'
+  [ "$output" = "unset" ]
+  run ! grep -q 'leak' <<<"$output"
+}
+
+# A yaml bundle is read through the same single decrypt, so the multi-line value survives the same
+# NUL-separated assignment path.
+@test "decrypt --env on a yaml bundle exports every field from one decrypt" {
+  bundle=$(jq -c -n --arg u 'https://xilo.test' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_TOKEN:$t}')
+  jq -n --arg u 'https://xilo.test' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$stubs/fields"
+  run ctl encrypt XILO.sops.yaml --fields "$stubs/fields"
+  [ "$status" -eq 0 ]
+  SOPS_JSON="$bundle"
+  export SOPS_JSON
+  run ctl decrypt --env XILO -- sh -c 'printf "[%s][%s]\n" "$XILO_URL" "$XILO_TOKEN"'
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf '[https://xilo.test][tok\nmulti\nline]')" ]
+  [ "$(grep -c '^sopsctl decrypt ' "$calls")" = "1" ]
+  run ! grep -q -- '--format' <<<"$output"
+}
+
+# A bundle spelled with its suffix is the same record, so the wrapper may name the backend.
+@test "decrypt --env XILO.sops.json reads the same bundle" {
+  printf '{"XILO_TOKEN":"bob"}' >"$stubs/fields"
+  run ctl encrypt XILO.sops.json --fields "$stubs/fields"
+  SOPS_JSON='{"XILO_TOKEN":"bob"}' run ctl decrypt --env XILO.sops.json -- sh -c 'printf "%s\n" "$XILO_TOKEN"'
+  [ "$output" = "bob" ]
+}
+
+# Plain decrypt prints one secret and nothing else; a bundle has no single secret to print, so the
+# message names the form that can read it rather than reporting a key problem that is not the cause.
+@test "decrypt NAME on a bundle record with no secret field exits 2 and points at --env" {
+  printf '{"XILO_TOKEN":"bob"}' >"$stubs/fields"
+  run ctl encrypt XILO.sops.json --fields "$stubs/fields"
+  SOPS_JSON='{"XILO_TOKEN":"bob"}' run ctl decrypt XILO
+  [ "$status" -eq 2 ]
+  grep -q -- '--env XILO' <<<"$output"
+  run ! grep -q 'bob' <<<"$output"
+  SOPS_JSON='{"secret":"alice","XILO_TOKEN":"bob"}' run ctl decrypt XILO
+  [ "$output" = "alice" ]
 }
 
 @test "the command's exit status is credsctl's exit status" {
@@ -520,7 +762,7 @@ BETA=bob" ]
   run ctl help
   [ "$status" -eq 0 ]
   grep -q '\.cred = this machine, no prompt' <<<"$output"
-  grep -q '\.sops.json = portable' <<<"$output"
+  grep -qF '.sops.json and .sops.yaml = portable' <<<"$output"
   grep -q 'sopsctl' <<<"$output"
 }
 
@@ -574,4 +816,57 @@ BETA=bob" ]
   out=$(PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_AGE_FILE="$real/key" \
     bash "$script" decrypt PORTABLE)
   [ "$out" = "hello sops" ]
+}
+
+# The bundle shape, end to end with the real sops: several secrets and a multi-line one, read back
+# as environment variables by one decrypt. Mock key, mock secrets — nothing here touches a real
+# identity or record.
+@test "real sops round-trips a bundle record and hands every field to a command" {
+  PATH="$host_path" command -v sops >/dev/null 2>&1 || skip "no sops on the host PATH"
+  PATH="$host_path" command -v age-keygen >/dev/null 2>&1 || skip "no age-keygen on the host PATH"
+  real="$stubs/real-bundle"
+  mkdir -p "$real" "$real/bin"
+  cp "$repo/features/hm-creds/sopsctl.sh" "$real/bin/sopsctl"
+  chmod +x "$real/bin/sopsctl"
+  PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
+  grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
+  jq -n --arg u 'https://xilo.test' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$real/fields"
+  PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_RECIPIENTS="$real/recipient" SOPS_AGE_FILE="$real/key" \
+    run bash "$script" encrypt XILO.sops.json --fields "$real/fields"
+  [ "$status" -eq 0 ]
+  [ "$(stat -c '%a' "$real/XILO.sops.json")" = "400" ]
+  out=$(PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_AGE_FILE="$real/key" \
+    bash "$script" decrypt --env XILO -- sh -c 'printf "[%s][%s]\n" "$XILO_URL" "$XILO_TOKEN"')
+  [ "$out" = "$(printf '[https://xilo.test][tok\nmulti\nline]')" ]
+  PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_AGE_FILE="$real/key" run bash "$script" decrypt XILO
+  [ "$status" -eq 2 ]
+}
+
+# The same bundle in the yaml shape, end to end with real sops and a mock key. Security properties
+# are asserted, not just the values: the record stays ciphertext and 0400, no plaintext file appears
+# in the store, and nothing the secrets contain reaches stdout.
+@test "real sops round-trips a yaml bundle record and hands every field to a command" {
+  PATH="$host_path" command -v sops >/dev/null 2>&1 || skip "no sops on the host PATH"
+  PATH="$host_path" command -v age-keygen >/dev/null 2>&1 || skip "no age-keygen on the host PATH"
+  real="$stubs/real-yaml-bundle"
+  mkdir -p "$real" "$real/bin"
+  cp "$repo/features/hm-creds/sopsctl.sh" "$real/bin/sopsctl"
+  chmod +x "$real/bin/sopsctl"
+  PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
+  grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
+  jq -n --arg u 'https://xilo.test' --arg t $'tok\nmulti\nline' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$real/fields"
+  PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_RECIPIENTS="$real/recipient" SOPS_AGE_FILE="$real/key" \
+    run bash "$script" encrypt XILO.sops.yaml --fields "$real/fields"
+  [ "$status" -eq 0 ]
+  [ "$(stat -c '%a' "$real/XILO.sops.yaml")" = "400" ]
+  grep -q '^XILO_TOKEN: ENC\[AES256_GCM,data:' "$real/XILO.sops.yaml"
+  run ! grep -q 'xilo.test' "$real/XILO.sops.yaml"
+  out=$(PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_AGE_FILE="$real/key" \
+    bash "$script" decrypt --env XILO -- sh -c 'printf "[%s][%s]\n" "$XILO_URL" "$XILO_TOKEN"')
+  [ "$out" = "$(printf '[https://xilo.test][tok\nmulti\nline]')" ]
+  # Nothing decrypted lands in the store, and the plain decrypt prints only the record's own secret.
+  # LC_ALL=C so the record sorts first; the host's UTF-8 collation folds case and would not.
+  [ "$(find "$real" -type f -not -path "$real/bin/*" | LC_ALL=C sort | tr '\n' ' ')" = "$real/XILO.sops.yaml $real/fields $real/key $real/recipient " ]
+  PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_AGE_FILE="$real/key" run bash "$script" decrypt XILO.sops.yaml
+  [ "$status" -eq 2 ]
 }

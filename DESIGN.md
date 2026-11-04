@@ -361,7 +361,7 @@ flowchart LR
   E4["bootstrap.sh &lt;host&gt;"] --> RB["systemd-run --user --scope (MemoryMax=3072M)<br/>sudo nixos-rebuild boot --install-bootloader<br/>+ registry urls/keys via --option"]
   E5["update-all.sh [--flake|--check]"] --> UP["features/*/update.sh, symlinked to<br/>lib/updater.sh; a copy is refused"]
   E6["bootstrap.sh --standalone [--install] [--rebind[=DIR]]"] --> IN["pinned upstream installer, ostree plan:<br/>--enable-flakes, --persistence <dir> for a relocated store,<br/>then extra-trusted-users + nix-daemon restart;<br/>--rebind refused once nix is on PATH"]
-  E7["credsctl / sopsctl (on PATH)<br/>credsctl: list, encrypt, decrypt [--env], rm<br/>sopsctl: init [--from-ssh], keys, encrypt, decrypt, get, set,<br/>rekey, recipients, protected, verify"] --> CR["credential records, one file per secret<br/>name.cred = systemd-creds, sealed to this machine<br/>name.sops.json = sops through sopsctl, portable"]
+  E7["credsctl / sopsctl (on PATH)<br/>credsctl: list, encrypt, decrypt [--env], rm<br/>sopsctl: init [--from-ssh], keys, encrypt, decrypt, get, set,<br/>rekey, recipients, protected, verify"] --> CR["credential records, one file each<br/>name.cred = systemd-creds, sealed to this machine<br/>name.sops.json / name.sops.yaml = sops through sopsctl, portable"]
 ```
 
 `bootstrap.sh --standalone` is the host-side bootstrap for a machine that is not NixOS. It runs the
@@ -404,7 +404,8 @@ plaintext only ever goes to stdout. `credsctl` owns the store — `list`, `encry
 `decrypt NAME [NAME...]`, `decrypt --env NAME... [-- CMD]`, `rm` — and exit codes
 1 usage / 2 no such record / 3 encrypt or decrypt failed. The **extension picks the backend**:
 `<name>.cred` is `systemd-creds`, sealed to this machine (UID + machine-id) and read silently by a
-unit; `<name>.sops.json` is sops through `sopsctl`, portable across hosts because sops fetches its
+unit; `<name>.sops.json` and `<name>.sops.yaml` are sops through `sopsctl` — the suffix is the shape
+on disk, the fields are read as json either way — portable across hosts because sops fetches its
 keys by running a command, which is also why a systemd unit or an elevated push can read one.
 `sopsctl` owns every sops detail; `credsctl` never repeats one.
 
@@ -450,8 +451,14 @@ that file under a `~/.config` this repo keeps `0700`. KDE's own askpass call is
 that raises a dialog on demand.
 
 xilo's seam is one line: `features/hm-xilo` adds `xilo-wrapped` beside upstream's own
-`programs.xilo` package, and that wrapper execs `credsctl decrypt --env XILO_URL XILO_CACHE
-XILO_TOKEN -- <the upstream CLI>`, filling only the variables it did not already have. It resolves
+`programs.xilo` package, and that wrapper execs `credsctl decrypt --env <the records it still
+needs> -- <the upstream CLI>` — a name plus its suffix picks the backend — filling only the
+variables it did not already have. A suffix on a name names the backend,
+so `XILO_URL.sops.json` is preferred over `XILO_URL.cred` for the same key, and a bundle record
+(`XILO.sops.json`, whose field names are the variables) fills every key nothing else covers. That is
+the reason to prefer sops here: one decrypt reads a record in milliseconds and fills the whole set,
+where systemd-creds costs ~1.2s per decrypt, so several secrets in that backend are several slow
+decrypts; systemd-creds stays the backend for secrets a unit mounts. It resolves
 the same store — `CREDENTIALS_DIRECTORY`, else `~/.local/share/credentials` — so both scripts
 agree without either knowing the other; `CREDS_DIR` moves the store for `credsctl` only, which is
 why a unit sets `CREDENTIALS_DIRECTORY` (its `CredKey`/`CredExec` chain) and not `CREDS_DIR`. With

@@ -3,19 +3,20 @@
 Everything here is installed by the `hm-creds` feature: `credsctl`, `sopsctl`, and `sops`.
 
 A record is one file holding exactly one secret, in `~/.local/share/credentials` (override with
-`CREDS_DIR`). Every record is written `0400`, encrypt never overwrites, and plaintext only ever goes
-to stdout — so pipe a secret, never redirect it onto disk.
+`CREDS_DIR`), alongside `recipient` and the `.sops.yaml` of creation rules that names who may read a
+new record. Every record ends up `0400`: encrypting a file turns its plaintext into ciphertext in
+place, and encrypting a stream writes ciphertext to stdout only.
 
 The extension picks the backend:
 
 | record | backend | who can read it | how the key arrives |
 | --- | --- | --- | --- |
 | `NAME.cred` | systemd-creds | this machine only (UID + machine-id) | nothing to fetch — silent |
-| `NAME.sops.json` | sops + age, recipients in the record's metadata | whoever holds a listed age key | an age identity file, read by sops itself — no prompt, no terminal |
+| `NAME.sops.json` / `NAME.sops.yaml` | sops + age, recipients in the record's metadata | whoever holds a listed age key | an age identity file, read by sops itself — no prompt, no terminal |
 
 `.cred` is what machine-local automation uses, because a systemd unit or an elevated `sudo` run can
-decrypt it with no prompt. The portable record that avoids a prompt is `.sops.json`: the key is
-the key lives in a file sops reads by itself, so units, `sudo` runs and shell prompts all work.
+decrypt it with no prompt. The portable record that avoids a prompt is `.sops.json`: the key lives in a
+file sops reads by itself, so units, `sudo` runs and shell prompts all work.
 
 Records written before this commit carry the `.age` extension and are invisible to `credsctl` until
 the migration re-encrypts them as `.sops.json`.
@@ -28,6 +29,12 @@ sopsctl init      # once: write an age identity to ~/.config/sops/age/keys.txt (
                   # to a .sops.yaml of creation rules beside the records. Idempotent. Nothing
                   # prompts, and init prints the paths plus the next command.
 sopsctl keys      # the recipient public keys you can encrypt to — never a secret key
+sopsctl reset     # name the files sopsctl owns — the identity, the rules file, the recipient file,
+                  # and every *.sops.json / *.sops.yaml record — and delete nothing. `reset --force`
+                  # deletes them so init starts fresh. That is unrecoverable: the identity is the
+                  # only thing that can read the records, and the recipient file is the invite list
+                  # for every other machine that holds one. Only *.cred stays — systemd-creds owns
+                  # those, not sops. Re-add each machine's public key afterwards, then `rekey`.
 ```
 
 Key by your ssh identity instead, so one passphrase protects both sides:
@@ -35,7 +42,8 @@ Key by your ssh identity instead, so one passphrase protects both sides:
 ```bash
 sopsctl protected ~/.ssh/flakeroot_ed25519          # 0 means it needs a passphrase to read
 sopsctl init --from-ssh ~/.ssh/flakeroot_ed25519    # derive the age keypair with ssh-to-age
-sopsctl rekey ~/.local/share/credentials/*.sops.json # give existing records the new recipient
+sopsctl rekey ~/.local/share/credentials/*.sops.json ~/.local/share/credentials/*.sops.yaml \
+  # give existing records the new recipient; the rules file `.sops.yaml` is not a record, so name the two shapes
 ```
 
 `--from-ssh` takes the **private** key path — no `.pub` on the argument you pass. It reads
@@ -57,18 +65,26 @@ the ssh keypair is the origin. A rerun with the same keypair is a no-op.
 Once that public key is in the recipient file, `sopsctl keys` prints it, and because sops finds the
 derived identity file itself, decrypting any record needs no prompt and no key flag.
 
-Add a secret:
+Add a secret — write the plaintext where the record will live, then encrypt it in place:
 
 ```bash
-jq -n --arg t "$(passphrase-or-token)" '{token:$t}' |
-  sopsctl encrypt > ~/.local/share/credentials/GH_TOKEN.sops.json
-chmod 400 ~/.local/share/credentials/GH_TOKEN.sops.json
-sopsctl verify ~/.local/share/credentials/GH_TOKEN.sops.json
+printf 'token: "%s"\nhost_unencrypted: github\n' "$(passphrase-or-token)" \
+  > ~/.local/share/credentials/GH_TOKEN.sops.yaml
+chmod 600 ~/.local/share/credentials/GH_TOKEN.sops.yaml
+sopsctl encrypt ~/.local/share/credentials/GH_TOKEN.sops.yaml   # recipients from ~/.local/share/credentials/.sops.yaml
+sopsctl verify ~/.local/share/credentials/GH_TOKEN.sops.yaml
 ```
 
-`encrypt` takes JSON on stdin and writes ciphertext on stdout; you name the file and set its mode.
-A field whose name ends in `_unencrypted` stays readable in the file — that is the only way to keep
-a field in plain text.
+`encrypt FILE` takes a plaintext `*.sops.yaml` or `*.sops.json` file — the suffix is its shape —
+encrypts it in place with the recipients from that rules file, which it names with `--config` so the
+current directory never decides who can read the record, and leaves the file `0400`. The plaintext is
+gone once sops has written the ciphertext. A file that already carries sops metadata is a record, and
+a record is immutable: `encrypt` refuses it, so a change is `set`, `rekey`, or `rm` and encrypt again.
+
+With no file, `encrypt` reads JSON on stdin and writes ciphertext to stdout, which is what `credsctl`
+and a pipe use; `--format json|yaml` picks the shape, yaml by default, and the recipients come from
+`recipient` because a `path_regex` can never match a stream. A field whose name ends in `_unencrypted`
+stays readable in the file — that is the only way to keep a field in plain text.
 
 Read a secret:
 
@@ -79,17 +95,20 @@ GH_TOKEN="$(sopsctl get token ~/.local/share/credentials/GH_TOKEN.sops.json)" cm
 ```
 
 Change one value — it decrypts, edits that field, re-encrypts to the recipients already in the
-record, replaces the file, and leaves it `0400`:
+record, replaces the file, and leaves it `0400`. The new value comes from stdin, or from a prompt
+with echo off when you are at a terminal; it is never an argument, because `/proc/PID/cmdline` is
+world-readable and an argument also lands in your shell history:
 
 ```bash
-sopsctl set token "ghp_new..." ~/.local/share/credentials/GH_TOKEN.sops.json
+sopsctl set token ~/.local/share/credentials/GH_TOKEN.sops.json   # type it at the prompt
+printf '%s' "$token" | sopsctl set token ~/.local/share/credentials/GH_TOKEN.sops.json   # scripted
 ```
 
 Rotate who can read the store:
 
 ```bash
 printf 'age1newpubkey...\n' >> ~/.local/share/credentials/recipient
-sopsctl rekey ~/.local/share/credentials/*.sops.json
+sopsctl rekey ~/.local/share/credentials/*.sops.json ~/.local/share/credentials/*.sops.yaml
 ```
 
 `rekey` re-encrypts each record listed to the current recipient file. To drop someone, delete their
@@ -116,15 +135,34 @@ credsctl encrypt ALPHA            # prompts on a terminal (echo off, one line); 
 credsctl encrypt ALPHA /path/file # encrypt a file instead of stdin
 credsctl decrypt ALPHA B          # print the secrets, one record per line
 credsctl decrypt --env ALPHA -- sh -c 'printenv ALPHA'   # run a command with the secrets in its environment
+credsctl encrypt XILO.sops.json --fields fields.json    # several secrets in one record, their field names being the variables
+credsctl encrypt XILO.sops.yaml --fields fields.json    # the same record in sops' yaml shape
+credsctl decrypt --env XILO       # every field of that record as KEY=VALUE
 credsctl rm ALPHA                 # records are immutable: a change is rm, then encrypt again
 ```
 
 Quote the `--env` command (`sh -c '...'`) or read it with `printenv` — your shell expands `$ALPHA`
-before `credsctl` runs. Note that a name doubles as a systemd credential ID: `ALPHA`, `ALPHA.cred`
-and `ALPHA.sops.json` are one record, and `--env` keys are the bare name.
+before `credsctl` runs. Note that a name doubles as a systemd credential ID: `ALPHA`, `ALPHA.cred`,
+`ALPHA.sops.json` and `ALPHA.sops.yaml` are one record, and `--env` keys are the bare name.
 
-`credsctl` delegates a `.sops.json` record to `sopsctl`: every sops flag, the recipient file and the
-key command belong to `sopsctl`.
+`--env` takes **names, never paths**: the name is the variable, and `credsctl` resolves it inside
+`CREDS_DIR`. A spelled suffix is still a name (`--env ALPHA.sops.yaml` asks for that backend); a
+path is `sopsctl`'s argument, not this one — `sopsctl get FIELD FILE` / `sopsctl decrypt FILE`.
+
+A `.sops.json` record is a json map, so one record can hold several secrets — `--fields` takes the
+object piped or as FILE (typed at a terminal it would be echoed), its keys being names a shell can
+expand and its values non-empty strings. `credsctl` decrypts the record once and reads every field
+from that plaintext, so a bundle fills a whole set in ~23ms; a `.cred` record costs ~1.2s per
+decrypt, so several secrets there means several slow decrypts. Multi-line values are stored as
+escapes and come back as real newlines. Plain `decrypt` on a bundle has no single secret to print:
+it exits 2 and points at `--env`.
+
+Either sops shape is the same record and the same fields. `.sops.yaml` is the shape sops itself prints
+and the one you can hand-write; `credsctl` still reads it as json, because `sops -d --output-type json`
+normalizes any record. The suffix decides only what gets written to disk.
+
+`credsctl` delegates a `.sops.json` or `.sops.yaml` record to `sopsctl`: every sops flag, the
+recipient file and the key command belong to `sopsctl`.
 
 ## Overrides and exit codes
 
@@ -133,8 +171,9 @@ key command belong to `sopsctl`.
   itself). Move it there only if you want the file store somewhere else; while a readable identity
   exists, it is what decrypt uses and no key command runs.
 - `SOPS_RULES` — the `.sops.yaml` of creation rules for new records (default `.sops.yaml` beside the
-  recipient file). Public keys only, so it is safe to commit; sops reads it from the **current
-  directory**, which is why `init` prints the directory to `cd` into.
+  recipient file). Public keys only, so it is safe to commit; `sopsctl encrypt FILE` names it with
+  `--config`, so the directory you sit in never matters — raw `sops -e FILE` reads it from the
+  **current** directory, which is why `init` prints the directory to `cd` into.
 - `SOPS_KEYS_CMD` — the wallet route, used only when no identity file is readable. Default
   `kwallet-query -f flakeroot -r creds-identity kdewallet`; point it at any command that prints an
   age secret key.

@@ -166,9 +166,11 @@ fi
 # run the actual systemd-creds and age and skip when either is absent. sopsctl's sops plumbing
 # (key by command, json types on encrypt, field edits re-encrypted to the record's own recipients)
 # is the same kind of thing, so tests/sopsctl.bats joins them and its real tier runs actual sops.
+# xilo-wrapped is the same shape: which records it asks credsctl for, in what order, and that the
+# CLI's own argv and exit status survive, so tests/xilo.bats joins them.
 # bats comes from the installed Nix profile, so a missing `bats` is a `skip`, not a failure.
 if command -v bats >/dev/null 2>&1; then
-  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats tests/sopsctl.bats tests/updater.bats; do
+  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats tests/sopsctl.bats tests/xilo.bats tests/updater.bats; do
     if out=$(bats "$suite" 2>&1); then
       echo "ok   $suite [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
     else

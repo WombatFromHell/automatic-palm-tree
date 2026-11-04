@@ -666,7 +666,9 @@ njust() { PATH="$stubs:$PATH" env -u XDG_RUNTIME_DIR just --justfile "$justfile"
 @test "os-push-active pushes the booted system generation without activating it" {
   d="$(mktemp -d)"
   mkdir -p "$d/profiles" "$d/toplevel/bin"
-  printf '#!/usr/bin/env bash\nprintf "switch-to-configuration: %s\\n" "$*"\n' >"$d/toplevel/bin/switch-to-configuration"
+  # %%s so the format survives into the stub: os-push-active must never run it, and if it ever did
+  # the log would name the arguments it was given, not an empty string.
+  printf '#!/usr/bin/env bash\nprintf "switch-to-configuration: %%s\\n" "$*"\n' >"$d/toplevel/bin/switch-to-configuration"
   chmod +x "$d/toplevel/bin/switch-to-configuration"
   ln -sfn "$d/toplevel" "$d/profiles/system"
   : >"$calls"

@@ -3,15 +3,22 @@
 #
 # Contract under test: `xilo` is the real CLI, reached by store path, and every subcommand gets
 # XILO_URL/XILO_CACHE/XILO_TOKEN filled from credsctl records — unless you already exported that
-# variable, which wins. With no credsctl, or no record, the caller's environment is passed through
-# untouched, so xilo's own saved profile is what authenticates. argv is never rewritten and the
-# CLI's exit status is the wrapper's.
+# variable, which wins. Per-key records win over a bundle, and a record that exists in both backends
+# is asked for as sops (a name+suffix), because systemd-creds costs ~1.2s per decrypt and sops ~23ms;
+# with no per-key record the wrapper reads the bundle `XILO.sops.json` in one decrypt. With no
+# credsctl, or no record, the caller's environment is passed through untouched, so xilo's own saved
+# profile is what authenticates. argv is never rewritten and the CLI's exit status is the wrapper's.
 #
 # XILO_PROGRAM stands in for the real binary so the wrapper can be run without a build.
+
+bats_require_minimum_version 1.5.0
 
 setup() {
   repo="$PWD"
   script="$repo/features/hm-xilo/xilo.sh"
+  # The real-binary tests below need the host's own PATH: stubs must not shadow sops or age-keygen,
+  # and an unset host_path would leave `PATH="$real/bin:"` resolving the trailing entry to the cwd.
+  host_path="$PATH"
   stubs="$(mktemp -d)"
   calls="$stubs/calls"
   : >"$calls"
@@ -24,14 +31,16 @@ setup() {
 log="${XILO_STUB_LOG:?}"
 printf 'xilo %s\n' "$*" >> "$log"
 printf 'xilo-env XILO_URL=%s XILO_TOKEN=%s XILO_CACHE=%s\n' "${XILO_URL:-none}" "${XILO_TOKEN:+set}" "${XILO_CACHE:-none}" >> "$log"
+if [ -n "${XILO_SHOW_TOKEN:-}" ]; then printf 'xilo-token [%s]\n' "$XILO_TOKEN" >> "$log"; fi
 exit "${XILO_EXIT:-0}"
 EOF
   chmod +x "$stubs/xilo-real"
 
-  # Real credsctl semantics for the only form the wrapper uses: decrypt --env K... -- CMD execs
-  # CMD with the secrets in its environment. Exit 2 means "no record".
-  # Real credsctl semantics for the one form the wrapper uses: decrypt --env K... -- CMD execs
-  # CMD with the secrets in its environment only. Exit 2 means "no record".
+  # Real credsctl semantics for the only form the wrapper uses: decrypt --env NAME... -- CMD execs
+  # CMD with the secrets in its environment. A bare name resolves .cred first and refuses a name
+  # that matches more than one file; a name carrying a suffix names that backend explicitly. A sops
+  # record — .sops.json or .sops.yaml — contributes every field, read as json, whatever its own
+  # shape; split on NUL, so a multi-line secret survives. Exit 2 means "no record".
   cat >"$stubs/credsctl" <<'EOF'
 #!/usr/bin/env bash
 log="${XILO_STUB_LOG:?}"
@@ -40,9 +49,36 @@ if [ "$1" = decrypt ] && [ "$2" = --env ]; then
   shift 2
   assigns=()
   while [ "${1:-}" != "--" ]; do
-    rec="${CREDENTIALS_DIRECTORY:?}/$1.cred"
-    [ -e "$rec" ] || exit 2
-    assigns+=("$1=$(cat "$rec")")
+    name="$1"
+    base="$name"
+    want=""
+    case "$name" in
+      *.cred) base="${name%.cred}"; want="$CREDENTIALS_DIRECTORY/$base.cred" ;;
+      *.sops.json) base="${name%.sops.json}"; want="$CREDENTIALS_DIRECTORY/$base.sops.json" ;;
+      *.sops.yaml) base="${name%.sops.yaml}"; want="$CREDENTIALS_DIRECTORY/$base.sops.yaml" ;;
+    esac
+    cred="$CREDENTIALS_DIRECTORY/$base.cred"
+    sops_json="$CREDENTIALS_DIRECTORY/$base.sops.json"
+    sops_yaml="$CREDENTIALS_DIRECTORY/$base.sops.yaml"
+    if [ -z "$want" ]; then
+      count=0
+      for f in "$cred" "$sops_json" "$sops_yaml"; do [ -e "$f" ] && count=$((count + 1)); done
+      if [ "$count" -gt 1 ]; then exit 1; fi
+      want="$cred"
+      [ -e "$want" ] || want="$sops_json"
+      [ -e "$want" ] || want="$sops_yaml"
+    fi
+    [ -e "$want" ] || exit 2
+    case "$want" in
+      *.sops.json | *.sops.yaml)
+        while IFS= read -r -d '' assignment; do
+          key="${assignment%%=*}"
+          [ "$key" = secret ] && assignment="$base=${assignment#*=}"
+          assigns+=("$assignment")
+        done < <(jq -j 'to_entries[] | select(.value | type == "string" and length > 0) | "\(.key)=\(.value)\u0000"' "$want")
+        ;;
+      *) assigns+=("$base=$(cat "$want")") ;;
+    esac
     shift
   done
   shift
@@ -87,6 +123,183 @@ run_wrapper() {
   # XILO_URL is skipped, so only the two unset keys are decrypted.
   grep -q '^credsctl decrypt --env XILO_CACHE XILO_TOKEN -- ' "$calls"
   grep -q '^xilo-env XILO_URL=https://from.env XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
+}
+
+# The bundle shape: one record whose fields are the variables, read in a single decrypt. systemd-creds
+# costs ~1.2s per record (the polkit hop); one sops decrypt costs ~23ms for the whole set.
+@test "a bundle record fills every variable in one decrypt" {
+  jq -n --arg u 'https://xilo.test' --arg c 'acme/pkgs' --arg t $'tok\nmulti\nline' \
+    '{XILO_URL:$u,XILO_CACHE:$c,XILO_TOKEN:$t}' >"$creds/XILO.sops.json"
+  run env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" \
+    XILO_STUB_LOG="$calls" XILO_SHOW_TOKEN=1 bash "$script" status
+  [ "$status" -eq 0 ]
+  grep -q '^credsctl decrypt --env XILO.sops.json -- ' "$calls"
+  [ "$(grep -c '^credsctl' "$calls")" = "1" ]
+  grep -q '^xilo-env XILO_URL=https://xilo.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
+  # A multi-line secret arrives whole; splitting the assignments on newlines would truncate it here.
+  grep -q '^xilo-token \[tok$' "$calls"
+  grep -q '^multi$' "$calls"
+  grep -q '^line\]$' "$calls"
+}
+
+# A record that exists in both backends is asked for by name+suffix, which names the backend
+# explicitly, so the fast one is chosen and the systemd-creds record is left alone.
+@test "a sops record is preferred over the systemd-creds record for the same key" {
+  # The sops records hold plaintext json here: the stub reads a record's fields, not real sops.
+  jq -n --arg u 'https://fast.test' '{secret:$u}' >"$creds/XILO_URL.sops.json"
+  printf 'https://slow.test\n' >"$creds/XILO_URL.cred"
+  jq -n --arg c 'acme/pkgs' '{secret:$c}' >"$creds/XILO_CACHE.sops.json"
+  printf 'secret-token\n' >"$creds/XILO_TOKEN.cred"
+  run run_wrapper status
+  [ "$status" -eq 0 ]
+  grep -q '^credsctl decrypt --env XILO_URL.sops.json XILO_CACHE.sops.json XILO_TOKEN -- ' "$calls"
+  grep -q '^xilo-env XILO_URL=https://fast.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
+}
+
+# A yaml record is the same backend, so the wrapper asks for it by suffix too, and json stays ahead
+# of yaml in the search order so the existing preference for a .sops.json over a .cred does not shift.
+@test "a yaml sops record is preferred over the systemd-creds record for the same key" {
+  jq -n --arg u 'https://fast.test' '{secret:$u}' >"$creds/XILO_URL.sops.yaml"
+  printf 'https://slow.test\n' >"$creds/XILO_URL.cred"
+  jq -n --arg c 'acme/pkgs' '{secret:$c}' >"$creds/XILO_CACHE.sops.yaml"
+  printf 'secret-token\n' >"$creds/XILO_TOKEN.cred"
+  run run_wrapper status
+  [ "$status" -eq 0 ]
+  grep -q '^credsctl decrypt --env XILO_URL.sops.yaml XILO_CACHE.sops.yaml XILO_TOKEN -- ' "$calls"
+  grep -q '^xilo-env XILO_URL=https://fast.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
+}
+
+# A json record still wins over a yaml one for the same key — both are the fast backend, and the
+# suffix the wrapper spells names the file it read.
+@test "a json record is asked for ahead of a yaml record for the same key" {
+  jq -n --arg u 'https://json.test' '{secret:$u}' >"$creds/XILO_URL.sops.json"
+  jq -n --arg u 'https://yaml.test' '{secret:$u}' >"$creds/XILO_URL.sops.yaml"
+  run run_wrapper status
+  grep -q '^credsctl decrypt --env XILO_URL.sops.json ' "$calls"
+  grep -q '^xilo-env XILO_URL=https://json.test XILO_TOKEN= XILO_CACHE=none$' "$calls"
+}
+
+@test "a yaml bundle record fills every variable in one decrypt" {
+  jq -n --arg u 'https://xilo.test' --arg c 'acme/pkgs' --arg t $'tok\nmulti\nline' \
+    '{XILO_URL:$u,XILO_CACHE:$c,XILO_TOKEN:$t}' >"$creds/XILO.sops.yaml"
+  run env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" \
+    XILO_STUB_LOG="$calls" XILO_SHOW_TOKEN=1 bash "$script" status
+  [ "$status" -eq 0 ]
+  grep -q '^credsctl decrypt --env XILO.sops.yaml -- ' "$calls"
+  [ "$(grep -c '^credsctl' "$calls")" = "1" ]
+  grep -q '^xilo-env XILO_URL=https://xilo.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$' "$calls"
+  grep -q '^xilo-token \[tok$' "$calls"
+  grep -q '^line\]$' "$calls"
+}
+
+# --- real binaries: the yaml bundle reaching a consumer ---------------------
+#
+# End to end with real sops and real credsctl, a mock age key and mock secrets. The point is the
+# security properties of the hand-off, not just the values: the wrapper execs the CLI with the
+# secrets in its environment only, so the plaintext never appears in the wrapper's own output, never
+# in the argv the CLI is given, never as a file, and never in the caller's environment.
+@test "a yaml bundle reaches a real consumer through the wrapper, with no plaintext in sight" {
+  PATH="$host_path" command -v sops >/dev/null 2>&1 || skip "no sops on the host PATH"
+  PATH="$host_path" command -v age-keygen >/dev/null 2>&1 || skip "no age-keygen on the host PATH"
+  real="$(mktemp -d)"
+  mkdir -p "$real/bin"
+  cp "$repo/features/hm-creds/credsctl.sh" "$real/bin/credsctl"
+  cp "$repo/features/hm-creds/sopsctl.sh" "$real/bin/sopsctl"
+  chmod +x "$real/bin/credsctl" "$real/bin/sopsctl"
+  PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
+  grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
+
+  # The consumer reports what it saw as presence markers and a line count — never the values, so a
+  # grep for a secret anywhere in the wrapper's output is a real leak test. The markers are named
+  # `secret`, not `token`: the leak grep below looks for `tok`, and a `token-set` marker would
+  # match it and make the test unsatisfiable.
+  cat >"$real/consumer" <<'EOF'
+#!/usr/bin/env bash
+printf 'consumer argc=%s url-set=%s secret-set=%s cache-set=%s\n' "$#" \
+  "${XILO_URL:+set}" "${XILO_TOKEN:+set}" "${XILO_CACHE:+set}"
+printf 'consumer secret lines=%s\n' "$(printf '%s\n' "${XILO_TOKEN:-}" | wc -l)"
+EOF
+  chmod +x "$real/consumer"
+
+  jq -n --arg u 'https://xilo.test' --arg c 'acme/pkgs' --arg t $'tok\nmulti\nline' \
+    '{XILO_URL:$u,XILO_CACHE:$c,XILO_TOKEN:$t}' >"$real/fields.json"
+  env PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_RECIPIENTS="$real/recipient" SOPS_AGE_FILE="$real/key" \
+    bash "$repo/features/hm-creds/credsctl.sh" encrypt XILO.sops.yaml --fields "$real/fields.json"
+  [ "$(stat -c '%a' "$real/XILO.sops.yaml")" = "400" ]
+  before=$(sha256sum "$real/XILO.sops.yaml")
+
+  # Command substitution leaves no `$status`, so the child's exit code is taken from `$?` here —
+  # otherwise this test would assert nothing once it stops skipping.
+  out=$(env PATH="$real/bin:$host_path" CREDENTIALS_DIRECTORY="$real" SOPS_AGE_FILE="$real/key" \
+    XILO_PROGRAM="$real/consumer" bash "$script" push acme/pkgs ./result 2>&1)
+  status=$?
+  [ "$status" -eq 0 ]
+  grep -q 'consumer argc=3 url-set=set secret-set=set cache-set=set' <<<"$out"
+  # Three lines is the multi-line value arriving whole as one variable, not split into two.
+  grep -q 'consumer secret lines=3' <<<"$out"
+
+  # No secret reaches the wrapper's output, the record is byte-identical, and no decrypted file is
+  # written beside it — the plaintext only ever lives in the child's environment.
+  run ! grep -q -e 'xilo.test' -e 'acme/pkgs' -e 'multi' -e 'tok' <<<"$out"
+  [ "$before" = "$(sha256sum "$real/XILO.sops.yaml")" ]
+  # LC_ALL=C so the record sorts first; the host's UTF-8 collation folds case and would not.
+  [ "$(find "$real" -type f -not -path "$real/bin/*" | LC_ALL=C sort | tr '\n' ' ')" = \
+    "$real/XILO.sops.yaml $real/consumer $real/fields.json $real/key $real/recipient " ]
+  [ "$(env | grep -c '^XILO_')" = 0 ]
+  rm -rf "$real"
+}
+
+# A bundle fills the keys nothing else covers; per-key names are asked for after it, so a per-key
+# record overrides the bundle's field for the same variable and both arrive from one decrypt.
+@test "a bundle and a per-key record are read in one decrypt" {
+  printf 'https://from.record\n' >"$creds/XILO_URL.cred"
+  jq -n --arg t 'bundle-token' '{XILO_TOKEN:$t}' >"$creds/XILO.sops.json"
+  run run_wrapper status
+  [ "$status" -eq 0 ]
+  grep -q '^credsctl decrypt --env XILO.sops.json XILO_URL -- ' "$calls"
+  grep -q '^xilo-env XILO_URL=https://from.record XILO_TOKEN=set XILO_CACHE=none$' "$calls"
+}
+
+# A bundle record's fields are the variables, so the file's own name case is free: `xilo.sops.yaml`
+# is the same record as `XILO.sops.yaml`. The wrapper asks for the file that is actually on disk —
+# a bare `XILO` would find nothing and drop to systemd-creds — and the fields still fill the
+# uppercase variables the CLI reads.
+@test "a lowercase bundle record is asked for by its own name and fills the uppercase variables" {
+  jq -n --arg u 'https://from.bundle' --arg t 'bundle-token' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$creds/xilo.sops.yaml"
+  run run_wrapper status
+  [ "$status" -eq 0 ]
+  grep -q '^credsctl decrypt --env xilo.sops.yaml -- ' "$calls"
+  grep -q '^xilo-env XILO_URL=https://from.bundle XILO_TOKEN=set XILO_CACHE=none$' "$calls"
+}
+
+# Both shapes on disk: json first, as before, and a lowercase json still beats a lowercase yaml.
+@test "a bundle record prefers .sops.json over .sops.yaml in any case" {
+  jq -n '{XILO_URL:"https://from.json"}' >"$creds/xilo.sops.json"
+  jq -n '{XILO_URL:"https://from.yaml"}' >"$creds/XILO.sops.yaml"
+  run run_wrapper status
+  [ "$status" -eq 0 ]
+  grep -q '^credsctl decrypt --env xilo.sops.json -- ' "$calls"
+  grep -q '^xilo-env XILO_URL=https://from.json XILO_TOKEN= XILO_CACHE=none$' "$calls"
+}
+
+# Per-key records stay exact-case: there the filename *is* the variable, so a lowercase
+# `xilo_url.sops.json` would fill `xilo_url`, which xilo never reads. Only the bundle is case-free.
+@test "a lowercase per-key record is not read as a variable xilo can use" {
+  jq -n '{secret:"https://from.record"}' >"$creds/xilo_url.sops.json"
+  run run_wrapper status
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^credsctl' "$calls")" = 0 ]
+  grep -q '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$' "$calls"
+}
+
+# An exported variable must not be overridden by a bundle field: credsctl's assignments replace the
+# environment, so a bundle is skipped whenever the caller exported one of its variables.
+@test "an exported variable skips the bundle entirely" {
+  jq -n --arg u 'https://from.bundle' --arg t 'bundle-token' '{XILO_URL:$u,XILO_TOKEN:$t}' >"$creds/XILO.sops.json"
+  env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" \
+    XILO_STUB_LOG="$calls" XILO_URL=https://from.env bash "$script" status
+  grep -q '^xilo-env XILO_URL=https://from.env XILO_TOKEN= XILO_CACHE=none$' "$calls"
+  [ "$(grep -c '^credsctl' "$calls")" = 0 ]
 }
 
 @test "no credsctl on PATH leaves the environment alone" {
