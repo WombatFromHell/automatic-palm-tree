@@ -5,7 +5,7 @@ slug: pkgs-unstable-is-a-member-of-the-set-and-never-r
 title: pkgs.unstable is a member of the set, and never reads itself
 created: 2026-11-04T21:29:33Z
 author: josh@methyl-bazzite
-status: proposed
+status: accepted
 scope:
   - lib/default.nix
   - features/**/*.nix
@@ -15,8 +15,12 @@ constraint: |
 enforced_by:
   - lib/default.nix#unstableFor
 supersedes: ADR-559bfe76f766
+ratified: 5ed090608367
+verified:
+  - by: josh@methyl-bazzite
+    at: 2026-11-04T21:48:41Z
 schema: 4
-version: 2
+version: 3
 ---
 
 Retires ADR-559bfe76f766, whose wording two hosts contradict today: the old text reads "read members as pkgs.unstable.<name> rather than pkgs.unstable itself". Its amendment ADR-361112a1df8e stays accepted and states this rule correctly, so this entity carries the same rule so the superseded wording stops binding. --supersedes names one document, and edit cannot repoint it, so the pair cannot be retired by a single entity; retiring the amendment too would add a second binding copy of the same rule.
