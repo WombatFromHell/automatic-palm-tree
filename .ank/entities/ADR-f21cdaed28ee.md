@@ -5,7 +5,7 @@ slug: shipped-shell-is-linted-whether-or-not-writeshel
 title: Shipped shell is linted, whether or not writeShellApplication wraps it
 created: 2026-11-04T21:29:33Z
 author: josh@methyl-bazzite
-status: proposed
+status: accepted
 scope:
   - features/*/*.sh
   - features/*/home.nix
@@ -16,8 +16,12 @@ scope:
 constraint: |
   A shipped shell helper is shellchecked before it ships - pkgs.writeShellApplication's checkPhase covers the wrapped ones, including text passed to it from a module, and tests/run.sh lints the unwrapped files directly - delivery may use pkgs.writeShellApplication or pkgs.writeShellScriptBin where runtimeInputs would pull the session's own tools into the closure, and a helper that does real work is also tested in tests/<tool>.bats against PATH stubs.
 supersedes: ADR-3d145b52bf25
+ratified: 2f7127d04ef3
+verified:
+  - by: josh@methyl-bazzite
+    at: 2026-11-04T21:48:41Z
 schema: 4
-version: 1
+version: 2
 ---
 
 Retires ADR-3d145b52bf25, whose demand that every helper be a .sh file delivered by writeShellApplication plus builtins.readFile still binds, and whose "behaviour never lives inline in a Nix module" still binds against shell that ships from modules. Its amendment ADR-5145c0c33c29 stays accepted and states this rule correctly; this entity carries the same rule, with the scope widened to features/*/*.sh (the old features/*.sh glob matched no tracked file) and features/*/nixos.nix added, so the superseded wording stops binding. --supersedes names one document, and edit cannot repoint it, so the pair cannot be retired by a single entity; retiring the amendment too would add a second binding copy of the same rule.
