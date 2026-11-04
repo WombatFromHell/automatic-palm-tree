@@ -65,7 +65,10 @@ let
 
   # lib/filesystems.nix, exported so the suites and the builders' specialArgs read one module
   # set instead of re-importing it. Lazy.
-  fs = import ../lib/filesystems.nix {inherit lib;};
+  fs = import ../lib/filesystems.nix {
+    inherit lib;
+    nixpkgs = flake.inputs.nixpkgs;
+  };
 
   # The derivations our feature _package.nix files produce, called exactly as production does
   # (hm-brave reads pkgs.unstable, hm-zed picks the noFHS variant). Written once for wrap.nix,

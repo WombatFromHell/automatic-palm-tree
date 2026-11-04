@@ -56,7 +56,10 @@
   # the file. Reached from nixosSystem, HM integration, and standalone HM configs below.
   inputArgs = {
     inherit inputs;
-    fsLib = import (self + /lib/filesystems.nix) {inherit lib;};
+    fsLib = import (self + /lib/filesystems.nix) {
+      inherit lib;
+      nixpkgs = inputs.nixpkgs;
+    };
   };
 
   # ── helper: Home Manager wiring for NixOS hosts ──

@@ -5,9 +5,9 @@
 # `options` is a list; an entry's `options` replaces the defaults' (NixOS semantics, keeps
 # `/boot` on vfat correct). `subvol` is sugar for one trailing `subvol=…` option. Sugar keys
 # may sit in defaults or on an entry.
-{lib}: let
-  inherit (builtins) intersectAttrs isString removeAttrs replaceStrings;
-  inherit (lib) concatStringsSep filterAttrs mapAttrs mapAttrsToList optional optionalAttrs removePrefix zipAttrsWith concatLists;
+{lib, nixpkgs}: let
+  inherit (builtins) intersectAttrs isString removeAttrs;
+  inherit (lib) concatStringsSep filterAttrs mapAttrs mapAttrsToList optional optionalAttrs zipAttrsWith concatLists;
 
   merge = defaults: entry: let
     all = defaults // entry;
@@ -19,9 +19,20 @@
         ++ optional (isString (all.subvol or null)) "subvol=${all.subvol}";
     };
 
-  # ponytail: assumes paths without `-` or special chars; use
-  # `utils.escapeSystemdPath` (NixOS module arg) if a mount point ever needs them.
-  unitName = where: replaceStrings ["/"] ["-"] (removePrefix "/" where);
+  # systemd.unit(5) escaping, taken from nixpkgs' own utils: '/' -> '-', every character
+  # outside [A-Za-z0-9:_.] (including '-') -> "\xNN". fsLib is not a module, so the module
+  # argset's `utils` is not in scope here; config/pkgs are unused by this function.
+  # A path systemd cannot represent (e.g. "/mnt/../x") throws instead of writing a unit that
+  # fails at boot -- the old slash-swap silently produced `mnt-..-x`.
+  inherit
+    (import (nixpkgs + /nixos/lib/utils.nix) {
+      inherit lib;
+      config = {};
+      pkgs = {};
+    })
+    escapeSystemdPath;
+
+  unitName = escapeSystemdPath;
 in {
   # -> attrset for `fileSystems`. An empty option list is dropped so NixOS defaults apply.
   mkMounts = defaults:

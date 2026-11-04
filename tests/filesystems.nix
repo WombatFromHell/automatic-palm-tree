@@ -24,6 +24,23 @@ in
           fsType = "vfat";
         }))
 
+    # The unit name is what systemd derives from the mount point, so '-' and a
+    # space must be escaped, not swapped for a dash: '/mnt/a-b' would otherwise name the
+    # unit of '/mnt/a/b' and pair with the wrong automount.
+    (ck "unitName escapes a path containing '-' and a space"
+      ((fs.unitName "/mnt/a-b") == "mnt-a\\x2db"
+        && (fs.unitName "/mnt/a b") == "mnt-a\\x20b"
+        && (fs.unitName "/mnt/a/b") == "mnt-a-b"))
+    # The pairing the escaping exists for: the mount names the automount systemd will create.
+    (ck "an automount at a path containing '-' pairs with the escaped unit"
+      (let
+        u = unit {} {"/mnt/a-b" = {what = "/dev/a"; automount = true;};};
+        d = "mnt-a\\x2db.automount";
+      in
+        lib.elem d (builtins.head u.mounts).requires
+        && lib.elem d (builtins.head u.mounts).after
+        && (builtins.head u.automounts).where == "/mnt/a-b"))
+
     # `options` is NixOS semantics: an entry replaces the defaults, it does not extend them.
     (ck "entry options replace defaults"
       (mk {options = ["noatime"];} {options = ["nodev"];} == {options = ["nodev"];}))
