@@ -5,15 +5,19 @@ slug: eval-tier-assertions-are-nix-unit-test-attribute
 title: Eval-tier assertions are nix-unit test attributes, run in one scoped invocation
 created: 2026-11-05T02:31:01Z
 author: nix-unit-suite
-status: proposed
+status: accepted
 scope:
   - tests/*.nix
   - tests/run.sh
 constraint: |
   An eval-tier assertion is a test* attribute of a suite attrset run by nix-unit, compared with expr/expected or expectedError.msg for a must-throw check; builtins.tryEval must never stand in for one and tests/red/*.nix guards must not exist, the merged suites run in one scoped nix-unit invocation through tests/nix-eval.sh, and a suite that contributes no test* attribute must fail the gate rather than pass vacuously.
 supersedes: ADR-6d64e5609b7c
+ratified: a92d2a823056
+verified:
+  - by: josh@methyl-bazzite
+    at: 2026-11-05T03:33:55Z
 schema: 4
-version: 1
+version: 2
 ---
 
 The gate today runs 37 nix processes, 16 of them tests/red guards at ~0.45s each (measured: red tier 7s, whole gate ~44s). nix-unit gives per-test failure isolation with a trace and a real diff, and its expectedError attribute covers the must-throw contract the guards cover, so the guard files, the '# expect:' marker the gate parses (run.sh:237) and the guard loop all go away.
