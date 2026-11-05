@@ -2,8 +2,8 @@
 # Nothing here builds: assertions force option values, never derivations.
 #
 # `builtins.tryEval` cannot gate on errors in this Nix (a deferred error is a
-# value, so tryEval reports success), so "this must throw" checks live in
-# tests/red/ and are gated on the exit status by tests/run.sh.
+# value, so tryEval reports success), so "this must throw" checks are nix-unit
+# attributes carrying `expectedError`, gated on the exit status of tests/suite.nix.
 let
   root = ../.;
   flake = builtins.getFlake (toString root);

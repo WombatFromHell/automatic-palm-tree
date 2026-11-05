@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Eval-only test gate. Green suites must print "OK <suite>"; red guards in
-# tests/red/ must throw, with the message named in their first line
-# (`# expect: <substring>`). Nothing here builds a real package: the exceptions are
+# Eval-only test gate. Green suites must print "OK <suite>"; the value-tier assertions run as
+# nix-unit test attributes (tests/suite.nix), where a must-throw check is an `expectedError`
+# attribute rather than a separate file. Nothing here builds a real package: the exceptions are
 # tests/appdir.nix, which builds a synthetic AppDir fixture and downloads nothing,
 # tests/shellwrap.nix, which builds the three writeShellApplication wrappers so nixpkgs' shellcheck
 # runs on the text that ships, and tests/yazi-install.nix, which unpacks the pinned yazi sources
@@ -261,20 +261,5 @@ if [ "$par" = 0 ]; then
 else
   fail=1
 fi
-
-for guard in tests/red/*.nix; do
-  want=$(head -n 1 "$guard" | sed 's/^# expect: //')
-  if out=$(TEST_SCOPE_NAME="red-$(basename "$guard" .nix)" tests/nix-eval.sh "$mem" -- nix eval --impure --file "$guard" 2>&1); then
-    echo "FAIL $guard  expected a throw mentioning \"$want\""
-    fail=1
-  elif case "$out" in *"$want"*) true ;; *) false ;; esac then
-    split_peak "$out"
-    echo "ok   $guard  $peak"
-  else
-    echo "FAIL $guard  expected \"$want\""
-    echo "$out" | tail -8
-    fail=1
-  fi
-done
 
 exit "$fail"

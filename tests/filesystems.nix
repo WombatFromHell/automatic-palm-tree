@@ -3,9 +3,9 @@
 # evaluated, no host config forced.
 #
 # The attributes whose value must throw carry `expectedError` (type + message substring), which is
-# what the tests/red/ guards asserted. The types are what nix-unit reports for this module:
-# `TypeError` for lib/filesystems.nix's own typeCheck, `EvalError` for a missing attribute,
-# `ThrownError` for nixpkgs' `throw`.
+# what the guards that used to live in tests/red/ asserted. The types are the ones nix-unit
+# reports here: `TypeError` when `//` or `++` gets the wrong shape, `EvalError` for a missing
+# attribute, `ThrownError` for a `throw`.
 let
   s = import ./support.nix;
   inherit (s) lib fs;

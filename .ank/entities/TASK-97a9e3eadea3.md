@@ -5,7 +5,7 @@ slug: eval-suites-run-as-nix-unit-test-attributes-in-o
 title: Eval suites run as nix-unit test attributes in one scoped invocation
 created: 2026-11-05T02:31:52Z
 author: nix-unit-suite
-status: open
+status: done
 scope:
   - tests/suite.nix
   - tests/filesystems.nix
@@ -22,8 +22,17 @@ done_criteria: |
 criteria_by: creator
 verify: [gate]
 method: tdd
+proof:
+  - type: test
+    ref: local/841b784c61df@ede860e
+    tree: scope/01267c345417
+    criteria: 404add9f4d56
+    verifier: gate@dc484de6fdb9
+    via: verifier
+    reused: local
+    by: nix-unit-suite
 schema: 4
-version: 1
+version: 2
 ---
 
 PLAN-nix-unit.md S1-S3. Verified against the binary: --flake and file arguments both work, --impure is required because tests/support.nix calls builtins.getFlake, expectedError needs msg or type (msg alone is accepted), an empty attrset prints 0/0 and exits 0, and difftastic is inside the package wrapper.

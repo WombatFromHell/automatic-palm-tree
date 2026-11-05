@@ -117,7 +117,8 @@ let
     (ck "hm-base's CLI packages land in home.packages"
       (lib.all (s.hasPkg cfg.home.packages) ["fish" "starship" "ripgrep" "atuin"]))
 
-    # Must-throw guards for this suite live in tests/red/home-config-is-not-nixos.nix.
+    # Its must-throw side lives in tests/loader.nix, since this suite forces a real host
+    # config and so stays outside the nix-unit process.
   ];
 in
   suite "home" checks
