@@ -3,33 +3,21 @@
 # ~2GB that forcing `config.warnings` costs on a host is not paid here.
 let
   core = import ./support.nix;
-  inherit (core) lib ck suite assertWarnStubs flakeHostStub desktopStubs failingAssertions hostsAt;
+  inherit (core) lib ck suite flakeHostStub desktopStubs failingAssertions hostsAt;
   featurePaths = core.features;
 
   eval = warnings:
-    (lib.evalModules {
-      modules = [
-        assertWarnStubs
-        ../modules/warnings-gate.nix
-        {inherit warnings;}
-      ];
-    }).config;
+    core.bareEval [../modules/warnings-gate.nix] {inherit warnings;} {};
 
   # A fixture host that asks for both desktop environments: GDM owns the login screen,
   # so the Plasma session is the thing the greeter loses. Bare eval - no NixOS, no build.
+  # gnome.nix hands a package to environment.systemPackages; the stub keeps that check phase
+  # satisfied without instantiating anything.
   desktop = features:
-    (lib.evalModules {
-      modules = [
-        assertWarnStubs
-        flakeHostStub
-        desktopStubs
-        ../modules/warnings-gate.nix
-        {imports = featurePaths.resolveFeaturePaths features "nixos";}
-      ];
-      # gnome.nix hands a package to environment.systemPackages; the stub keeps that
-      # check phase satisfied without instantiating anything.
-      specialArgs = {pkgs = {gnome-tweaks = {name = "gnome-tweaks";};};};
-    }).config;
+    core.bareEval
+    [flakeHostStub desktopStubs ../modules/warnings-gate.nix]
+    {imports = featurePaths.resolveFeaturePaths features "nixos";}
+    {pkgs = {gnome-tweaks = {name = "gnome-tweaks";};};};
 
   bothDesktops = (hostsAt ./fixtures).discoveredHosts.desktophost.features;
 in

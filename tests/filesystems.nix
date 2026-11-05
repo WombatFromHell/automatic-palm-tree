@@ -4,10 +4,12 @@ let
   inherit (s) lib ck suite fs;
 
   mk = defaults: entry: (fs.mkMounts defaults {"/m" = entry;})."/m";
-  unit = defaults: units: fs.mkUnitMounts defaults units;
-  mount1 = u: builtins.head u.mounts;
-  auto1 = u: builtins.head u.automounts;
-  has = k: m: builtins.hasAttr k m;
+  # One mount point, both units from one eval. Checks that need a specific path (the escaped
+  # unit name and joinUnitMounts) call fs.mkUnitMounts directly, since the name is derived
+  # from the path.
+  unit = defaults: entry: fs.mkUnitMounts defaults {"/mnt/x" = entry;};
+  mount = defaults: entry: builtins.head (unit defaults entry).mounts;
+  auto = defaults: entry: builtins.head (unit defaults entry).automounts;
 in
   suite "filesystems" [
     # mkMounts -> `fileSystems` attrsets
@@ -35,7 +37,7 @@ in
     # The pairing the escaping exists for: the mount names the automount systemd will create.
     (ck "an automount at a path containing '-' pairs with the escaped unit"
       (let
-        u = unit {} {
+        u = fs.mkUnitMounts {} {
           "/mnt/a-b" = {
             what = "/dev/a";
             automount = true;
@@ -61,7 +63,7 @@ in
 
     # mkUnitMounts -> { mounts, automounts }, both LISTS
     (ck "string shorthand sets what and keeps defaults"
-      (mount1 (unit {type = "btrfs";} {"/mnt/x" = "/dev/x";})
+      ((mount {type = "btrfs";} "/dev/x")
         == {
           what = "/dev/x";
           type = "btrfs";
@@ -72,107 +74,102 @@ in
 
     (ck "automount defaults to false"
       (let
-        u = unit {} {"/mnt/x" = {};};
+        u = unit {} {};
+        m = builtins.head u.mounts;
       in
-        u.automounts == [] && ! has "requires" (mount1 u) && ! has "after" (mount1 u)))
+        u.automounts
+        == []
+        && ! (builtins.hasAttr "requires" m)
+        && ! (builtins.hasAttr "after" m)))
 
     (ck "automount adds <unit>.automount to the mount's requires and after"
       (let
-        u = unit {} {
-          "/mnt/x" = {
-            what = "/dev/x";
-            automount = true;
-          };
+        m = mount {} {
+          what = "/dev/x";
+          automount = true;
         };
-        m = mount1 u;
       in
         m.requires == ["mnt-x.automount"] && m.after == ["mnt-x.automount"]))
 
     # The cycle guard: the automount is a lazy trigger, never a dependent.
     (ck "automount is whitelisted: no deps, options, what or type"
       (builtins.attrNames
-        (auto1 (unit {} {
-          "/mnt/x" = {
-            what = "/dev/x";
-            type = "btrfs";
-            automount = true;
-            requires = ["network-online.target"];
-            after = ["network-online.target"];
-            options = ["rw"];
-          };
-        }))
+        (auto {} {
+          what = "/dev/x";
+          type = "btrfs";
+          automount = true;
+          requires = ["network-online.target"];
+          after = ["network-online.target"];
+          options = ["rw"];
+        })
         == ["description" "wantedBy" "where"]))
 
     (ck "unitConfig and mountConfig pass by value; mountConfig stays on the mount"
       (let
         u = unit {} {
-          "/mnt/x" = {
-            what = "/dev/x";
-            automount = true;
-            mountConfig = {TimeoutSec = 5;};
-            unitConfig = {ConditionPathExists = "/dev/x";};
-          };
+          what = "/dev/x";
+          automount = true;
+          mountConfig = {TimeoutSec = 5;};
+          unitConfig = {ConditionPathExists = "/dev/x";};
         };
-        m = mount1 u;
-        a = auto1 u;
+        m = builtins.head u.mounts;
+        a = builtins.head u.automounts;
       in
         m.mountConfig
         == {TimeoutSec = 5;}
         && m.unitConfig == {ConditionPathExists = "/dev/x";}
         && a.unitConfig == {ConditionPathExists = "/dev/x";}
-        && ! has "mountConfig" a))
+        && ! (builtins.hasAttr "mountConfig" a)))
 
     (ck "options become a comma string"
-      (let u = unit {} {"/mnt/x" = {options = ["noatime" "nodev"];};}; in (mount1 u).options == "noatime,nodev"))
+      ((mount {} {options = ["noatime" "nodev"];}).options
+        == "noatime,nodev"))
     (ck "empty options become an empty string"
-      (let u = unit {} {"/mnt/x" = {};}; in (mount1 u).options == ""))
+      ((mount {} {}).options
+        == ""))
 
     (ck "skipIfMissing sets ConditionPathExists on both units and drops the sugar key"
       (let
         u = unit {} {
-          "/mnt/x" = {
-            what = "/dev/x";
-            automount = true;
-            skipIfMissing = true;
-          };
+          what = "/dev/x";
+          automount = true;
+          skipIfMissing = true;
         };
-        m = mount1 u;
-        a = auto1 u;
+        m = builtins.head u.mounts;
+        a = builtins.head u.automounts;
       in
         m.unitConfig.ConditionPathExists
         == "/dev/x"
         && a.unitConfig.ConditionPathExists == "/dev/x"
-        && ! has "skipIfMissing" m
-        && ! has "skipIfMissing" a))
+        && ! (builtins.hasAttr "skipIfMissing" m)
+        && ! (builtins.hasAttr "skipIfMissing" a)))
 
     (ck "wantedBy and descriptions default, entries win"
       (let
         u = unit {} {
-          "/mnt/x" = {
-            what = "/dev/x";
-            automount = true;
-            wantedBy = ["graphical-session.target"];
-            description = "Data disk";
-          };
+          what = "/dev/x";
+          automount = true;
+          wantedBy = ["graphical-session.target"];
+          description = "Data disk";
         };
-        m = mount1 u;
-        a = auto1 u;
+        m = builtins.head u.mounts;
+        a = builtins.head u.automounts;
       in
         a.wantedBy
         == ["graphical-session.target"]
         && m.description == "Data disk"
         && a.description == "Data disk"
-        && (auto1 (unit {} {"/mnt/x" = {automount = true;};})).wantedBy == ["multi-user.target"]))
+        && (auto {} {automount = true;}).wantedBy == ["multi-user.target"]))
 
     (ck "joinUnitMounts merges groups in order and yields {} on no groups"
       (let
-        a = unit {} {
+        a = fs.mkUnitMounts {} {
           "/a" = {
             what = "/dev/a";
             automount = true;
           };
         };
-        b = unit {} {
+        b = fs.mkUnitMounts {} {
           "/b" = {
             what = "/dev/b";
             automount = true;

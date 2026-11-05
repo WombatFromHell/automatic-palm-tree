@@ -147,6 +147,15 @@ let
     };
   };
 
+  # A bare module eval over suite modules: warnings and assertions declared, the
+  # suite's own stub options added, and no NixOS or Home Manager module set pulled in. Only the
+  # plumbing is shared; the stubs a suite needs to read back stay in that suite.
+  bareEval = stubs: attrs: specialArgs:
+    (lib.evalModules {
+      modules = [assertWarnStubs] ++ stubs ++ [attrs];
+      inherit specialArgs;
+    }).config;
+
   assertWarnStubs = {
     options.warnings = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -172,12 +181,16 @@ let
   # the messages. Forcing a *host's* `config.assertions` would force `config.warnings` too.
   failingAssertions = cfg: builtins.filter (a: !a.assertion) cfg.assertions;
 
-  # Whether a config carries a package by name. The name lives on the derivation
-  # (`pname`, falling back to `name`); `set ? name` only accepts a literal path.
+  # The copies of one derivation that reached a package list, by name. The name lives on the
+  # derivation (`pname`, falling back to `name`); `set ? name` only accepts a literal path.
   # An attrset key is not in scope inside the attrset, so this is one binding.
-  # A hit stops at the first match; a miss has to scan the whole list, which is why absence
-  # is asserted elsewhere (tests/configs.nix reads namespaces, units and options).
+  pkgNamed = ps: name: lib.filter (p: (p.pname or p.name) == name) ps;
+  # Existence, lazily: `lib.any` stops at the first match, so a hit never forces the packages
+  # after it (tests/loader.nix asserts that with a throwing later element). The full-scan forms
+  # below are for counting, where forcing everything is the point.
   hasPkg = ps: name: lib.any (p: (p.pname or p.name) == name) ps;
+  # Copies on PATH: a feature that lands twice is a config bug, not a host choice.
+  countPkg = ps: name: builtins.length (pkgNamed ps name);
 
   # A check is {name, ok}. A false `ok` is collected and reported together;
   # an expression that throws fails the suite loudly, which is the point.
@@ -194,7 +207,7 @@ let
     then "OK ${name}"
     else throw "${name}: FAILED ${lib.concatStringsSep ", " failed}";
 in {
-  inherit lib flake features featuresAt hostLib hostsAt fixtureHost builders hmCfg assertWarnStubs flakeHostStub desktopStubs failingAssertions hasPkg ck suite fs rawFeaturePkgs;
+  inherit lib flake features featuresAt hostLib hostsAt fixtureHost builders hmCfg bareEval assertWarnStubs flakeHostStub desktopStubs failingAssertions pkgNamed hasPkg countPkg ck suite fs rawFeaturePkgs;
   hosts = hostsAt root;
   pkgs = pkgsSet;
 }

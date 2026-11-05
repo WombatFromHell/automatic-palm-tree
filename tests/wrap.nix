@@ -51,7 +51,7 @@ let
     # Order-sensitive: the wrapper must exec through nixGL's combined wrapper, not merely mention it.
     && builtins.match ".*makeWrapper.*nixGLCombinedWrapper.*" ghosttyWrapText != null;
 
-  occurrences = cfg: name: lib.count (p: (p.pname or p.name) == name) cfg.home.packages;
+  occurrences = cfg: name: s.countPkg cfg.home.packages name;
 
   # pnames as Home Manager sees them: brave's derivation is brave-bin, zed's zed-editor-bin.
   names = lib.attrNames raw;

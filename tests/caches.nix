@@ -4,7 +4,7 @@
 # never resolves the registry's nixpkgs (a different rev, and a Git fetch mid-gate).
 let
   core = import ./support.nix;
-  inherit (core) lib ck suite assertWarnStubs failingAssertions;
+  inherit (core) lib ck suite failingAssertions;
 
   # The registry the module reads, so the expected urls/keys are the real ones.
   inherit (import ../modules/cache-registry.nix) registry;
@@ -24,26 +24,17 @@ let
   };
 
   eval = enable: required:
-    (lib.evalModules {
-      modules = [
-        assertWarnStubs
-        stubs
-        ../modules/caches.nix
-        {
-          flakeCache.enable = enable;
-          flakeCache.required = required;
-        }
-      ];
-    }).config;
-
-  evalCfg = enable: required: eval enable required;
+    core.bareEval [stubs ../modules/caches.nix] {
+      flakeCache.enable = enable;
+      flakeCache.required = required;
+    } {};
 in
   suite "caches" [
     # The warning's message is a multi-line string and its first line names the url, so the
     # "which cache" check has to look at the line that carries the fix.
     (ck "a required cache the host does not substitute from is warned by name"
       (let
-        cfg = evalCfg [] {nix-community = true;};
+        cfg = eval [] {nix-community = true;};
         head = builtins.head cfg.warnings;
       in
         (builtins.length cfg.warnings == 1)
@@ -51,33 +42,33 @@ in
         && (lib.any (line: lib.hasSuffix "Add \"nix-community\" to" line) (lib.splitString "\n" head))))
 
     (ck "a required cache that is enabled produces no warning"
-      ((evalCfg ["nix-community"] {nix-community = true;}).warnings == []))
+      ((eval ["nix-community"] {nix-community = true;}).warnings == []))
 
-    (ck "ready is false while a required cache is disabled" (!(evalCfg [] {kait2en = true;}).flakeCache.ready))
+    (ck "ready is false while a required cache is disabled" (!(eval [] {kait2en = true;}).flakeCache.ready))
     (ck "ready is true when every required cache is enabled"
-      (evalCfg ["kait2en" "nix-community"] {
+      (eval ["kait2en" "nix-community"] {
         kait2en = true;
         nix-community = true;
       }).flakeCache.ready)
-    (ck "ready is true when nothing is required" (evalCfg [] {}).flakeCache.ready)
+    (ck "ready is true when nothing is required" (eval [] {}).flakeCache.ready)
 
     (ck "a required cache outside the registry fails an assertion"
       (let
-        failed = failingAssertions (evalCfg ["nix-community"] {bogus-cache = true;});
+        failed = failingAssertions (eval ["nix-community"] {bogus-cache = true;});
       in
         (builtins.length failed == 1)
         && (lib.hasPrefix "flakeCache.required names unknown cache(s)" (builtins.head failed).message)))
 
     (ck "substituters and keys come from the enabled caches in order"
       (let
-        cfg = evalCfg ["nix-community" "xilopkgs"] {};
+        cfg = eval ["nix-community" "xilopkgs"] {};
       in
         (cfg.nix.settings.extra-substituters == [registry.nix-community.url registry.xilopkgs.url])
         && (cfg.nix.settings.extra-trusted-public-keys == [registry.nix-community.publicKey registry.xilopkgs.publicKey])))
 
     (ck "no caches means no substituters and no keys"
       (let
-        cfg = evalCfg [] {};
+        cfg = eval [] {};
       in
         (cfg.nix.settings.extra-substituters == []) && (cfg.nix.settings.extra-trusted-public-keys == [])))
   ]
