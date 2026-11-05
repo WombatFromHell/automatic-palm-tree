@@ -37,7 +37,7 @@ fail=0
 # text it wraps. These are shipped as-is, so the gate lints them itself (~0MB, ~1s, no nix).
 # shortcut: inline text passed to writeShellScriptBin (features/hm-gpg/home.nix's pinentry-fallback)
 # is not covered here -- upgrading means routing that text through a wrapper the gate builds.
-lint_files=(bootstrap.sh update-all.sh lib/updater.sh
+lint_files=(bootstrap.sh update-all.sh lib/updater.sh lib/cache-check.sh
   features/hm-gpg/pinentry-tmux.sh features/hm-gpg/pinentry-zellij.sh
   features/hm-nasmount/nasmount-sshfs.sh)
 if ! command -v shellcheck >/dev/null 2>&1; then
@@ -82,6 +82,11 @@ gate() {
 # tools they need must resolve from the devShell, not from whatever the host installed.
 gate "nix develop resolves the updater tools" devshell nix develop --command \
   bash -c 'command -v curl jq nix bats shellcheck shfmt >/dev/null'
+
+# apps.cache-check is a real `nix run` of the app, so it is capped like the rest: forcing one
+# host config is the eval it does (~1.6GB peak, measured here), which the stub bats loop below
+# would run unmeasured.
+gate "tests/cache-check.bats" cache-check bats tests/cache-check.bats
 
 # Eval-only suites, listed explicitly. The six .nix files not here are not eval-only:
 # support.nix is a fixture library, configs.nix evaluates one host per process, and

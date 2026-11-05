@@ -3,6 +3,8 @@
 # evaluate that host's toplevel: even `x.type` on a derivation costs ~700MB, because the
 # derivation attrset is merged. Proving the derivations themselves is `nix flake check`'s job —
 # it builds them — and that is out of this suite's memory budget on a RAM-constrained box.
+# Exceptions: the devShell and cache-check app are tiny derivations (mkShell / a shell script),
+# so reading their attrsets is what proves the tools and the wording without a host toplevel.
 # ~8s.
 let
   s = import ./support.nix;
@@ -31,17 +33,39 @@ let
   shellTools = (shell.drvAttrs.nativeBuildInputs or []) ++ (shell.drvAttrs.buildInputs or []);
   hasTool = tool: lib.any (p: lib.toLower (p.pname or p.name or "") == tool) shellTools;
 
+  # cache-check is the eval-only pre-flight (lib/cache-check.sh). It filters the warnings
+  # modules/caches.nix writes, so the script it runs must carry that prefix, not paraphrase it.
+  cacheCheck = out.apps.x86_64-linux.cache-check;
+  cacheScript = builtins.readFile ../lib/cache-check.sh;
+
   checks = [
-    (ck "the flake exposes configurations, checks and a devShell"
-      (lib.attrNames out == ["checks" "devShells" "homeConfigurations" "nixosConfigurations"]))
+    (ck "the flake exposes configurations, checks, apps and a devShell"
+      (lib.attrNames out
+        == [
+          "apps"
+          "checks"
+          "devShells"
+          "homeConfigurations"
+          "nixosConfigurations"
+        ]))
     (ck "the devShell is keyed by supported system" (lib.attrNames out.devShells == ["x86_64-linux"]))
     (ck "the devShell carries the tools the pin updaters need"
       (lib.all hasTool ["curl" "jq" "nix" "bats" "shellcheck" "shfmt"]))
+    # Keyed by the same systems the devShell covers, i.e. every system a host runs on.
+    (ck "cache-check exists on every supported system"
+      (lib.attrNames out.apps == lib.attrNames out.devShells
+        && lib.all (system: builtins.hasAttr "cache-check" out.apps.${system}) (lib.attrNames out.apps)))
+    # An app, not a bare derivation: `nix run` needs {type = "app"; program = <exe path>}.
+    (ck "cache-check is a runnable app whose script filters the module's own warnings"
+      (cacheCheck.type == "app"
+        && lib.hasSuffix "cache-check" cacheCheck.program
+        && lib.hasInfix "flakeCache:" cacheScript))
     (ck "checks are keyed by supported system" (lib.attrNames out.checks == ["x86_64-linux"]))
     (ck "every configuration gets a check named after it"
       (lib.attrNames out.checks.x86_64-linux == expectedChecks))
     (ck "nixosConfigurations covers exactly the isNixOS hosts"
-      (lib.attrNames out.nixosConfigurations == (lib.filter (h: hosts.${h}.isNixOS) (lib.attrNames hosts))))
+      (lib.attrNames out.nixosConfigurations
+        == (lib.filter (h: hosts.${h}.isNixOS) (lib.attrNames hosts))))
     (ck "homeConfigurations are keyed user@host"
       (lib.attrNames out.homeConfigurations == expectedHomeKeys))
   ];

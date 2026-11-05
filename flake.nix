@@ -75,6 +75,24 @@
         // (mkChecks system "home" (config: config.activationPackage))
     );
 
+    # Eval-only cache pre-flight (lib/cache-check.sh): which caches an enabled feature asks for
+    # that this host does not substitute from, i.e. what will be built locally instead. Running
+    # it forces the host config only - no build - so it is safe on a RAM-constrained host.
+    apps = lib.genAttrs supportedSystems (
+      system:
+      let pkgs = cfg.pkgsFor.${system};
+      in {
+        # `nix run` needs an app: {type, program}. writeShellApplication alone is a derivation.
+        cache-check = {
+          type = "app";
+          program = lib.getExe (pkgs.writeShellApplication {
+            name = "cache-check";
+            text = builtins.readFile ./lib/cache-check.sh;
+          });
+        };
+      }
+    );
+
     # The pin updaters (features/*/update.sh -> lib/updater.sh) and the eval gate need these
     # six tools; `nix develop` is where they resolve rather than whatever the host installed.
     devShells = lib.genAttrs supportedSystems (
