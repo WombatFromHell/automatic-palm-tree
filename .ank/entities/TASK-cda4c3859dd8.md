@@ -5,7 +5,7 @@ slug: delete-the-tests-red-tier-and-bring-the-gate-doc
 title: Delete the tests/red tier and bring the gate documents back to what run.sh does
 created: 2026-11-05T02:31:52Z
 author: nix-unit-suite
-status: open
+status: done
 scope:
   - tests/red
   - tests/run.sh
@@ -15,8 +15,15 @@ done_criteria: |
   bash tests/run.sh exits 0 and ank check reports no fault.
 criteria_by: creator
 verify: [gate]
+proof:
+  - type: test
+    ref: local/010a5baf8cad@fe09f85
+    tree: scope/770ba436fed6
+    criteria: a31b02a100b4
+    verifier: gate@dc484de6fdb9
+    via: verifier
 schema: 4
-version: 1
+version: 2
 ---
 
 PLAN-suite-audit.md step 3, PLAN-nix-unit.md S4. The stale numbers: TEST_DESIGN.md claims the largest per-eval peak is 921MB (home.nix) and fixture builds cost 8/5/4/10s; measured now 965MB and 0/2/1/1s on a warm store.
