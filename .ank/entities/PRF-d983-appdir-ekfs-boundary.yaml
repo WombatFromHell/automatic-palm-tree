@@ -1,0 +1,38 @@
+id: PRF-d983-appdir-ekfs-boundary
+type: proof
+status: confirmed
+summary: TASK-d983 - the EKFs rewrite is confined to four shipped paths
+covers:
+  - TASK-d983
+source: human
+evidence:
+  - >
+    commit 3e43d3f (main): tests/appdir.nix plants the four upstream EKFs
+    carriers and asserts `grep -rl 'EKFs' "$P"` equals exactly
+    lib/libfontconfig.so.1.17.0, lib/libglycin_ng.so, lib/libgtk-4.so.1.2400.1
+    and shared/bin/ghostty; it also plants one inside AppRun, which
+    installPhase deletes.
+  - >
+    Measured on the substituted real payload
+    (/nix/store/zq7ymrda0bdsbih9kpnqwlfh349z3brk-ghostty-bin-1.4.0): those four
+    files carry /tmp/EKFs=, so "no /tmp/EKFs= anywhere in the tree" was false
+    on a real build and vacuously true on the old fixture. The criterion was
+    amended before any claim (ank amend, version 1 to 2).
+  - >
+    Fixture carriers, read back from the built tree
+    (/nix/store/qxw2vv7qqbx2c79xg0qjgx6vn0vqngh3-ghostty-bin-1.4.0): exactly
+    those four.
+  - >
+    The assertion bites: seeding /tmp/EKFs= into bin/ghostty (a file the
+    installPhase keeps) makes the tier fail - .pi/probe/appdir-ekfs.nix builds
+    with "builder failed with exit code 1", and the same seed on a copied tree
+    lists five carriers against the expected four.
+  - >
+    bash tests/run.sh exit 0, 49 checks ok; tests/appdir.nix peak=78MB swap=0,
+    no download. TEST_DESIGN.md's figures follow the measurement.
+note: |
+  features/hm-ghostty/_package.nix's shortcut comment now names this guard
+  instead of standing alone. The probe is untracked (.pi/probe/), since a guard
+  for the guard costs a build and is not the contract. Not checked: whether a
+  future Ghostty pin changes which paths carry the placeholder - the carrier
+  list is then a hard failure by design, which is the point.

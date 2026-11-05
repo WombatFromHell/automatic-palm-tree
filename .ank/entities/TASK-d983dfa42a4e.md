@@ -11,11 +11,11 @@ scope:
   - tests/appdir.nix
 blocked_by: []
 done_criteria: |
-  tests/appdir.nix asserts the built store path contains no /tmp/EKFs= string anywhere in the tree, so the AppDir's bundled-lib rewrite is proven at build time, and the tier stays green.
+  tests/appdir.nix plants the four upstream EKFs carriers in the fixture AppDir and asserts the built store path carries /tmp/EKFs= in exactly those paths, so a rewritten path in anything the installPhase itself writes, or in scaffolding it should have deleted, fails the build tier, and bash tests/run.sh stays green.
 criteria_by: creator
 method: diagnose
 schema: 4
-version: 1
+version: 2
 ---
 
 features/hm-ghostty/_package.nix:26 records the limit: the AppDir's bundled libraries carry
