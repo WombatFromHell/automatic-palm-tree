@@ -128,8 +128,8 @@ Splitting is not cosmetic: forcing three host configs in one eval peaks at ~2.1G
 per-eval peak 921MB (`tests/home.nix`, the standalone profile, which forces its Home Manager
 users plus the host's own home module and the three `_package.nix` derivations it compares
 against), `wrap` 707MB (derivation-text checks read drvAttrs, so no .drv is realized), host configs 655–680MB, pure suites under 33MB, the appdir
-fixture build 88MB with no download, the yazi-install fixture build 207MB (two pinned sources
-unpacked, nothing compiled), and the shellwrap fixture 243MB (nixpkgs' shellcheck is the work). The
+fixture build 78MB with no download, the yazi-install fixture build 199MB (two pinned sources
+unpacked, nothing compiled), and the shellwrap fixture 233MB (nixpkgs' shellcheck is the work). The
 seven bats suites print no `peak=`: they run stubs in the open environment, a few seconds together.
 
 ## Build telemetry, outside the gate
@@ -221,8 +221,8 @@ flowchart TD
   subgraph wrap["wrap.nix — nixGL around derived packages, ~3s, peak ~925MB"]
     WR1["three fixture configs built by lib/builders.nix itself (support.fixtureHost + hmCfg,<br/>so a builder change breaks this suite): a NixOS side, a<br/>standalone side with the default wrapper, and a standalone side setting<br/>features.nixgl.wrapper = nvidiaPrime (hm-nixgl, hm-brave, hm-zed, hm-ghostty in all three).<br/>hm-nixgl sets packages only on the non-NixOS side; wrapGpu is identity there and returns<br/>a distinct derivation here, and delegates to Home Manager's own lib.nixGL.wrap; defaultWrapper<br/>follows the host's option (mesa on both default sides, nvidiaPrime when set) — the Nvidia<br/>wrapper itself cannot be forced here, because nixGL's Nvidia wrapper reads the host driver<br/>version and gets null. pname and version survive the wrap; programs.chromium's<br/>commandLineArgs branch fires on both sides and the overridden package keeps its<br/>pname/version, and wrapGpu stays identity on the overridden derivation on the NixOS side<br/>(the branch is an option value, so it is asserted as one rather than by forcing Home<br/>Manager's chromium override chain); each package reaches home.packages exactly once;<br/>brave's .drv wraps its bin entries only when commandLineArgs are set;<br/>the wrapped Ghostty still links the AppDir (`cp -rs`) and execs its launcher through<br/>nixGL's combined wrapper, so its /proc/self/exe AppDir resolution survives the wrap"]
   end
-  subgraph appdir["appdir.nix — fixture build, ~8s, peak ~88MB"]
-    AD1["features/hm-ghostty/_package.nix's real installPhase against a synthetic AppDir built<br/>from one tree table (kept, relocated, dropped, left alone):<br/>bin/ghostty kept and executable, AppRun / sharun / dash / .env / .DirIcon and<br/>bin/*.hook dropped, desktop entry and icon moved into share/ not copied,<br/>and the resource trees left alone"]
+  subgraph appdir["appdir.nix — fixture build, ~8s, peak ~78MB"]
+    AD1["features/hm-ghostty/_package.nix's real installPhase against a synthetic AppDir built<br/>from one tree table (kept, relocated, dropped, left alone):<br/>bin/ghostty kept and executable, AppRun / sharun / dash / .env / .DirIcon and<br/>bin/*.hook dropped, desktop entry and icon moved into share/ not copied,<br/>the resource trees left alone, and upstream's /tmp/EKFs= rewrite confined to<br/>the four bundled paths that carry it (lib/libfontconfig.so.1.17.0, lib/libglycin_ng.so,<br/>lib/libgtk-4.so.1.2400.1, shared/bin/ghostty) — anything else carrying one fails"]
   end
   subgraph yazi["yazi-install.nix — fixture build, peak ~207MB"]
     YZ1["features/hm-yazi/_package.nix's real postInstall over the two pinned sources:<br/>buildPhase and installPhase replaced and every Rust input dropped, so nothing<br/>compiles and no crate is fetched — completion files land in share/ from the<br/>revision actually pinned, which is what a bump would break"]

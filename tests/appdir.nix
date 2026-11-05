@@ -3,7 +3,8 @@
 # synthetic AppDir: the AppImage runtime is never executed, only the tree it would extract
 # (`squashfs-root/`). The assertions are the store-layout contract the desktop environment and
 # Home Manager read — bin/ghostty kept and executable, AppImage scaffolding dropped, the desktop
-# entry and icon moved into share/, and the resource trees left alone.
+# entry and icon moved into share/, the resource trees left alone, and upstream's `/tmp/EKFs=`
+# rewrite confined to the four bundled paths that actually carry it.
 #
 # Gated by tests/run.sh on the build's exit status, not on an evaluated value.
 let
@@ -17,6 +18,23 @@ let
   # The AppImage runtime's own entry points and hooks, which installPhase deletes — planted here,
   # asserted absent there, from one list.
   scaffolds = ["AppRun" "AppRun.sh" "AppRun.lib" "dash" "sharun" ".env" ".DirIcon"];
+
+  # Upstream's AppDir rewrite: four bundled paths carry a build-time `/tmp/EKFs=` placeholder
+  # (an X11 locale dir, iso-codes, a fontconfig conf dir) - measured on the substituted real
+  # payload. None is reachable here and the launcher's own env covers locales, schemas and fonts
+  # (features/hm-ghostty/_package.nix's shortcut). They are planted here so the carrier assertion
+  # below is about the shipped tree rather than about an empty fixture.
+  ekfsCarriers = [
+    "lib/libfontconfig.so.1.17.0"
+    "lib/libglycin_ng.so"
+    "lib/libgtk-4.so.1.2400.1"
+    "shared/bin/ghostty"
+  ];
+  plantEkfs =
+    lib.concatMapStringsSep "\n"
+    (f: ''printf '/tmp/EKFs=/usr/share/X11/locale
+' > squashfs-root/${f}'')
+    ekfsCarriers;
 
   # Resource trees the launcher resolves from its own AppDir, each with one file planted inside it.
   # The fixture plants them and the assertions read that file, so the tree list is written once and
@@ -56,6 +74,13 @@ let
           > squashfs-root/com.mitchellh.ghostty.desktop
         printf 'png' > squashfs-root/com.mitchellh.ghostty.png
 
+        # Upstream's bundled libs and launcher carry the rewritten build-time paths; the AppImage
+        # runtime, which installPhase deletes, carries one too - so a changed rm list shows up as
+        # a carrier rather than passing quietly.
+        mkdir -p squashfs-root/lib squashfs-root/shared/bin
+        ${plantEkfs}
+        printf '/tmp/EKFs=/usr/share/iso-codes\n' > squashfs-root/AppRun
+
         # Resource trees the launcher resolves from its own AppDir; none is relocated.
         ${plantTrees}
       '';
@@ -80,6 +105,12 @@ in
     done
 
     ${lib.concatMapStringsSep "\n" (t: ''test -e "$P/${t}/${trees.${t}}"'') (lib.attrNames trees)}
+
+    # Only the planted upstream carriers may hold the placeholder. A file this build writes itself
+    # (the launcher, the moved desktop entry, a resource tree) gaining a rewritten path, or
+    # scaffolding surviving with one, fails here instead of at runtime on the host.
+    carriers=$(grep -rl 'EKFs' "$P" | sed "s|^$P/||" | sort)
+    test "$carriers" = "$(printf '%s\n' ${lib.concatStringsSep " " ekfsCarriers} | sort)"
 
     mkdir -p $out
   ''

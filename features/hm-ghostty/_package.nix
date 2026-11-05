@@ -26,7 +26,8 @@ in
   # shortcut: the AppDir's bundled libs have build-time paths rewritten to /tmp/EKFs=
   # (X11 locale, iso-codes, a bundled fontconfig conf dir). None is reachable here and
   # the launcher's own env covers locales, schemas and fonts; upgrade if UI translation
-  # or a bundled font ever has to resolve.
+  # or a bundled font ever has to resolve. tests/appdir.nix holds the boundary: it plants
+  # those four carriers and fails if any other path in the shipped tree carries one.
   stdenv.mkDerivation (finalAttrs: {
     pname = "ghostty-bin";
     inherit version;
