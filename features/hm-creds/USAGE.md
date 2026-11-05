@@ -16,10 +16,10 @@ stdout only.
 
 The extension picks the backend:
 
-| record | backend | who can read it | how the key arrives |
-| --- | --- | --- | --- |
-| `NAME.cred` | systemd-creds | this machine only (UID + machine-id) | nothing to fetch — silent |
-| `NAME.sops.json` / `NAME.sops.yaml` | sops + age, recipients in the record's metadata | whoever holds a listed age key | an age identity file, read by sops itself — no prompt, no terminal |
+| record                              | backend                                         | who can read it                      | how the key arrives                                                |
+| ----------------------------------- | ----------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------ |
+| `NAME.cred`                         | systemd-creds                                   | this machine only (UID + machine-id) | nothing to fetch — silent                                          |
+| `NAME.sops.json` / `NAME.sops.yaml` | sops + age, recipients in the record's metadata | whoever holds a listed age key       | an age identity file, read by sops itself — no prompt, no terminal |
 
 `.cred` is what machine-local automation uses, because a systemd unit or an elevated `sudo` run can
 decrypt it with no prompt. The portable record that avoids a prompt is `.sops.json`: the key lives in a

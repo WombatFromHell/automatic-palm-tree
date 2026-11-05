@@ -362,6 +362,9 @@ flowchart LR
   E5["update-all.sh [--flake|--check]"] --> UP["features/*/update.sh, symlinked to<br/>lib/updater.sh; a copy is refused"]
   E6["bootstrap.sh --standalone [--install] [--rebind[=DIR]]"] --> IN["pinned upstream installer, ostree plan:<br/>--enable-flakes, --persistence <dir> for a relocated store,<br/>then extra-trusted-users + nix-daemon restart;<br/>--rebind refused once nix is on PATH"]
   E7["credsctl / sopsctl (on PATH)<br/>credsctl: list, encrypt, decrypt [--env], rm<br/>sopsctl: init [--from-ssh], keys, encrypt, decrypt, get, set,<br/>rekey, recipients, protected, verify"] --> CR["credential records, one file each<br/>name.cred = systemd-creds, sealed to this machine<br/>name.sops.json / name.sops.yaml = sops through sopsctl, portable"]
+  E8["nix run .#apps.&lt;system&gt;.cache-check &lt;host&gt;"] --> CF["eval-only cache pre-flight (lib/cache-check.sh):<br/>which caches the host's enabled features require<br/>but do not substitute from"]
+  E9["nix run .#apps.&lt;system&gt;.style"] --> ST["lib/style.sh: every .nix through alejandra + statix,<br/>every .sh/.bats through shfmt + shellcheck, markdown through oxfmt (.ank excluded)<br/>tools from the app's runtimeInputs, not the host profile"]
+  E10["nix develop"] --> DEV["curl jq nix bats shellcheck shfmt:<br/>where features/*/update.sh runs"]
 ```
 
 `bootstrap.sh --standalone` is the host-side bootstrap for a machine that is not NixOS. It runs the
@@ -385,14 +388,8 @@ sh <(curl -s https://install.determinate.systems/nix) uninstall
 
 The gate checks this behaviour through `tests/bootstrap.bats` (stubs, no root), not through Nix eval.
 
-Placeholders for ergonomics we do **not** implement yet (no `packages`, `devShell`, or `apps`
-output today):
-
-```mermaid
-flowchart LR
-  X["nix run .#apps.&lt;system&gt;.cache-check &lt;host&gt;<br/>(hypothetical: eval-only cache pre-flight)"] -.->|not implemented| Y["scripts/cache-check.sh"]
-  Z["nix devShell (hypothetical: toolchain for updaters)"] -.->|not implemented| W["lib/updater.sh"]
-```
+The only output still absent is `packages`: nothing here is a library another flake imports.
+Style is not a gate step — see TEST_DESIGN.md.
 
 ## Credential records (`features/hm-creds`)
 

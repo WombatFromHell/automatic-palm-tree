@@ -37,7 +37,7 @@ fail=0
 # text it wraps. These are shipped as-is, so the gate lints them itself (~0MB, ~1s, no nix).
 # shortcut: inline text passed to writeShellScriptBin (features/hm-gpg/home.nix's pinentry-fallback)
 # is not covered here -- upgrading means routing that text through a wrapper the gate builds.
-lint_files=(bootstrap.sh update-all.sh lib/updater.sh lib/cache-check.sh
+lint_files=(bootstrap.sh update-all.sh lib/updater.sh lib/cache-check.sh lib/style.sh
   features/hm-gpg/pinentry-tmux.sh features/hm-gpg/pinentry-zellij.sh
   features/hm-nasmount/nasmount-sshfs.sh)
 if ! command -v shellcheck >/dev/null 2>&1; then

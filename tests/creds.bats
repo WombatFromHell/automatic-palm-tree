@@ -67,7 +67,6 @@ EOF
   PATH="$stubs:$PATH"
 }
 
-
 # Encrypt fixture: credsctl reads the secret on stdin, so every encrypt site redirects from one
 # file. printf keeps the bytes exactly — no trailing newline, which is what record contents are
 # asserted against.
@@ -118,7 +117,8 @@ EOF
   run ctl list
   [ "$status" -eq 0 ]
   [ "$(grep -c 'sops.yaml' <<<"$output")" = 1 ]
-  ! grep -q '^\.sops\.yaml ' <<<"$output"
+  # Counted rather than `! grep`: in Bats a `!` only fails the test when it is the last command.
+  [ "$(grep -c '^\.sops\.yaml ' <<<"$output")" = 0 ]
 }
 
 @test "list on an empty store exits 0 and names nothing" {

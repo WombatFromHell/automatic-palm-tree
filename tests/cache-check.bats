@@ -12,7 +12,8 @@ repo_copy() {
 
 # methyl enables nixos-cachyos, so it asks for the nix-community cache (modules/features/nixos-cachyos/nixos.nix).
 run_app() {
-  cd "$fixture"
+  # A cd that fails must abort the test, not run the app in the wrong directory (SC2164).
+  cd "$fixture" || return 1
   run nix run .#apps.x86_64-linux.cache-check -- "$1"
 }
 
@@ -25,6 +26,8 @@ run_app() {
 
 @test "cache-check exits 1 naming a cache the host forgot to enable" {
   repo_copy
+  # The single quotes are deliberate: this is Nix text, not a shell expansion (SC2016).
+  # shellcheck disable=SC2016
   printf '{hostLib, ...}:\nhostLib.mergeModules (\n  hostLib.profiles ../methyl-base/profiles ["methyl-kde"]\n  ++ [{features = ["nixos-cachyos"]; nixosModules = [{flakeCache.enable = [];}];}]\n)\n' >"$fixture/hosts/methyl/default.nix"
   run_app methyl
   [ "$status" -eq 1 ]
@@ -32,6 +35,8 @@ run_app() {
   assert_out "https://nix-community.cachix.org"
   # The warning wraps, so the cache name and the fix are on different lines (modules/caches.nix).
   assert_out 'Add "nix-community" to'
+  # The backticks are part of the warning text, not a command substitution (SC2016).
+  # shellcheck disable=SC2016
   assert_out '`flakeCache.enable` to pull it from the cache'
 }
 

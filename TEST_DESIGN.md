@@ -37,8 +37,12 @@ flowchart TD
   B --> X
 ```
 
-Style is outside the gate: `statix check .` and `alejandra --check .` are run by hand (or CI), not
-by `tests/run.sh`.
+Style is outside the gate: `nix run .#apps.<system>.style` (lib/style.sh: every `.nix` through
+alejandra + statix, every `.sh`/`.bats` through shfmt + shellcheck, markdown through oxfmt with
+`.ank/` excluded by a positional pattern — the corpus is content-addressed, so formatting it would
+rewrite decisions rather than prose) is the command, and it is not a gate step because the formatters
+rewrite files in place while the gate asserts on evaluated values. `lib/style.sh` itself is linted by
+the gate's shipped-shell check.
 
 One suite is not an eval: `tests/bootstrap.bats` asserts the behaviour of `bootstrap.sh` — which
 installer flags it picks (`install ostree --enable-flakes --persistence <dir>`), which switch command
@@ -86,7 +90,7 @@ case once, fills only the variables xilo did not already have, then execs `creds
 environment, and the CLI's exit status are asserted against a stub CLI, never inferred. The wrapper
 names no `systemd-creds`, KWallet, `SSH_ASKPASS` or `DISPLAY`, which is asserted by grepping the script
 itself; with no `credsctl` on PATH the environment passes through untouched, the fallback that keeps
-plain `xilo` unshadowed. The store path the *shipped* form bakes in is `tests/shellwrap.nix`'s job: it
+plain `xilo` unshadowed. The store path the _shipped_ form bakes in is `tests/shellwrap.nix`'s job: it
 builds hm-xilo's own wrapper over a placeholder CLI and asserts the `__XILO_PROGRAM__` marker was
 substituted, so a wrapper that execs a literal nothing can run fails the gate instead of a person's
 first `xilo push`.
@@ -191,7 +195,7 @@ flowchart TD
     H3["nixGL wrapper names; packages set on this non-NixOS host;<br/>the host uses the default wrapper (mesa); every package from a feature derivation<br/>is wrapped (outPath differs from _package.nix's) and on PATH exactly once,<br/>with a companion check that at least one is installed so this cannot go vacuous"]
   end
   subgraph outputs["outputs.nix — reads the output attrsets"]
-    O1["outputs are exactly configs + checks"]
+    O1["outputs are configurations, checks, apps and a devShell;<br/>cache-check and style are runnable apps whose scripts are read back"]
     O2["checks keyed by the system each config was built for"]
     O3["one check per configuration, and each is a derivation"]
     O4["configs derived from host records; host name wired into config.flakeHost"]

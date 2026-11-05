@@ -3,8 +3,8 @@
 # evaluate that host's toplevel: even `x.type` on a derivation costs ~700MB, because the
 # derivation attrset is merged. Proving the derivations themselves is `nix flake check`'s job —
 # it builds them — and that is out of this suite's memory budget on a RAM-constrained box.
-# Exceptions: the devShell and cache-check app are tiny derivations (mkShell / a shell script),
-# so reading their attrsets is what proves the tools and the wording without a host toplevel.
+# Exceptions: the devShell and the apps are tiny derivations (mkShell / a shell script), so
+# reading their attrsets is what proves the tools and the wording without a host toplevel.
 # ~8s.
 let
   s = import ./support.nix;
@@ -38,6 +38,11 @@ let
   cacheCheck = out.apps.x86_64-linux.cache-check;
   cacheScript = builtins.readFile ../lib/cache-check.sh;
 
+  # style is the format+lint app (lib/style.sh): the formatters rewrite files, so it is a developer
+  # command rather than a gate step, but the app shape and the pipeline it runs are contract.
+  styleApp = out.apps.x86_64-linux.style;
+  styleScript = builtins.readFile ../lib/style.sh;
+
   checks = [
     (ck "the flake exposes configurations, checks, apps and a devShell"
       (lib.attrNames out
@@ -62,6 +67,24 @@ let
         == "app"
         && lib.hasSuffix "cache-check" cacheCheck.program
         && lib.hasInfix "flakeCache:" cacheScript))
+    (ck "style exists on every supported system"
+      (lib.attrNames out.apps
+        == lib.attrNames out.devShells
+        && lib.all (system: builtins.hasAttr "style" out.apps.${system}) (lib.attrNames out.apps)))
+    # The pipeline covers everything the flake ships: nix (fd -> alejandra -> statix), shell
+    # (fd -> shfmt -> shellcheck) and markdown (oxfmt, which selects its own files). The tools ship
+    # through the app's runtimeInputs, not the host profile, and a script that dropped a pass would
+    # pass a grep of the flake.
+    (ck "style is a runnable app that formats then lints nix, shell and markdown"
+      (styleApp.type
+        == "app"
+        && lib.hasSuffix "style" styleApp.program
+        && lib.hasInfix "alejandra" styleScript
+        && lib.hasInfix "statix" styleScript
+        && lib.hasInfix "shfmt" styleScript
+        && lib.hasInfix "shellcheck" styleScript
+        && lib.hasInfix "oxfmt" styleScript
+        && lib.hasInfix "fd" styleScript))
     (ck "checks are keyed by supported system" (lib.attrNames out.checks == ["x86_64-linux"]))
     (ck "every configuration gets a check named after it"
       (lib.attrNames out.checks.x86_64-linux == expectedChecks))

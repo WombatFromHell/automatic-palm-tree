@@ -75,9 +75,11 @@
         // (mkChecks system "home" (config: config.activationPackage))
     );
 
-    # Eval-only cache pre-flight (lib/cache-check.sh): which caches an enabled feature asks for
-    # that this host does not substitute from, i.e. what will be built locally instead. Running
-    # it forces the host config only - no build - so it is safe on a RAM-constrained host.
+    # Apps the flake ships as scripts: the eval-only cache pre-flight (lib/cache-check.sh), and
+    # the format+lint pipeline (lib/style.sh) that replaces the hand-run alejandra/statix, shfmt/
+    # shellcheck and prettier one-liners. runtimeInputs are the flake's own fd/alejandra/statix/
+    # shfmt/shellcheck/oxfmt, so `nix run` resolves the tools the pinned nixpkgs pins rather than
+    # whatever the host profile installed.
     apps = lib.genAttrs supportedSystems (
       system: let
         pkgs = cfg.pkgsFor.${system};
@@ -88,6 +90,21 @@
           program = lib.getExe (pkgs.writeShellApplication {
             name = "cache-check";
             text = builtins.readFile ./lib/cache-check.sh;
+          });
+        };
+        style = {
+          type = "app";
+          program = lib.getExe (pkgs.writeShellApplication {
+            name = "style";
+            runtimeInputs = [
+              pkgs.fd
+              pkgs.alejandra
+              pkgs.statix
+              pkgs.shfmt
+              pkgs.shellcheck
+              pkgs.oxfmt
+            ];
+            text = builtins.readFile ./lib/style.sh;
           });
         };
       }

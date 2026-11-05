@@ -35,7 +35,6 @@ EOF
   ln -s "$repo/lib/updater.sh" "$feature/update.sh"
 }
 
-
 # A nar pin on a fixed commit: `version` is the revision itself, so nothing is auto-discoverable.
 write_meta() {
   jq -n '{repo: "rylos/yazi", kind: "nar", strategy: "none",

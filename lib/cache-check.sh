@@ -7,15 +7,15 @@
 set -euo pipefail
 
 host="${1-}"
-if [[ -z "$host" ]]; then
+if [[ -z $host ]]; then
   echo "usage: cache-check <host>" >&2
   exit 2
 fi
 
 # The name goes into the expression only after it matches the flake's own NixOS configurations,
 # so a typo on the command line cannot inject Nix code.
-if ! nix eval --impure --expr 'builtins.attrNames (builtins.getFlake (toString ./.)).outputs.nixosConfigurations' \
-  | grep -q "\"$host\""; then
+if ! nix eval --impure --expr 'builtins.attrNames (builtins.getFlake (toString ./.)).outputs.nixosConfigurations' |
+  grep -q "\"$host\""; then
   echo "cache-check: unknown host '$host'" >&2
   exit 2
 fi
@@ -26,7 +26,7 @@ warnings=$(nix eval --impure --raw --expr "
     (builtins.filter (w: builtins.substring 0 11 w == \"flakeCache:\") cfg.warnings)
 ")
 
-if [[ -z "$warnings" ]]; then
+if [[ -z $warnings ]]; then
   exit 0
 fi
 
