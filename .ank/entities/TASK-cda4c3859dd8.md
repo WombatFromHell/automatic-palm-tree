@@ -7,9 +7,9 @@ created: 2026-11-05T02:31:52Z
 author: nix-unit-suite
 status: done
 scope:
-  - tests/red
   - tests/run.sh
   - TEST_DESIGN.md
+  - tests/suite.nix
 blocked_by: [TASK-97a9e3eadea3]
 done_criteria: |
   bash tests/run.sh exits 0 and ank check reports no fault.
@@ -23,7 +23,7 @@ proof:
     verifier: gate@dc484de6fdb9
     via: verifier
 schema: 4
-version: 2
+version: 3
 ---
 
 PLAN-suite-audit.md step 3, PLAN-nix-unit.md S4. The stale numbers: TEST_DESIGN.md claims the largest per-eval peak is 921MB (home.nix) and fixture builds cost 8/5/4/10s; measured now 965MB and 0/2/1/1s on a warm store.
