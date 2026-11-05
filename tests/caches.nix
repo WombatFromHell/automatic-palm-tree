@@ -1,10 +1,10 @@
-# Slice 1's contract: modules/caches.nix turns flakeCache.required into substituters, keys,
+# nix-unit attributes for modules/caches.nix: flakeCache.required becomes substituters, keys,
 # assertions and a warning naming the cache the host needs but does not substitute from.
 # A bare module eval, so no NixOS and no build — and it uses the flake's own lib, so the gate
 # never resolves the registry's nixpkgs (a different rev, and a Git fetch mid-gate).
 let
   core = import ./support.nix;
-  inherit (core) lib ck suite failingAssertions;
+  inherit (core) lib failingAssertions;
 
   # The registry the module reads, so the expected urls/keys are the real ones.
   inherit (import ../modules/cache-registry.nix) registry;
@@ -28,47 +28,69 @@ let
       flakeCache.enable = enable;
       flakeCache.required = required;
     } {};
+
+  warned = eval [] {nix-community = true;};
+  # The warning's message is a multi-line string and its first line names the url, so the
+  # "which cache" check has to look at the line that carries the fix.
+  warning = builtins.head warned.warnings;
+  unknown = failingAssertions (eval ["nix-community"] {bogus-cache = true;});
+  enabled = eval ["nix-community" "xilopkgs"] {};
+  none = eval [] {};
 in
-  suite "caches" [
-    # The warning's message is a multi-line string and its first line names the url, so the
-    # "which cache" check has to look at the line that carries the fix.
-    (ck "a required cache the host does not substitute from is warned by name"
-      (let
-        cfg = eval [] {nix-community = true;};
-        head = builtins.head cfg.warnings;
-      in
-        (builtins.length cfg.warnings == 1)
-        && (lib.hasPrefix "flakeCache: \"${registry.nix-community.url}\"" head)
-        && (lib.any (line: lib.hasSuffix "Add \"nix-community\" to" line) (lib.splitString "\n" head))))
-
-    (ck "a required cache that is enabled produces no warning"
-      ((eval ["nix-community"] {nix-community = true;}).warnings == []))
-
-    (ck "ready is false while a required cache is disabled" (!(eval [] {kait2en = true;}).flakeCache.ready))
-    (ck "ready is true when every required cache is enabled"
-      (eval ["kait2en" "nix-community"] {
+  {
+    testRequiredMissingCacheWarnsOnce = {
+      expr = builtins.length warned.warnings;
+      expected = 1;
+    };
+    testWarningNamesTheCacheUrl = {
+      expr = lib.hasPrefix "flakeCache: \"${registry.nix-community.url}\"" warning;
+      expected = true;
+    };
+    testWarningCarriesTheFix = {
+      expr = lib.any (line: lib.hasSuffix "Add \"nix-community\" to" line) (lib.splitString "\n" warning);
+      expected = true;
+    };
+    testEnabledCacheWarnsNothing = {
+      expr = (eval ["nix-community"] {nix-community = true;}).warnings;
+      expected = [];
+    };
+    testReadyFalseWhileRequiredCacheDisabled = {
+      expr = (eval [] {kait2en = true;}).flakeCache.ready;
+      expected = false;
+    };
+    testReadyTrueWhenEveryRequiredCacheEnabled = {
+      expr = (eval ["kait2en" "nix-community"] {
         kait2en = true;
         nix-community = true;
-      }).flakeCache.ready)
-    (ck "ready is true when nothing is required" (eval [] {}).flakeCache.ready)
-
-    (ck "a required cache outside the registry fails an assertion"
-      (let
-        failed = failingAssertions (eval ["nix-community"] {bogus-cache = true;});
-      in
-        (builtins.length failed == 1)
-        && (lib.hasPrefix "flakeCache.required names unknown cache(s)" (builtins.head failed).message)))
-
-    (ck "substituters and keys come from the enabled caches in order"
-      (let
-        cfg = eval ["nix-community" "xilopkgs"] {};
-      in
-        (cfg.nix.settings.extra-substituters == [registry.nix-community.url registry.xilopkgs.url])
-        && (cfg.nix.settings.extra-trusted-public-keys == [registry.nix-community.publicKey registry.xilopkgs.publicKey])))
-
-    (ck "no caches means no substituters and no keys"
-      (let
-        cfg = eval [] {};
-      in
-        (cfg.nix.settings.extra-substituters == []) && (cfg.nix.settings.extra-trusted-public-keys == [])))
-  ]
+      }).flakeCache.ready;
+      expected = true;
+    };
+    testReadyTrueWhenNothingRequired = {
+      expr = (eval [] {}).flakeCache.ready;
+      expected = true;
+    };
+    testUnknownRequiredCacheFailsOneAssertion = {
+      expr = builtins.length unknown;
+      expected = 1;
+    };
+    testUnknownRequiredCacheNamesIt = {
+      expr = lib.hasPrefix "flakeCache.required names unknown cache(s)" (builtins.head unknown).message;
+      expected = true;
+    };
+    testSubstitutersComeFromEnabledCachesInOrder = {
+      expr = enabled.nix.settings.extra-substituters;
+      expected = [registry.nix-community.url registry.xilopkgs.url];
+    };
+    testKeysComeFromEnabledCachesInOrder = {
+      expr = enabled.nix.settings.extra-trusted-public-keys;
+      expected = [registry.nix-community.publicKey registry.xilopkgs.publicKey];
+    };
+    testNoCachesMeansNoSubstituters = {
+      expr = none.nix.settings.extra-substituters;
+      expected = [];
+    };
+    testNoCachesMeansNoKeys = {
+      expr = none.nix.settings.extra-trusted-public-keys;
+      expected = [];
+    };
+  }

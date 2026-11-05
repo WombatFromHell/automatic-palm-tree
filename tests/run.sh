@@ -83,16 +83,28 @@ gate() {
 gate "nix develop resolves the updater tools" devshell nix develop --command \
   bash -c 'command -v curl jq nix bats shellcheck shfmt >/dev/null'
 
+# The value-tier assertions run as nix-unit test attributes in one process (tests/suite.nix), so a
+# failing attribute prints its own diff and the rest keep running instead of the whole suite
+# throwing at the first failure. nix-unit comes from the devShell, so this is skipped when absent,
+# exactly like the bats tier. --impure because tests/support.nix reads the flake itself.
+if nix develop --command sh -c 'command -v nix-unit >/dev/null 2>&1'; then
+  gate "tests/suite.nix" nix-unit nix develop --command nix-unit --impure tests/suite.nix
+else
+  echo "skip tests/suite.nix [nix-unit not in the devShell]"
+fi
+
 # apps.cache-check is a real `nix run` of the app, so it is capped like the rest: forcing one
 # host config is the eval it does (~1.6GB peak, measured here), which the stub bats loop below
 # would run unmeasured.
 gate "tests/cache-check.bats" cache-check bats tests/cache-check.bats
 
-# Eval-only suites, listed explicitly. The six .nix files not here are not eval-only:
-# support.nix is a fixture library, configs.nix evaluates one host per process, and
+# Eval-only suites, listed explicitly. The suites whose assertions are pure values now run as
+# nix-unit attributes below, so they are not in this list. configs.nix is not here either: it
+# evaluates one host per process (see its header). outputs.nix forces the flake outputs;
+# home.nix/mounts.nix/wrap.nix force a host config. support.nix is a fixture library, and
 # appdir/brave-layout/shellwrap/yazi-install build (below).
-eval_suites=(tests/caches.nix tests/filesystems.nix tests/home.nix tests/loader.nix tests/mounts.nix
-  tests/outputs.nix tests/pins.nix tests/warnings.nix tests/wrap.nix tests/zram.nix)
+# A failing suite throws with every failing check named; nix eval's exit status is the verdict.
+eval_suites=(tests/home.nix tests/mounts.nix tests/outputs.nix tests/wrap.nix)
 for suite in "${eval_suites[@]}"; do
   gate "$suite" "$(basename "$suite" .nix)" nix eval --impure --file "$suite"
 done
