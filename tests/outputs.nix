@@ -53,11 +53,13 @@ let
       (lib.all hasTool ["curl" "jq" "nix" "bats" "shellcheck" "shfmt"]))
     # Keyed by the same systems the devShell covers, i.e. every system a host runs on.
     (ck "cache-check exists on every supported system"
-      (lib.attrNames out.apps == lib.attrNames out.devShells
+      (lib.attrNames out.apps
+        == lib.attrNames out.devShells
         && lib.all (system: builtins.hasAttr "cache-check" out.apps.${system}) (lib.attrNames out.apps)))
     # An app, not a bare derivation: `nix run` needs {type = "app"; program = <exe path>}.
     (ck "cache-check is a runnable app whose script filters the module's own warnings"
-      (cacheCheck.type == "app"
+      (cacheCheck.type
+        == "app"
         && lib.hasSuffix "cache-check" cacheCheck.program
         && lib.hasInfix "flakeCache:" cacheScript))
     (ck "checks are keyed by supported system" (lib.attrNames out.checks == ["x86_64-linux"]))

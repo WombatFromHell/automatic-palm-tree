@@ -101,7 +101,8 @@ let
     (ck "its desktop entry points at that binary"
       (lib.hasPrefix "${dcal.outPath}/bin/dcal" fx.xdg.desktopEntries."com.danklinux.dankcalendar".exec))
     (ck "a fixture host asking for hm-ghostty gets the wrapped package exactly once"
-      ((lib.length (fxInstalled raw.ghostty)) == 1
+      ((lib.length (fxInstalled raw.ghostty))
+        == 1
         && (lib.head (fxInstalled raw.ghostty)).outPath != raw.ghostty.outPath))
 
     # The pinned fork build is what the program module installs. The upstream wrapper inherits

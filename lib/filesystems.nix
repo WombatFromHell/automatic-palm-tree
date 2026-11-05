@@ -5,7 +5,10 @@
 # `options` is a list; an entry's `options` replaces the defaults' (NixOS semantics, keeps
 # `/boot` on vfat correct). `subvol` is sugar for one trailing `subvol=…` option. Sugar keys
 # may sit in defaults or on an entry.
-{lib, nixpkgs}: let
+{
+  lib,
+  nixpkgs,
+}: let
   inherit (builtins) intersectAttrs isString removeAttrs;
   inherit (lib) concatStringsSep filterAttrs mapAttrs mapAttrsToList optional optionalAttrs zipAttrsWith concatLists;
 
@@ -30,7 +33,8 @@
       config = {};
       pkgs = {};
     })
-    escapeSystemdPath;
+    escapeSystemdPath
+    ;
 
   unitName = escapeSystemdPath;
 in {

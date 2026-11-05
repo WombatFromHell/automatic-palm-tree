@@ -58,7 +58,7 @@
     inherit inputs;
     fsLib = import (self + /lib/filesystems.nix) {
       inherit lib;
-      nixpkgs = inputs.nixpkgs;
+      inherit (inputs) nixpkgs;
     };
   };
 
@@ -82,16 +82,25 @@
   # the host's own modules are scanned.
   # shortcut: reads each module's own config, not nested `imports`; upgrade if a host
   # module starts pinning the kernel from a file it imports.
-  kernelPackagesWriter = m:
-    let
-      # Host modules arrive as paths, functions or attrsets, and a function module
-      # returns either `{config = …}` or the config attrset itself. Called with the
-      # same args nixosSystem hands a module: `lib` plus this builder's specialArgs.
-      mod = if builtins.isPath m then import m else m;
-      v = if builtins.isFunction mod then mod ({inherit lib; inherit (inputArgs) inputs fsLib;}) else mod;
-      cfg = v.config or v;
-    in
-      (cfg.boot or {}) ? kernelPackages;
+  kernelPackagesWriter = m: let
+    # Host modules arrive as paths, functions or attrsets, and a function module
+    # returns either `{config = …}` or the config attrset itself. Called with the
+    # same args nixosSystem hands a module: `lib` plus this builder's specialArgs.
+    mod =
+      if builtins.isPath m
+      then import m
+      else m;
+    v =
+      if builtins.isFunction mod
+      then
+        mod {
+          inherit lib;
+          inherit (inputArgs) inputs fsLib;
+        }
+      else mod;
+    cfg = v.config or v;
+  in
+    (cfg.boot or {}) ? kernelPackages;
 
   assertOneKernelWriter = host: let
     fromFeatures = lib.filter (f: lib.elem f kernelFeatures) host.features;
@@ -100,7 +109,7 @@
     if fromFeatures != [] && fromModules != []
     then
       throw
-        "Host '${host.name}' pins boot.kernelPackages twice: feature '${lib.head fromFeatures}' (${toString features.discoveredFeatures.${lib.head fromFeatures}.nixos}) and host module ${toString (lib.head fromModules)}. Keep one."
+      "Host '${host.name}' pins boot.kernelPackages twice: feature '${lib.head fromFeatures}' (${toString features.discoveredFeatures.${lib.head fromFeatures}.nixos}) and host module ${toString (lib.head fromModules)}. Keep one."
     else {};
 
   # ── NixOS configuration builder ──

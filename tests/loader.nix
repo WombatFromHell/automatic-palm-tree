@@ -43,7 +43,8 @@ let
   isOverlayModule = f: let
     body = (import features.discoveredFeatures.${f}.overlays) overlayStub;
   in
-    builtins.typeOf body == "set"
+    builtins.typeOf body
+    == "set"
     && ((body.config.nixpkgs or {}) ? overlays);
 
   # host-lib treats anything with `_type` as a leaf, so this stands in for a

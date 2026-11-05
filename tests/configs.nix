@@ -133,8 +133,9 @@ let
           # Non-watcher hosts must not grow the unit; forcing `home.packages` is skipped
           # there, which is what makes this check cheap on the other hosts.
           ((u != null) == watcherOn cfg)
-          && (u == null ||
-            (lib.all
+          && (u
+            == null
+            || (lib.all
               (v: builtins.match "^-?/nix/store/.*" v != null)
               (lib.concatLists [
                 (lib.toList u.Service.ExecStartPre)

@@ -32,8 +32,8 @@ let
   ];
   plantEkfs =
     lib.concatMapStringsSep "\n"
-    (f: ''printf '/tmp/EKFs=/usr/share/X11/locale
-' > squashfs-root/${f}'')
+    (f: ''      printf '/tmp/EKFs=/usr/share/X11/locale
+      ' > squashfs-root/${f}'')
     ekfsCarriers;
 
   # Resource trees the launcher resolves from its own AppDir, each with one file planted inside it.

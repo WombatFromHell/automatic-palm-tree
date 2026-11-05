@@ -32,7 +32,6 @@ let
     }).config;
 
   bothDesktops = (hostsAt ./fixtures).discoveredHosts.desktophost.features;
-
 in
   suite "warnings" [
     # --- desktop session drop ------------------------------------------------
