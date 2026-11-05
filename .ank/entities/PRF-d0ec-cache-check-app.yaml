@@ -1,0 +1,39 @@
+id: PRF-d0ec-cache-check-app
+type: proof
+status: confirmed
+summary: TASK-d0ec - apps.cache-check reports a host's cache pre-flight
+covers:
+  - TASK-d0ec
+source: human
+evidence:
+  - >
+    commit 0a2a302 (main): flake.nix adds
+    apps.<system>.cache-check = {type = "app"; program = lib.getExe
+    (pkgs.writeShellApplication ...)}, the program being lib/cache-check.sh.
+  - >
+    lib/cache-check.sh resolves the host against
+    builtins.getFlake(...).outputs.nixosConfigurations, prints the host's
+    flakeCache warnings, and exits 0 / 1 / 2 (clean / missing cache / unknown
+    host).
+  - >
+    'nix run .#apps.x86_64-linux.cache-check -- methyl' in a copy of the repo
+    exits 0 with no flakeCache output; with methyl's host record narrowed by
+    'nixosModules = [{flakeCache.enable = [];}]' it exits 1 printing
+    'flakeCache: "https://nix-community.cachix.org/?priority=60"' and the
+    module's fix line; with 'nosuchhost' it exits 2.
+  - >
+    tests/cache-check.bats covers those three cases against a tar copy of the
+    repo (no fake host added to hosts/). 3 tests pass.
+  - >
+    tests/outputs.nix asserts apps are keyed by supported system, the entry is
+    type app whose program ends in 'cache-check', and lib/cache-check.sh
+    carries the module's own 'flakeCache:' prefix. Suite prints "OK outputs".
+  - >
+    bash tests/run.sh exit 0, 49 checks ok, including 'shipped shell lint'
+    (7 files, lib/cache-check.sh added) and
+    'tests/cache-check.bats peak=1534MB swap=0MB' under the 1792MB cap.
+note: |
+  Red first: the suite failed (no apps output, then 'should have type app',
+  then 'program is not a string') before flake.nix shipped an app-shaped
+  entry. Peak is close to the cap because forcing a NixOS config is inherent
+  to the criterion; a second host evaluated concurrently would exceed it.
