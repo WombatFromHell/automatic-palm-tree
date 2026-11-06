@@ -105,6 +105,58 @@ admins() {
 # not a table change (ADR-b77ec913151f).
 table_checksum() { dd if="$device" bs=1M count=1 status=none | md5sum | cut -d' ' -f1; }
 
+# The precondition deploy needs: a store on the target disk, not in the ISO's RAM. disko mounts its
+# @nix subvolume at $root/nix; a shared drive mounts the root partition itself at $root, so its
+# store is a directory inside that filesystem -- findmnt answers for a mountpoint, never for a
+# directory inside one, so both placements are checked. A tmpfs source is refused.
+store_mount() {
+  local src
+  src=$(findmnt -n -o SOURCE "$root/nix" 2>/dev/null || true)
+  if [ -z "$src" ]; then
+    src=$(findmnt -n -o SOURCE "$root" 2>/dev/null || true)
+  fi
+  case "$src" in
+  /dev/*) printf '%s\n' "$src" ;;
+  *) return 1 ;;
+  esac
+}
+
+# The drive a shared host deploys onto, in the order the facts arrive: the drive holding the
+# partition the host's mount names; the drive holding a partition that already carries the declared
+# filesystem; then the one non-removable drive here carrying a partition table. Blank partitions name
+# nothing until terraform.sh formats them, which is why the last step exists — and two candidates is
+# refused, never guessed (ADR-b77ec913151f).
+shared_disk() {
+  local cand disks="" name type rm
+  cand=$(lsblk -n -o PKNAME "$root_device" 2>/dev/null | head -1 || true)
+  if [ -n "$cand" ]; then
+    device="/dev/$cand"
+    return
+  fi
+  cand=$(blkid -o device -t "TYPE=$root_fs" 2>/dev/null | head -1 || true)
+  if [ -n "$cand" ]; then
+    cand=$(lsblk -n -o PKNAME "$cand" 2>/dev/null | head -1 || true)
+    if [ -n "$cand" ]; then
+      device="/dev/$cand"
+      return
+    fi
+  fi
+  # Only a real drive is a target: the install ISO presents as loop/rom devices (one of them
+  # removable), and the zram device this script may have just made is memory, never a disk. PTTYPE is
+  # not asked for — lsblk leaves it blank and collapses the columns — and terraform.sh is what
+  # refuses a drive with no partition table. No awk: the suite stubs awk for the meminfo parse.
+  while read -r name type rm; do
+    if [ "$type" = disk ] && [ "$rm" != 1 ] && [ "/dev/$name" != /dev/zram0 ]; then
+      disks="${disks:+$disks }/dev/$name"
+    fi
+  done < <(lsblk -n -o NAME,TYPE,RM --nodeps)
+  if [ -z "$disks" ] || [[ $disks == *" "* ]]; then
+    say "$host: cannot tell which drive to adopt${disks:+ (candidates: $disks)} — terraform.sh never formats a drive by guess"
+    exit 2
+  fi
+  device="$disks"
+}
+
 # The layout, the drive, and the one fact that decides which tool may touch it.
 resolve() {
   if [ ! -f flake.nix ]; then
@@ -142,11 +194,7 @@ resolve() {
       say "$host: no /boot mount is declared, so there is no ESP to adopt"
       exit 2
     fi
-    device="/dev/$(lsblk -n -o PKNAME "$root_device" 2>/dev/null | head -1)"
-    if [ "$device" = "/dev/" ]; then
-      say "$host: its declared root device $root_device is not on this machine"
-      exit 2
-    fi
+    shared_disk
     say "$host shares $device (disko is not in play; terraform.sh adopts the partitions it declares)"
   fi
   # lsblk lists the drive and each partition on it; only the drive's own line says whether this
@@ -202,11 +250,13 @@ terraform() {
     run ./terraform.sh "${tf[@]}" --disk "$device" --mount "$root" --root-fs "$root_fs" \
       --root-device "$root_device" --esp-device "$esp_device"
     # Nothing runs under --dry-run, so there is nothing to check afterwards.
-    if [ "$dry" != 1 ] && ! findmnt -n -o SOURCE "$root/nix" >/dev/null 2>&1; then
-      say "terraform left $root unmounted — the host's root filesystem is not on the drive yet"
-      exit 2
+    if [ "$dry" != 1 ]; then
+      src=$(store_mount) || {
+        say "terraform left $root unmounted — the host's root filesystem is not on the drive yet"
+        exit 2
+      }
+      say "terraform ok: $root mounted from the partitions $host declares ($src)"
     fi
-    say "terraform ok: $root mounted from the partitions $host declares"
     return
   fi
   mode="create,format,mount"
@@ -239,7 +289,7 @@ terraform() {
   # No --yes-wipe-all-disks: the script is what asks, and it is what refuses a disk it does not own.
   # The stage's own contract is the mount, so a disko failure surfaces as the missing mount.
   run "$script" --mode "$mode" || say "disko reported a failure"
-  src=$(findmnt -n -o SOURCE "$root/nix" 2>/dev/null) || {
+  src=$(store_mount) || {
     say "terraform did not leave a disk-backed $root/nix — deploy cannot run"
     exit 2
   }
@@ -248,10 +298,10 @@ terraform() {
 
 deploy() {
   resolve
-  if ! findmnt -n -o SOURCE "$root/nix" >/dev/null 2>&1; then
-    say "deploy needs terraform first: $root/nix is not a real filesystem mount"
+  store_mount >/dev/null || {
+    say "deploy needs terraform first: nothing disk-backed is mounted at $root or $root/nix"
     exit 2
-  fi
+  }
   confirm "install $host onto $root: the closure builds into $root/nix/store and the boot loader is written"
   # nixos-install only trusts `auto?trusted=1`, which trusts caches the client already knows. The
   # registry caches have to reach the build as client options, so they go through NIX_CONFIG.

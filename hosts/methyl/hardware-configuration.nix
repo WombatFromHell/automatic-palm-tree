@@ -22,9 +22,14 @@
   # self-contained EFI mount merged in after mkMounts so it inherits nothing.
   # An empty entry means "defaults verbatim" — mkMounts omits `options` when the
   # list is empty, which is what lets NixOS add `x-initrd.mount` to `/` itself.
+  #
+  # Named by label rather than the UUID nixos-generate-config wrote (ADR-b77ec913151f): terraform.sh
+  # formats a partition only where blkid reports nothing, and a fresh mkfs invents a UUID no
+  # generated config could have declared. mkfs takes the label from the device named here, so the
+  # mount terraform.sh makes is the one this host asked for.
   fileSystems =
     fsLib.mkMounts {
-      device = "/dev/disk/by-uuid/5ac29929-ffb1-4c2d-b1b8-d6eb7f37496b";
+      device = "/dev/disk/by-label/nixos";
       fsType = "ext4";
     }
     {
@@ -32,7 +37,7 @@
     }
     // {
       "/boot" = {
-        device = "/dev/disk/by-uuid/687A-4FCB";
+        device = "/dev/disk/by-label/boot";
         fsType = "vfat";
         options = ["fmask=0077" "dmask=0077"];
       };
