@@ -178,6 +178,25 @@ resolve() {
     chmod 755 "$scratch"
   fi
   owned=$(scoped nix eval --store "$scratch" --impure "$(attr).flakeHost.ownsWholeDisk") || exit 2
+  # A shared host can declare its layout as a recipe instead of leaving it to its mounts. Where the
+  # file exists it is the declaration install.sh acts on, and its owns must agree with the one fact
+  # that says who may partition the drive: a recipe claiming a drive this host does not own is
+  # refused before any write, and a recipe on a host whose layout disko owns is refused rather than
+  # silently ignored.
+  recipe=""
+  recipe_file="hosts/$host/terraform.json"
+  if [ -f "$recipe_file" ]; then
+    declared=$(jq -r '.owns' "$recipe_file")
+    if [ "$declared" != "$owned" ]; then
+      say "$host: $recipe_file says owns=$declared but flakeHost.ownsWholeDisk is $owned — one of them is wrong"
+      exit 2
+    fi
+    if [ "$owned" = "true" ]; then
+      say "$host owns its disk: disko owns the layout (ADR-eaca61b85782), so $recipe_file is never read — remove it"
+      exit 2
+    fi
+    recipe="$recipe_file"
+  fi
   if [ "$owned" = "true" ]; then
     device=$(scoped nix eval --store "$scratch" --impure --raw "$(attr).disko.devices.disk" \
       --apply 'd: (builtins.head (builtins.attrValues d)).device') || exit 2
@@ -247,8 +266,12 @@ terraform() {
     tf=()
     if [ "$dry" = 1 ]; then tf+=(--dry-run); fi
     if [ "$force" = 1 ]; then tf+=(--force); fi
-    run ./terraform.sh "${tf[@]}" --disk "$device" --mount "$root" --root-fs "$root_fs" \
-      --root-device "$root_device" --esp-device "$esp_device"
+    if [ -n "$recipe" ]; then
+      run ./terraform.sh "${tf[@]}" --recipe "$recipe" --disk "$device" --mount "$root"
+    else
+      run ./terraform.sh "${tf[@]}" --disk "$device" --mount "$root" --root-fs "$root_fs" \
+        --root-device "$root_device" --esp-device "$esp_device"
+    fi
     # Nothing runs under --dry-run, so there is nothing to check afterwards.
     if [ "$dry" != 1 ]; then
       src=$(store_mount) || {
@@ -302,6 +325,15 @@ deploy() {
     say "deploy needs terraform first: nothing disk-backed is mounted at $root or $root/nix"
     exit 2
   }
+  # The drive has to still match the recipe the layout was built from. --verify reads it and writes
+  # nothing, so a drive that changed since terraform ran refuses the install rather than being
+  # installed onto.
+  if [ -n "$recipe" ]; then
+    run ./terraform.sh --verify --recipe "$recipe" --disk "$device" || {
+      say "deploy refused: $device no longer matches $recipe"
+      exit 2
+    }
+  fi
   confirm "install $host onto $root: the closure builds into $root/nix/store and the boot loader is written"
   # nixos-install only trusts `auto?trusted=1`, which trusts caches the client already knows. The
   # registry caches have to reach the build as client options, so they go through NIX_CONFIG.

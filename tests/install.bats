@@ -117,12 +117,16 @@ if [ -n "\$t" ]; then printf '%s\n' "\$t"; exit 0; fi
 exit 2
 EOF
 
-  # terraform.sh reads the table through jq; stubbing it keeps the suite off whatever jq this
-  # machine happens to have.
-  stub jq <<EOF
+# terraform.sh reads the table through jq; stubbing it keeps the suite off whatever jq this
+# machine happens to have. install.sh asks it one question about a recipe, so the stub answers
+# that from RECIPE_OWNS instead of parsing anything.
+stub jq <<EOF
 #!/usr/bin/env bash
 echo "jq \$*" >> "$calls"
-printf '/dev/vda1 C12A7EA9-344C-4175-A575-202976385741\n/dev/vda2 0FC63DAF-8483-4772-8E79-3D69D8457574\n'
+case "\$*" in
+*owns*) printf '%s\n' "\${RECIPE_OWNS:-false}" ;;
+*) printf '/dev/vda1 C12A7EA9-344C-4175-A575-202976385741\n/dev/vda2 0FC63DAF-8483-4772-8E79-3D69D8457574\n' ;;
+esac
 EOF
 
   # Formatting is the destructive step: it is logged, never performed.
@@ -415,6 +419,83 @@ run_install() {
   INSTALL_FORCE=1 DISKO_EXIT=1 run run_install --stage terraform methyl-nixos
   [ "$status" -eq 2 ]
   assert_out "did not leave a disk-backed /mnt/nix"
+}
+
+# A recipe file is the layout declaration for a shared host. It lives in a temp repo so the test never
+# writes into this working tree, and terraform.sh is faked there: install.sh's contract is the argv it
+# passes, and terraform.bats covers what terraform.sh does with it.
+recipe_repo() { # <recipe json> -> a repo dir holding hosts/methyl/terraform.json
+  local dir="$stubs/repo"
+  mkdir -p "$dir/hosts/methyl" "$dir/lib"
+  cp "$repo/install.sh" "$dir/"
+  cp "$repo/lib/confirm.sh" "$dir/lib/"
+  printf '{}\n' >"$dir/flake.nix"
+  printf '%s\n' "$1" >"$dir/hosts/methyl/terraform.json"
+  cat >"$dir/terraform.sh" <<EOF
+#!/usr/bin/env bash
+echo "./terraform.sh \$*" >> "$calls"
+exit \${TF_EXIT:-0}
+EOF
+  chmod +x "$dir/terraform.sh"
+  printf '%s\n' "$dir"
+}
+
+run_install_in() { # <repo dir> [install.sh args]
+  local dir="$1"
+  shift
+  INSTALL_SCRATCH="$stubs/scratch" PATH="$stubs:$PATH" bash "$dir/install.sh" "$@"
+}
+
+@test "a shared host with a recipe is terraformed from the recipe, not from its mounts" {
+  printf 'false\n' >"$stubs/owned"
+  dir=$(recipe_repo '{"owns": false, "partitions": [{"name":"esp","fs":"vfat","size":"8M","mount":"/boot"},{"name":"nixos","fs":"ext4","size":"rest","mount":"/"}]}')
+  run run_install_in "$dir" --dry-run --stage terraform methyl
+  [ "$status" -eq 0 ]
+  assert_out "[dry-run] ./terraform.sh --dry-run --recipe hosts/methyl/terraform.json --disk /dev/vda --mount /mnt"
+  assert_no_out "--root-fs"
+}
+
+# The recipe and the host fact must agree about who owns the drive; the recipe is never read when
+# disko owns the layout, so a file that claims an owned host is refused rather than ignored.
+@test "a recipe whose owns disagrees with flakeHost.ownsWholeDisk refuses before any write" {
+  printf 'false\n' >"$stubs/owned"
+  dir=$(recipe_repo '{"owns": true, "partitions": []}')
+  RECIPE_OWNS=true run run_install_in "$dir" --stage terraform methyl
+  [ "$status" -eq 2 ]
+  assert_out "ownsWholeDisk is false"
+  assert_no_call "./terraform.sh"
+  assert_no_call "mkfs"
+}
+
+@test "a recipe on a host whose layout disko owns is refused, not ignored" {
+  dir=$(recipe_repo '{"owns": true, "partitions": []}')
+  RECIPE_OWNS=true run run_install_in "$dir" --dry-run --stage terraform methyl
+  [ "$status" -eq 2 ]
+  assert_out "disko owns the layout"
+  assert_no_call "./terraform.sh"
+}
+
+@test "deploy verifies the drive against the recipe before it installs" {
+  printf 'false\n' >"$stubs/owned"
+  printf '1\n' >"$stubs/mounted"
+  dir=$(recipe_repo '{"owns": false, "partitions": [{"name":"nixos","fs":"ext4","size":"rest","mount":"/"}]}')
+  INSTALL_FORCE=1 run run_install_in "$dir" --stage terraform methyl
+  [ "$status" -eq 0 ]
+  assert_call "--recipe hosts/methyl/terraform.json --disk /dev/vda --mount /mnt"
+  INSTALL_FORCE=1 run run_install_in "$dir" --stage deploy methyl
+  [ "$status" -eq 0 ]
+  assert_call "./terraform.sh --verify --recipe hosts/methyl/terraform.json --disk /dev/vda"
+  assert_call "nixos-install --flake .#methyl --root /mnt --no-root-passwd"
+}
+
+@test "deploy refuses when the drive no longer matches the recipe" {
+  printf 'false\n' >"$stubs/owned"
+  printf '1\n' >"$stubs/mounted"
+  dir=$(recipe_repo '{"owns": false, "partitions": [{"name":"nixos","fs":"ext4","size":"rest","mount":"/"}]}')
+  TF_EXIT=1 INSTALL_FORCE=1 run run_install_in "$dir" --stage deploy methyl
+  [ "$status" -eq 2 ]
+  assert_out "no longer matches hosts/methyl/terraform.json"
+  assert_no_call "nixos-install"
 }
 
 @test "deploy refuses before terraform" {
