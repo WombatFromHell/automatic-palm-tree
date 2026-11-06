@@ -89,20 +89,6 @@ let
   # Options NixOS and Home Manager declare but a bare `lib.evalModules` does not: a unit test
   # of a module that writes warnings or assertions has to declare them to read them back.
   # Types match the real ones closely enough.
-  # `config.flakeHost` is a host fact NixOS hosts get from lib/builders.nix; a bare
-  # evalModules has no such option, so a feature module that reads it needs this stub.
-  flakeHostStub = {
-    options.flakeHost = lib.mkOption {
-      type = lib.types.submodule {
-        options.isQemuVM = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-        };
-      };
-      default = {};
-    };
-  };
-
   # Option paths the desktop feature modules write (nixos-kde, nixos-gnome). NixOS declares
   # these; a bare `lib.evalModules` does not, and an undefined option is an eval error.
   desktopStubs = let
@@ -207,7 +193,7 @@ let
     then "OK ${name}"
     else throw "${name}: FAILED ${lib.concatStringsSep ", " failed}";
 in {
-  inherit lib flake features featuresAt hostLib hostsAt fixtureHost builders hmCfg bareEval assertWarnStubs flakeHostStub desktopStubs failingAssertions pkgNamed hasPkg countPkg ck suite fs rawFeaturePkgs;
+  inherit lib flake features featuresAt hostLib hostsAt fixtureHost builders hmCfg bareEval assertWarnStubs desktopStubs failingAssertions pkgNamed hasPkg countPkg ck suite fs rawFeaturePkgs;
   hosts = hostsAt root;
   pkgs = pkgsSet;
 }

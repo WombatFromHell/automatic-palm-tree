@@ -21,6 +21,13 @@ let
       default = false;
       description = "Whether to build a NixOS configuration for this host.";
     };
+    # Named for what it gates (ADR-a742baa1): true means a layout may partition the
+    # whole drive; false means a layout may declare only partitions NixOS owns.
+    ownsWholeDisk = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Whether this host's drive is NixOS's alone, so a gpt layout may partition it.";
+    };
     users = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule {
         options = {
@@ -40,11 +47,6 @@ let
       });
       default = {};
       description = "Users defined for this host.";
-    };
-    isQemuVM = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Whether this host is a QEMU/KVM virtual machine.";
     };
   };
 

@@ -12,10 +12,12 @@ in {
       "Host enables nixos-kde and nixos-gnome: GDM owns the login screen, so the Plasma session (services.desktopManager.plasma6) is dropped; KDE apps remain."
     ];
     services = {
-      xserver.enable = lib.mkIf config.flakeHost.isQemuVM true;
+      # kwin on Wayland: nixpkgs defaults sddm.wayland.enable to false, and SDDM asserts
+      # xserver.enable || wayland.enable, so this line is what starts the session. X11 would be
+      # needed only for a host without a GPU, which no host asks for today.
       displayManager.sddm = lib.mkIf kdeLogin {
         enable = true;
-        wayland.enable = lib.mkOverride 500 (!config.flakeHost.isQemuVM);
+        wayland.enable = true;
       };
       desktopManager.plasma6.enable = lib.mkIf kdeLogin true;
       xserver.xkb = {

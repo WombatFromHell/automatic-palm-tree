@@ -3,7 +3,7 @@
 # the ~2GB that forcing config.warnings costs on a host is not paid here.
 let
   core = import ./support.nix;
-  inherit (core) lib flakeHostStub desktopStubs failingAssertions hostsAt;
+  inherit (core) lib desktopStubs failingAssertions hostsAt;
   featurePaths = core.features;
 
   eval = warnings: core.bareEval [../modules/warnings-gate.nix] {inherit warnings;} {};
@@ -14,9 +14,9 @@ let
   # satisfied without instantiating anything.
   desktop = features:
     core.bareEval
-      [flakeHostStub desktopStubs ../modules/warnings-gate.nix]
-      {imports = featurePaths.resolveFeaturePaths features "nixos";}
-      {pkgs = {gnome-tweaks = {name = "gnome-tweaks";};};};
+    [desktopStubs ../modules/warnings-gate.nix]
+    {imports = featurePaths.resolveFeaturePaths features "nixos";}
+    {pkgs = {gnome-tweaks = {name = "gnome-tweaks";};};};
 
   bothDesktops = (hostsAt ./fixtures).discoveredHosts.desktophost.features;
   bothWarnings = (desktop bothDesktops).warnings;
@@ -24,53 +24,63 @@ let
   oneWarning = failingAssertions (eval ["flakeCache: \"https://x\" is required"]);
   oneWarningLines = lib.splitString "\n" (builtins.head oneWarning).message;
   twoWarnings = failingAssertions (eval ["first warning" "second warning"]);
-in
-  {
-    testFixtureHostAsksForBothDesktops = {
-      expr = bothDesktops;
-      expected = ["nixos-kde" "nixos-gnome"];
-    };
-    testBothDesktopsWarnOnce = {
-      expr = builtins.length bothWarnings;
-      expected = 1;
-    };
-    # Enabling both warns which session the greeter drops.
-    testBothDesktopsWarnNamesPlasma = {
-      expr = lib.hasInfix "Plasma" (builtins.head bothWarnings);
-      expected = true;
-    };
-    testKdeAloneWarnsNothing = {
-      expr = (desktop ["nixos-kde"]).warnings;
-      expected = [];
-    };
-    testGnomeAloneWarnsNothing = {
-      expr = (desktop ["nixos-gnome"]).warnings;
-      expected = [];
-    };
+in {
+  testFixtureHostAsksForBothDesktops = {
+    expr = bothDesktops;
+    expected = ["nixos-kde" "nixos-gnome"];
+  };
+  testBothDesktopsWarnOnce = {
+    expr = builtins.length bothWarnings;
+    expected = 1;
+  };
+  # Enabling both warns which session the greeter drops.
+  testBothDesktopsWarnNamesPlasma = {
+    expr = lib.hasInfix "Plasma" (builtins.head bothWarnings);
+    expected = true;
+  };
+  # The KDE display session is pinned here rather than left to defaults: nixpkgs defaults
+  # sddm.wayland.enable to false and SDDM asserts xserver.enable || wayland.enable, so the value
+  # that starts the session is the feature module's. Retiring isQemuVM must not move either one.
+  testKdeHostStartsSddmOnWayland = {
+    expr = (desktop ["nixos-kde"]).services.displayManager.sddm.wayland.enable;
+    expected = true;
+  };
+  testKdeHostLeavesXserverOff = {
+    expr = (desktop ["nixos-kde"]).services.xserver.enable;
+    expected = false;
+  };
+  testKdeAloneWarnsNothing = {
+    expr = (desktop ["nixos-kde"]).warnings;
+    expected = [];
+  };
+  testGnomeAloneWarnsNothing = {
+    expr = (desktop ["nixos-gnome"]).warnings;
+    expected = [];
+  };
 
-    testNoWarningsLeavesGateAssertionTrue = {
-      expr = failingAssertions (eval []);
-      expected = [];
-    };
-    testOneWarningFailsOneAssertion = {
-      expr = builtins.length oneWarning;
-      expected = 1;
-    };
-    testWarningMessageStartsWithTheHeader = {
-      expr = builtins.head oneWarningLines;
-      expected = "configuration warnings:";
-    };
-    testWarningMessageCarriesTheWarning = {
-      expr = lib.hasPrefix "flakeCache: \"https://x\" is required" (builtins.elemAt oneWarningLines 1);
-      expected = true;
-    };
-    # Every warning is listed, not just the first.
-    testManyWarningsFailOneAssertion = {
-      expr = builtins.length twoWarnings;
-      expected = 1;
-    };
-    testManyWarningsListTheLast = {
-      expr = lib.hasSuffix "second warning" (builtins.head twoWarnings).message;
-      expected = true;
-    };
-  }
+  testNoWarningsLeavesGateAssertionTrue = {
+    expr = failingAssertions (eval []);
+    expected = [];
+  };
+  testOneWarningFailsOneAssertion = {
+    expr = builtins.length oneWarning;
+    expected = 1;
+  };
+  testWarningMessageStartsWithTheHeader = {
+    expr = builtins.head oneWarningLines;
+    expected = "configuration warnings:";
+  };
+  testWarningMessageCarriesTheWarning = {
+    expr = lib.hasPrefix "flakeCache: \"https://x\" is required" (builtins.elemAt oneWarningLines 1);
+    expected = true;
+  };
+  # Every warning is listed, not just the first.
+  testManyWarningsFailOneAssertion = {
+    expr = builtins.length twoWarnings;
+    expected = 1;
+  };
+  testManyWarningsListTheLast = {
+    expr = lib.hasSuffix "second warning" (builtins.head twoWarnings).message;
+    expected = true;
+  };
+}

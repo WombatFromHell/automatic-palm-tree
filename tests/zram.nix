@@ -14,26 +14,24 @@ let
     };
 
   cfg = (s.builders.buildNixosConfigurations {zramhost = host;}).zramhost.config;
-
   # systemd-zram-generator ships as a template unit; NixOS only installs the package and writes
   # the settings file the unit reads at start. The unit's presence is the first attribute below.
-in
-  {
-    testHostGetsTheZramSetupUnit = {
-      expr = cfg.systemd.services ? "systemd-zram-setup@";
-      expected = true;
-    };
-    testTemplateUnitComesFromTheGeneratorPackage = {
-      expr = s.hasPkg cfg.systemd.packages "zram-generator";
-      expected = true;
-    };
-    testGeneratorConfigIsInstalled = {
-      expr = builtins.hasAttr "systemd/zram-generator.conf" cfg.environment.etc;
-      expected = true;
-    };
-    # Our own settings are the ones that ship, not NixOS defaults.
-    testZramCompressionAlgorithmIsZstd = {
-      expr = cfg.services.zram-generator.settings.zram0.compression-algorithm;
-      expected = "zstd";
-    };
-  }
+in {
+  testHostGetsTheZramSetupUnit = {
+    expr = cfg.systemd.services ? "systemd-zram-setup@";
+    expected = true;
+  };
+  testTemplateUnitComesFromTheGeneratorPackage = {
+    expr = s.hasPkg cfg.systemd.packages "zram-generator";
+    expected = true;
+  };
+  testGeneratorConfigIsInstalled = {
+    expr = builtins.hasAttr "systemd/zram-generator.conf" cfg.environment.etc;
+    expected = true;
+  };
+  # Our own settings are the ones that ship, not NixOS defaults.
+  testZramCompressionAlgorithmIsZstd = {
+    expr = cfg.services.zram-generator.settings.zram0.compression-algorithm;
+    expected = "zstd";
+  };
+}

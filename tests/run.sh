@@ -37,7 +37,7 @@ fail=0
 # text it wraps. These are shipped as-is, so the gate lints them itself (~0MB, ~1s, no nix).
 # shortcut: inline text passed to writeShellScriptBin (features/hm-gpg/home.nix's pinentry-fallback)
 # is not covered here -- upgrading means routing that text through a wrapper the gate builds.
-lint_files=(bootstrap.sh update-all.sh lib/updater.sh lib/cache-check.sh lib/style.sh
+lint_files=(bootstrap.sh update-all.sh lib/updater.sh lib/cache-check.sh lib/style.sh install.sh
   features/hm-gpg/pinentry-tmux.sh features/hm-gpg/pinentry-zellij.sh
   features/hm-nasmount/nasmount-sshfs.sh)
 if ! command -v shellcheck >/dev/null 2>&1; then
@@ -194,9 +194,10 @@ fi
 # is the same kind of thing, so tests/sopsctl.bats joins them and its real tier runs actual sops.
 # xilo-wrapped is the same shape: which records it asks credsctl for, in what order, and that the
 # CLI's own argv and exit status survive, so tests/xilo.bats joins them.
-# bats comes from the installed Nix profile, so a missing `bats` is a `skip`, not a failure.
+# install.sh is staged destruction: which step asks for a yes, what a scripted run refuses, and that
+# prepare leaves the partition table byte-identical, so tests/install.bats joins them on stubs.
 if command -v bats >/dev/null 2>&1; then
-  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats tests/sopsctl.bats tests/xilo.bats tests/updater.bats; do
+  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats; do
     if out=$(bats "$suite" 2>&1); then
       echo "ok   $suite [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
     else

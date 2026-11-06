@@ -33,7 +33,9 @@ shift
 if ! systemd-run --user --scope -q --unit="nix-eval-probe-$$.scope" true >/dev/null 2>&1; then
   "$@"
   code=$?
-  echo "peak=n/a" >&2
+  # The command's own output may end without a newline (`nix eval --raw` does), which would run
+  # the peak line into the last output line and corrupt whatever parses it.
+  printf '\npeak=n/a\n' >&2
   exit "$code"
 fi
 
