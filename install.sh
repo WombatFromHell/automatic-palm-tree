@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# install.sh — staged installer for a host whose drive this flake owns alone.
+# install.sh — staged installer for a host, on a drive this flake owns alone or shares.
 #
 #   prepare    read-only: host + drive checks, temporary zram, partition-table checksum
-#   terraform  disko create/format/mount under --root, so the target store lands on the disk
+#   terraform  a drive we own: disko create/format/mount under --root, so the target store lands on
+#            the disk. A drive we share: ./terraform.sh adopts the partitions the host declares.
 #   deploy     nixos-install --root <dir>: the closure builds into <dir>/nix/store and the boot
 #            loader is written (nixos-install runs switch-to-configuration boot itself)
 #   reboot     only after deploy
@@ -12,6 +13,8 @@
 # --yes-wipe-all-disks are never passed: a partition another OS owns is never a target.
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck source=lib/confirm.sh
+. lib/confirm.sh
 
 root="/mnt"
 host=""
@@ -71,39 +74,6 @@ prepare | terraform | deploy | reboot | all) ;;
   ;;
 esac
 
-say() { printf '%s\n' "$*"; }
-
-# One destructive step, one answer. Without a terminal there is nobody to ask, so the step is
-# refused rather than assumed.
-confirm() {
-  if [ "$dry" = 1 ]; then
-    say "[dry-run] $1"
-    return 0
-  fi
-  if [ "$force" = 1 ]; then
-    say "$1 (forced)"
-    return 0
-  fi
-  if [ ! -t 0 ]; then
-    say "refused: $1 needs a confirmation and there is no terminal (use --force or INSTALL_FORCE=1)"
-    return 2
-  fi
-  printf 'confirm [y/N]: '
-  read -r answer
-  if [ "$answer" != "y" ]; then
-    say "not confirmed: nothing done"
-    return 2
-  fi
-}
-
-run() {
-  if [ "$dry" = 1 ]; then
-    say "[dry-run] $*"
-    return 0
-  fi
-  "$@"
-}
-
 # Same wrap bootstrap.sh uses: the build is what spills memory, so that is what gets capped.
 # Same wrap bootstrap.sh uses: the build is what spills memory, so that is what gets capped. No
 # --unit: systemd names each transient scope, and a name we reuse is refused outright.
@@ -130,10 +100,12 @@ admins() {
     --apply 'xs: builtins.concatStringsSep " " xs' 2>/dev/null || true
 }
 
-# What the drive looks like right now: first 2MB holds the partition table.
-table_checksum() { dd if="$device" bs=1M count=2 status=none | md5sum | cut -d' ' -f1; }
+# What the drive looks like right now. Only the first megabyte: the partition table lives there, and
+# a partition that starts at sector 2048 starts exactly where that window ends, so formatting one is
+# not a table change (ADR-b77ec913151f).
+table_checksum() { dd if="$device" bs=1M count=1 status=none | md5sum | cut -d' ' -f1; }
 
-# The layout, the drive, and the one fact that makes a layout legal here at all.
+# The layout, the drive, and the one fact that decides which tool may touch it.
 resolve() {
   if [ ! -f flake.nix ]; then
     say "install.sh: no flake.nix in $(pwd) — put the flake here first"
@@ -154,12 +126,29 @@ resolve() {
     chmod 755 "$scratch"
   fi
   owned=$(scoped nix eval --store "$scratch" --impure "$(attr).flakeHost.ownsWholeDisk") || exit 2
-  if [ "$owned" != "true" ]; then
-    say "$host: ownsWholeDisk is false — its drive is shared with another OS, so no layout may be written here"
-    exit 2
+  if [ "$owned" = "true" ]; then
+    device=$(scoped nix eval --store "$scratch" --impure --raw "$(attr).disko.devices.disk" \
+      --apply 'd: (builtins.head (builtins.attrValues d)).device') || exit 2
+    say "$host owns $device outright (disko owns its layout)"
+  else
+    # A shared drive has no disko device: the host's own mounts name the partition, and lsblk names
+    # the disk holding it. terraform.sh then adopts those partitions (ADR-b77ec913151f).
+    mounts=$(scoped nix eval --store "$scratch" --impure --raw "$(attr).fileSystems" \
+      --apply 'fs: builtins.concatStringsSep "\n" [ fs."/".device fs."/".fsType fs."/boot".device ]') || exit 2
+    root_device=$(printf '%s\n' "$mounts" | sed -n 1p)
+    root_fs=$(printf '%s\n' "$mounts" | sed -n 2p)
+    esp_device=$(printf '%s\n' "$mounts" | sed -n 3p)
+    if [ -z "$esp_device" ]; then
+      say "$host: no /boot mount is declared, so there is no ESP to adopt"
+      exit 2
+    fi
+    device="/dev/$(lsblk -n -o PKNAME "$root_device" 2>/dev/null | head -1)"
+    if [ "$device" = "/dev/" ]; then
+      say "$host: its declared root device $root_device is not on this machine"
+      exit 2
+    fi
+    say "$host shares $device (disko is not in play; terraform.sh adopts the partitions it declares)"
   fi
-  device=$(scoped nix eval --store "$scratch" --impure --raw "$(attr).disko.devices.disk" \
-    --apply 'd: (builtins.head (builtins.attrValues d)).device') || exit 2
   # lsblk lists the drive and each partition on it; only the drive's own line says whether this
   # machine has the whole disk to own. An installed drive (partitions present) is adoptable.
   if [ "$(lsblk -n -o TYPE "$device" 2>/dev/null | head -1)" != "disk" ]; then
@@ -188,7 +177,11 @@ add_zram() {
 prepare() {
   resolve
   before=$(table_checksum)
-  say "$host: drive $device, layout owned by disko, mounts under $root"
+  if [ "$owned" = "true" ]; then
+    say "$host: drive $device, layout owned by disko, mounts under $root"
+  else
+    say "$host: drive $device shared, partitions adopted, mounts under $root"
+  fi
   add_zram
   after=$(table_checksum)
   if [ "$before" != "$after" ]; then
@@ -200,6 +193,22 @@ prepare() {
 
 terraform() {
   resolve
+  if [ "$owned" != "true" ]; then
+    # Nothing here wipes anything: terraform.sh formats only partitions blkid reports blank, and it
+    # prompts for each of those itself (ADR-b77ec913151f).
+    tf=()
+    if [ "$dry" = 1 ]; then tf+=(--dry-run); fi
+    if [ "$force" = 1 ]; then tf+=(--force); fi
+    run ./terraform.sh "${tf[@]}" --disk "$device" --mount "$root" --root-fs "$root_fs" \
+      --root-device "$root_device" --esp-device "$esp_device"
+    # Nothing runs under --dry-run, so there is nothing to check afterwards.
+    if [ "$dry" != 1 ] && ! findmnt -n -o SOURCE "$root/nix" >/dev/null 2>&1; then
+      say "terraform left $root unmounted — the host's root filesystem is not on the drive yet"
+      exit 2
+    fi
+    say "terraform ok: $root mounted from the partitions $host declares"
+    return
+  fi
   mode="create,format,mount"
   if findmnt -n -o SOURCE "$root/nix" >/dev/null 2>&1; then
     mode="mount"

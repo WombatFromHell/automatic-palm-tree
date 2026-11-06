@@ -12,6 +12,10 @@ setup() {
   printf '0\n' >"$stubs/mounted"
   printf 'table\n' >"$stubs/table"
   printf '0\n' >"$stubs/dd_calls"
+  # The shared-drive path reads the mounts the host declares instead of a disko device.
+  printf '/dev/disk/by-label/nixos\n' >"$stubs/root_device"
+  printf 'ext4\n' >"$stubs/root_fs"
+  printf '/dev/disk/by-label/boot\n' >"$stubs/esp_device"
 
   stub nix <<EOF
 #!/usr/bin/env bash
@@ -33,6 +37,7 @@ fi
 case "\$args" in
   *ownsWholeDisk*)          cat "$stubs/owned" ;;
   *disko.devices.disk*)     cat "$stubs/device" ;;
+  *fileSystems*)            printf '%s\n%s\n%s\n' "\$(cat "$stubs/root_device")" "\$(cat "$stubs/root_fs")" "\$(cat "$stubs/esp_device")" ;;
   *osUsernames*)            printf 'josh\n' ;;
   *adminUsernames*)         printf '%s\n' "\${ADMIN-josh}" ;;
   *system.build.diskoScript*) printf '/nix/store/fake\n' ;;
@@ -48,6 +53,7 @@ echo "lsblk \$*" >> "$calls"
 # /dev/zram0 is absent unless the suite says it is there, so the zram branch is deterministic.
 case "\$*" in
   */dev/zram0*) printf '%s\n' "\${ZRAM:-}" ;;
+  *PKNAME*) printf 'vda\n' ;;
   *) cat "$stubs/disk_type" ;;
 esac
 EOF
@@ -69,12 +75,52 @@ printf '%s\n' "\$((n + 1))" > "$stubs/dd_calls"
 if [ "\$DD_MUTATE" = 1 ] && [ "\$n" != 0 ]; then echo changed-table; else cat "$stubs/table"; fi
 EOF
 
+  # The scratch store is a tmpfs install.sh creates itself, so it is never already there. A mount of
+  # a real device counts as the root being mounted, which is what terraform.sh's second run sees.
   stub findmnt <<EOF
 #!/usr/bin/env bash
 echo "findmnt \$*" >> "$calls"
-if [ "\$(cat "$stubs/mounted")" = 1 ]; then echo "/dev/vda2"; exit 0; fi
+case "\$*" in *scratch*) exit 1 ;; esac
+if [ "\$(cat "$stubs/mounted")" = 1 ] || grep -q '^mount /dev' "$calls"; then echo "/dev/vda2"; exit 0; fi
 exit 1
 EOF
+
+  # terraform.sh reads the table and the signatures: a Windows-shaped drive with a Linux partition
+  # last. Signatures are per partition, so the suite can make any of them blank.
+  stub sfdisk <<EOF
+#!/usr/bin/env bash
+echo "sfdisk \$*" >> "$calls"
+printf '{"partitions":[{"node":"/dev/vda1","type":"C12A7EA9-344C-4175-A575-202976385741"},{"node":"/dev/vda2","type":"0FC63DAF-8483-4772-8E79-3D69D8457574"}]\n'
+EOF
+
+  stub blkid <<EOF
+#!/usr/bin/env bash
+echo "blkid \$*" >> "$calls"
+case "\$*" in
+  */dev/vda1*) t="\${ESP_TYPE:-vfat}" ;;
+  */dev/vda2*) t="\${ROOT_TYPE-ext4}" ;;
+  *) t="" ;;
+esac
+if [ -n "\$t" ]; then printf '%s\n' "\$t"; exit 0; fi
+exit 2
+EOF
+
+  # terraform.sh reads the table through jq; stubbing it keeps the suite off whatever jq this
+  # machine happens to have.
+  stub jq <<EOF
+#!/usr/bin/env bash
+echo "jq \$*" >> "$calls"
+printf '/dev/vda1 C12A7EA9-344C-4175-A575-202976385741\n/dev/vda2 0FC63DAF-8483-4772-8E79-3D69D8457574\n'
+EOF
+
+  # Formatting is the destructive step: it is logged, never performed.
+  for tool in mkfs.vfat mkfs.ext4 mkfs.btrfs; do
+    stub "$tool" <<EOF
+#!/usr/bin/env bash
+echo "$tool \$*" >> "$calls"
+exit \${MKFS_EXIT:-0}
+EOF
+  done
 
   # The scratch store is a tmpfs mount attempt; stubbing it keeps the suite off the real mount.
   stub mount <<EOF
@@ -96,10 +142,14 @@ EOF
   done
 
   # The ssh keys go into the installed tree, so `install` is where the suite can read back what
-  # deploy wrote without touching /mnt on this machine.
+  # deploy wrote without touching /mnt on this machine. terraform.sh uses the same command to create
+  # directories (-d), which is a no-op here: there is no /mnt to create in.
   stub install <<EOF
 #!/usr/bin/env bash
 echo "install \$*" >> "$calls"
+for a in "\$@"; do
+  [ "\$a" = "-d" ] && exit 0
+done
 dst=\${@:\$#}
 src=""
 for a in "\$@"; do
@@ -122,7 +172,8 @@ printf '%s\n' "$stubs/home"
 EOF
 
   # grep is how the reboot guard reads the installed system's shadow; mapping the file into the
-  # stub tree keeps /mnt on this machine out of the suite.
+  # stub tree keeps /mnt on this machine out of the suite. Anything outside /mnt (the call log,
+  # which findmnt greps) is grepped as it really is.
   stub grep <<EOF
 #!/usr/bin/env bash
 echo "grep \$*" >> "$calls"
@@ -136,7 +187,10 @@ for a in "\$@"; do
     *) if [ -z "\$pat" ]; then pat="\$a"; else file="\$a"; fi ;;
   esac
 done
-/usr/bin/grep "\${flags[@]}" "\$pat" "$stubs/root\$file"
+case "\$file" in
+  /mnt*) file="$stubs/root\$file" ;;
+ esac
+ /usr/bin/grep "\${flags[@]}" "\$pat" "\$file"
 EOF
 
   # nixos-install --no-root-passwd leaves placeholders, which is the state the reboot guard refuses.
@@ -172,12 +226,14 @@ run_install() {
   assert_no_call "mkswap"
 }
 
-@test "prepare refuses a host whose drive is shared" {
+@test "prepare accepts a shared drive and never asks disko for a device" {
   printf 'false\n' >"$stubs/owned"
   run run_install --dry-run --stage prepare methyl
-  [ "$status" -eq 2 ]
-  assert_out "ownsWholeDisk is false"
-  assert_no_call "dd"
+  [ "$status" -eq 0 ]
+  assert_out "shares /dev/vda"
+  assert_call "fileSystems"
+  assert_no_call "disko.devices.disk"
+  assert_out "partition table unchanged"
 }
 
 @test "prepare refuses a device that is not a whole disk" {
@@ -260,6 +316,44 @@ run_install() {
   [ "$status" -eq 0 ]
   assert_out "adopted, not rebuilt"
   assert_call "disko --mode mount"
+}
+
+@test "terraform on a shared drive runs terraform.sh and never disko" {
+  printf 'false\n' >"$stubs/owned"
+  run run_install --dry-run --stage terraform methyl
+  [ "$status" -eq 0 ]
+  assert_out "[dry-run] ./terraform.sh --dry-run --disk /dev/vda --mount /mnt --root-fs ext4"
+  assert_no_call "disko --mode"
+  assert_no_call "mkfs"
+}
+
+@test "terraform on a shared drive adopts the signed partitions and mounts the declared root" {
+  printf 'false\n' >"$stubs/owned"
+  INSTALL_FORCE=1 run run_install --stage terraform methyl
+  [ "$status" -eq 0 ]
+  # Both partitions carry a signature, so nothing is formatted and only the root is mounted.
+  assert_no_call "mkfs"
+  assert_call "^mount /dev/vda2 /mnt$"
+  assert_no_call "disko --mode"
+  assert_out "mounted from the partitions methyl declares"
+}
+
+@test "terraform on a shared drive refuses to format a blank partition with nobody to ask" {
+  printf 'false\n' >"$stubs/owned"
+  ROOT_TYPE= run run_install --stage terraform methyl
+  [ "$status" -eq 2 ]
+  assert_out "needs a confirmation and there is no terminal"
+  assert_no_call "mkfs"
+  assert_no_call "^mount /dev"
+}
+
+@test "terraform on a shared drive refuses a blank partition the host names by UUID" {
+  printf 'false\n' >"$stubs/owned"
+  printf '/dev/disk/by-uuid/1234\n' >"$stubs/root_device"
+  ROOT_TYPE= run run_install --stage terraform methyl
+  [ "$status" -eq 2 ]
+  assert_out "UUID"
+  assert_no_call "^mount /dev"
 }
 
 @test "terraform fails when the target store never got mounted" {

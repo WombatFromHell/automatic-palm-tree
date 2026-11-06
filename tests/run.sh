@@ -38,6 +38,7 @@ fail=0
 # shortcut: inline text passed to writeShellScriptBin (features/hm-gpg/home.nix's pinentry-fallback)
 # is not covered here -- upgrading means routing that text through a wrapper the gate builds.
 lint_files=(bootstrap.sh update-all.sh lib/updater.sh lib/cache-check.sh lib/style.sh install.sh
+  terraform.sh lib/confirm.sh
   features/hm-gpg/pinentry-tmux.sh features/hm-gpg/pinentry-zellij.sh
   features/hm-nasmount/nasmount-sshfs.sh)
 if ! command -v shellcheck >/dev/null 2>&1; then
@@ -79,9 +80,11 @@ gate() {
 }
 
 # `nix develop` is where the pin updaters run (features/*/update.sh -> lib/updater.sh), so the
-# tools they need must resolve from the devShell, not from whatever the host installed.
-gate "nix develop resolves the updater tools" devshell nix develop --command \
-  bash -c 'command -v curl jq nix bats shellcheck shfmt >/dev/null'
+# tools they need must resolve from the devShell, not from whatever the host installed. terraform.sh
+# is the same claim for the disk tools: the installer ISO is not this devShell, so the gate is where
+# "the script only uses tools we ship" gets checked.
+gate "nix develop resolves the updater and disk tools" devshell nix develop --command \
+  bash -c 'command -v curl jq nix bats shellcheck shfmt sfdisk blkid mkfs.vfat mkfs.ext4 mcopy sgdisk >/dev/null'
 
 # The value-tier assertions run as nix-unit test attributes in one process (tests/suite.nix), so a
 # failing attribute prints its own diff and the rest keep running instead of the whole suite
@@ -196,8 +199,14 @@ fi
 # CLI's own argv and exit status survive, so tests/xilo.bats joins them.
 # install.sh is staged destruction: which step asks for a yes, what a scripted run refuses, and that
 # prepare leaves the partition table byte-identical, so tests/install.bats joins them on stubs.
-if command -v bats >/dev/null 2>&1; then
-  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats; do
+# terraform.sh is the shared-drive half, so tests/terraform.bats runs it against real filesystems in
+# files: a blank partition gets really formatted, and a partition another OS owns must come back
+# byte-identical. No root, no loop device, no derivation (ADR-b77ec913151f).
+if ! command -v bats >/dev/null 2>&1; then
+  echo "skip bats suites [bats not installed]"
+else
+  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats \
+    tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats; do
     if out=$(bats "$suite" 2>&1); then
       echo "ok   $suite [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
     else
@@ -206,8 +215,21 @@ if command -v bats >/dev/null 2>&1; then
       fail=1
     fi
   done
+fi
+
+# terraform.bats is not stub-driven: it runs real mkfs, blkid, mtools and sgdisk on sparse files,
+# so it runs in the devShell, which is the environment that carries those tools (ADR-b77ec913151f).
+# Running it plainly would skip it on any machine without them, which is where the proof matters.
+if command -v nix >/dev/null 2>&1 && command -v bats >/dev/null 2>&1; then
+  if out=$(nix develop --command bats tests/terraform.bats 2>&1); then
+    echo "ok   tests/terraform.bats [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
+  else
+    echo "FAIL tests/terraform.bats"
+    printf '%s\n' "$out" | grep -E '^not ok|^# ' | tail -20
+    fail=1
+  fi
 else
-  echo "skip bats suites [bats not installed]"
+  echo "skip tests/terraform.bats [nix or bats not installed]"
 fi
 
 # Byte-parity between the two template expanders, which live in different runtimes:
