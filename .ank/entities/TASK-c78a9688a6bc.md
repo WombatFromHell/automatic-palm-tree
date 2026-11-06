@@ -9,7 +9,6 @@ status: done
 scope:
   - lib/pin-meta.nix
   - tests/pins.nix
-  - tests/red/*.nix
 blocked_by: []
 done_criteria: |
   a fixture metadata.json that declares aarch64-linux in arches with no hash throws pinnedSystems' message naming that system, and one that pins hashes without declaring arches throws the other branch; tests/pins.nix stays green.
@@ -21,7 +20,7 @@ proof:
     criteria: 2487260ca631
     via: submitted
 schema: 4
-version: 2
+version: 3
 ---
 
 TEST_DESIGN names the gap: every host is x86_64-linux, so pin-meta's per-system boundaries are never
