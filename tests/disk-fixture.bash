@@ -16,6 +16,7 @@
 #   root  26624..59391   32768 (16MB)  linux / blank disks
 FAT32_TYPE=C12A7EA9-344C-4175-A575-202976385741
 LINUX_TYPE=0FC63DAF-8483-4772-8E79-3D69D8457574
+ESP_TYPE=C12A7EA9-344C-4175-A575-202976385741
 MSR_TYPE=E8250974-344C-FF3D-9D17-806509A1E1AA
 NTFS_TYPE=0657FE6D-A4A1-43C4-A16B-7172F04D58CD
 ESP_START=2048 ESP_END=18431 ESP_N=16384
@@ -27,15 +28,55 @@ LINUX_START=26624 LINUX_END=59391 LINUX_N=32768
 LINUX2_START=59392 LINUX2_END=92159 LINUX2_N=32768
 # On a Windows disk the Linux partition sits after the NTFS volume, so it has its own geometry.
 WIN_LINUX_START=43000 WIN_LINUX_END=75767
+# A Linux root that fills the drive, so a recipe declaring `rest` has nothing left to take.
+FULL_START=18432 FULL_END=129023
 
 fixture_dir() { disk_dir="$(mktemp -d)"; }
 fixture_teardown() { rm -rf "$disk_dir"; }
 
-# mk_disk <name> — a sparse image. Nothing on disk until a partition is written.
-mk_disk() { truncate -s 64M "$disk_dir/$1.img"; }
+# build_shape <name> [index:start:end:type:name...] — a sparse image with a real GPT, built once.
+# sgdisk costs about a second per call on a regular file, so shapes are built once per file and
+# copied per test; building an image inside a test is what made this suite slow.
+build_shape() {
+  local img="$template_dir/$1.img" spec args=()
+  truncate -s 64M "$img"
+  shift
+  for spec in "$@"; do
+    IFS=: read -r idx start end type name <<<"$spec"
+    args+=(--new="$idx:$start:$end" -t "$idx:$type" -c "$idx:$name")
+  done
+  [ "${#args[@]}" -gt 0 ] || return 0
+  sgdisk "${args[@]}" "$img" >/dev/null
+}
 
-# partition <disk> <index> <start> <end> <type> <name>
-partition() { sgdisk --new="$2:$3:$4" -t "$2:$5" -c "$2:$6" "$disk_dir/$1.img" >/dev/null; }
+# fixture_setup_file / fixture_teardown_file — the drive shapes every test needs, built once for the
+# file. `bare` is an image with no partition table; `raw` is one holding a filesystem and no table.
+fixture_setup_file() {
+  # bats runs setup_file in its own process, so the template location has to be exported for the
+  # tests, which each run in a separate one.
+  template_dir="$(mktemp -d)"
+  export template_dir
+  local esp="1:$ESP_START:$ESP_END:$FAT32_TYPE:esp"
+  local root="2:$LINUX_START:$LINUX_END:$LINUX_TYPE:root"
+  local msr="2:$MSR_START:$MSR_END:$MSR_TYPE:msr"
+  local ntfs="3:$NTFS_START:$NTFS_END:$NTFS_TYPE:basic-data"
+  build_shape bare
+  build_shape raw
+  mkfs.ext4 -q -L someone "$template_dir/raw.img" >/dev/null 2>&1
+  build_shape esp "$esp"
+  build_shape blank "$esp" "$root"
+  build_shape win "$esp" "$msr" "$ntfs"
+  build_shape winblank "$esp" "$msr" "$ntfs" "4:$WIN_LINUX_START:$WIN_LINUX_END:$LINUX_TYPE:linux"
+  build_shape pick "$esp" "2:$LINUX_START:$LINUX_END:$LINUX_TYPE:foreign-root" "3:$LINUX2_START:$LINUX2_END:$LINUX_TYPE:nixos-root"
+  build_shape tight "$esp" "2:$NTFS_START:$NTFS_END:$NTFS_TYPE:basic-data"
+  build_shape full "$esp" "2:$FULL_START:$FULL_END:$LINUX_TYPE:root"
+}
+
+fixture_teardown_file() { rm -rf "$template_dir"; }
+
+# disk <name> [shape] — this test's own copy of a template, so every test starts from the bytes the
+# shape was built with and nothing a test writes reaches another test.
+disk() { cp --reflink=auto "$template_dir/${2:-$1}.img" "$disk_dir/$1.img"; }
 
 # slice <disk> <index> <start> <count> — the partition as its own file, named as sfdisk names it.
 slice() { dd if="$disk_dir/$1.img" of="$disk_dir/$1.img$2" bs=512 skip="$3" count="$4" status=none; }
@@ -45,6 +86,10 @@ slice() { dd if="$disk_dir/$1.img" of="$disk_dir/$1.img$2" bs=512 skip="$3" coun
 adopt() { dd if="$disk_dir/$1.img$2" of="$disk_dir/$1.img" bs=512 seek="$3" count="$4" conv=notrunc status=none; }
 
 table_checksum() { dd if="$disk_dir/$1.img" bs=1M count=1 status=none | md5sum | cut -d' ' -f1; }
+
+# entries_json <disk> — the partition entries as the drive reports them. Tests compare this before and
+# after a run: appending may add an entry, but an entry that already exists must come back identical.
+entries_json() { sfdisk --json "$disk_dir/$1.img" 2>/dev/null | jq -c '.partitiontable.partitions' || true; }
 region_checksum() { dd if="$disk_dir/$1.img" bs=512 skip="$2" count="$3" status=none | md5sum | cut -d' ' -f1; }
 
 # seed_region <disk> <start> <count> <byte> — recognizable bytes in a partition another OS owns, so a
@@ -78,15 +123,18 @@ esp_foreign() {
 format_slice() { # <disk> <index> <start> <count> <fs> [label]
   local disk="$1" idx="$2" start="$3" count="$4" fs="$5" label="${6:-}"
   slice "$disk" "$idx" "$start" "$count"
+  # btrfs-progs refuses a device below ~114MB, so a btrfs slice has to be a big one.
   if [ -n "$label" ]; then
     case "$fs" in
       vfat) mkfs.vfat -F 32 -n "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
       ext4) mkfs.ext4 -q -T ext4 -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+      btrfs) mkfs.btrfs -f -q -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
     esac
   else
     case "$fs" in
       vfat) mkfs.vfat -F 32 "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
       ext4) mkfs.ext4 -q -T ext4 "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+      btrfs) mkfs.btrfs -f -q "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
     esac
   fi
   adopt "$disk" "$idx" "$start" "$count"
@@ -110,6 +158,49 @@ sync() {
   while read -r node start size; do
     dd if="$node" of="$disk_dir/$1.img" bs=512 seek="$start" count="$size" conv=notrunc status=none
   done < <(sfdisk --json "$disk_dir/$1.img" | jq -r '.partitiontable.partitions[] | "\(.node) \(.start) \(.size)"')
+}
+
+# recipe_file <file> <owns> <entries> — a terraform.json the shipped reader parses. Entries are
+# comma-separated name:label:fs:size:mount. It is written with jq so the file is real JSON, not a
+# shape the test assumes.
+recipe_file() {
+  local file="$1" owns="$2" entries="$3"
+  jq -n --arg owns "$owns" --arg entries "$entries" '{
+    owns: ($owns == "true"),
+    partitions: ($entries / "," | map(. as $e | ($e / ":") | {name: .[0], label: .[1], fs: .[2], size: .[3], mount: .[4], options: (.[5] // null)} | with_entries(select(.value != null))))
+  }' >"$file"
+}
+
+# stub_lsblk <paths...> — the candidate set discovery enumerates. A fixture image stands in for a
+# /dev name: the reader accepts a path that exists, which is what lets discovery run on files.
+# With no paths it reports no disk at all, which is the default setup state. SIZE is included
+# because the free-space precheck needs the drive's own length, and a fixture's length is its file.
+stub_lsblk() {
+  : >"$stubs/disks"
+  [ $# -gt 0 ] && printf '%s\n' "$@" >>"$stubs/disks"
+  stub lsblk <<EOF
+#!/usr/bin/env bash
+echo "lsblk \$*" >> "$calls"
+printf '{"blockdevices":['
+first=1
+while read -r p; do
+  [ -n "\$p" ] || continue
+  [ "\$first" = 1 ] || printf ','
+  printf '{"name":"%s","type":"disk","rm":false,"size":%s}' "\$p" "\$(wc -c <"\$p")"
+  first=0
+done < "$stubs/disks"
+printf ']}\n'
+EOF
+}
+
+# terraform_recipe_run <disk> <recipe> [flags] — the shipped script driven by a recipe alone, so no
+# flag names the drive, the filesystem or a device path.
+terraform_recipe_run() {
+  local disk="$1" recipe="$2"
+  shift 2
+  nodes "$disk"
+  PATH="$stubs:$PATH" INSTALL_FORCE="${TF_FORCE:-1}" bash "$repo/terraform.sh" \
+    --recipe "$recipe" --mount "$disk_dir/mnt" "$@"
 }
 
 # terraform_run — the shipped script against the fixture. mount and findmnt stay stubbed (they take
