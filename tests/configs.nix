@@ -76,6 +76,8 @@ let
       kernel = cachyosKernel;
       packages = ["steam" "gamescope" "scx-loader" "lsfg-vk"];
       required = {nix-community = true;};
+      mounts = {};
+      efiVariables = true;
     };
     methyl-nixos = {
       kernel = cachyosKernel;
@@ -85,11 +87,27 @@ let
         nix-community = true;
         wombatfromhell = true;
       };
+      # The mount set the generated hardware-configuration.nix declares today, expressed as
+      # (mountpoint -> subvol), which is what the layout must reproduce from disko (ADR-eaca61b8).
+      # `{}` means fsLib's mkMounts still owns the mounts.
+      mounts = {
+        "/" = "@";
+        "/home" = "@home";
+        "/nix" = "@nix";
+        "/var/log" = "@log";
+        "/var/cache" = "@cache";
+        "/var/lib/swap" = "@swap";
+        "/.snapshots" = "@snapshots";
+      };
+      efiVariables = true;
     };
     propyl = {
       kernel = null;
       packages = ["fprintd"];
       required = {kait2en = true;};
+      mounts = {};
+      # Shared ESP with another OS: NixOS must not rewrite the firmware boot order.
+      efiVariables = false;
     };
   };
 
@@ -111,6 +129,25 @@ let
       # Lix's evaluator costs ~450MB more per host config than upstream Nix (DESIGN.md "Which
       # evaluator"), so no host may opt back in. features/nixos-lix was deleted for this.
       (ck "${host}: nix.package is upstream Nix, not Lix" (cfg.nix.package.pname == "nix"))
+
+      # --- who owns the mounts, and what the firmware boot order is ------------
+      # disko writes `fileSystems` whenever enableConfig is on, so a host with no layout must keep
+      # enableConfig off (features/nixos-disko/nixos.nix) and keep fsLib's mounts. Hosts that never
+      # opt into the feature have no `cfg.disko` at all, which is the same fact as off.
+      (ck "${host}: disko owns mounts only where this host declares a layout"
+        ((cfg.disko.enableConfig or false) == (e.mounts != {})))
+      (ck "${host}: it has a root mount either way" (cfg.fileSystems."/" != null))
+      (ck "${host}: systemd-boot is the loader, and EFI variables match the host"
+        (cfg.boot.loader.systemd-boot.enable && cfg.boot.loader.efi.canTouchEfiVariables == e.efiVariables))
+      (ck "${host}: its layout mounts the subvolume tree fsLib declared"
+        ((lib.all
+            (m:
+              (cfg.fileSystems.${m} or {}).fsType
+              == "btrfs"
+              && lib.elem "subvol=${e.mounts.${m}}" ((cfg.fileSystems.${m} or {}).options or []))
+            (lib.attrNames e.mounts))
+          && (e.mounts == {} || cfg.fileSystems."/var/log".neededForBoot)
+          && (e.mounts == {} || cfg.fileSystems."/boot".fsType == "vfat")))
 
       # --- nixGL disabled on this NixOS host ------------------------------------
       # features/hm-nixgl sets packages only when flakeHost.isNixOS is false, and Home Manager's

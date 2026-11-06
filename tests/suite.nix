@@ -14,6 +14,7 @@ let
     (import ./filesystems.nix)
     (import ./pins.nix)
     (import ./caches.nix)
+    (import ./disko.nix)
     (import ./warnings.nix)
     (import ./zram.nix)
     (import ./loader.nix)
