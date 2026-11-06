@@ -5,7 +5,7 @@ slug: a-host-fact-names-the-consequence-it-controls
 title: A host fact names the consequence it controls
 created: 2026-11-05T20:36:56Z
 author: josh@methyl-bazzite
-status: proposed
+status: accepted
 scope:
   - lib/host-options.nix
   - modules/host-facts.nix
@@ -14,8 +14,12 @@ scope:
   - hosts/methyl-base/core.nix
 constraint: |
   Every fact in lib/host-options.nix is named for the behaviour it changes, so a host file says what setting it does; a fact whose value changes nothing is deleted rather than kept for later, which retires isQemuVM.
+ratified: "567526574704"
+verified:
+  - by: josh@methyl-bazzite
+    at: 2026-11-06T04:02:11Z
 schema: 4
-version: 1
+version: 2
 ---
 
 isQemuVM is a label, not a consequence. Its two readers are features/nixos-kde/nixos.nix:15 and :18, where it picks xserver.enable and sddm.wayland.enable — the fact actually means "this display has no GPU, so prefer X11", and nothing else reads it. hosts/methyl-base/core.nix:4 sets it false and no host ever sets it true, so the mkIf is constant today: deleting both lines leaves xserver.enable at its default false and sddm.wayland.enable at nixpkgs' default true, which is exactly what every host evaluates now.
