@@ -596,8 +596,14 @@ verify_recipe() {
   local i=0 name label fs size type mnt node sig got want sect end declared count held
   declared=$(printf '%s\n' "$entries" | grep -c '.' || true)
   count=$(printf '%s\n' "$parts" | grep -c '.' || true)
-  if [ "$owns" = true ] && [ "$count" != "$declared" ]; then
+  # Partitions past the recipe are somebody else's layout, whether we are planning or verifying.
+  # Fewer than the recipe is only a mismatch once the table has been written: a fresh drive holds
+  # none, which is the case owns=true exists to build.
+  if [ "$owns" = true ] && [ "$count" -gt "$declared" ]; then
     refuse "the table on $disk holds $count partitions and the recipe declares $declared: owns=true reproduces exactly the recipe, so the extra ones are somebody else's"
+  fi
+  if [ "$owns" = true ] && [ "$dry" = 0 ] && [ "$count" -lt "$declared" ]; then
+    refuse "the table on $disk holds $count partitions and the recipe declares $declared: the layout is not on this drive yet"
   fi
   while IFS="$sep" read -r name label fs size type mnt; do
     [ -n "$name" ] || continue
@@ -779,6 +785,8 @@ owned_run() {
     run mount -o "subvol=@${opts:+,$opts}" "$root_node" "$mount"
   fi
 
+  # A dry run wrote nothing, so there is no drive to re-read: the plan printed above is the answer.
+  if [ "$dry" = 1 ]; then return; fi
   verify_recipe
   # Only a mount this run made is checked: a mount it adopted belongs to whoever set it up.
   if [ "$mounted_now" = 1 ]; then
@@ -1046,8 +1054,8 @@ say "terraform: adopted ESP $esp (${esp_sig:-vfat, newly formatted}), root $root
 
 # The run is not finished until the drive is re-read (spec: verification is the third use of the same
 # routine). Flags mode names a filesystem and a device path rather than declaring a recipe, so there
-# is nothing to verify against.
-if [ -n "$recipe" ]; then
+# is nothing to verify against, and a dry run wrote nothing to re-read.
+if [ -n "$recipe" ] && [ "$dry" = 0 ]; then
   verify_recipe
   verify_mount "$root_part"
 fi

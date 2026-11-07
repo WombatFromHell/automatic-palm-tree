@@ -61,6 +61,15 @@ let
     "services.desktopManager.plasma6.enable" = ["methyl"];
   };
 
+  # The layout terraform.sh reproduces, if this host declares one as a recipe (ADR-b77ec913151f).
+  recipe =
+    if builtins.pathExists ../hosts/${host}/terraform.json
+    then builtins.fromJSON (builtins.readFile ../hosts/${host}/terraform.json)
+    else {
+      owns = false;
+      partitions = [];
+    };
+
   # Per-host expectations, straight from hosts/ and the profile layout. `kernel = null`
   # means "the kernel its own feature pins", compared against that feature's derivation.
   # Which host runs the Wayland watcher: its script shells out to bare `niri`, `pgrep` and
@@ -131,12 +140,29 @@ let
       (ck "${host}: nix.package is upstream Nix, not Lix" (cfg.nix.package.pname == "nix"))
 
       # --- who owns the mounts, and what the firmware boot order is ------------
-      # disko writes `fileSystems` whenever enableConfig is on, so a host with no layout must keep
-      # enableConfig off (features/nixos-disko/nixos.nix) and keep fsLib's mounts. Hosts that never
-      # opt into the feature have no `cfg.disko` at all, which is the same fact as off.
-      (ck "${host}: disko owns mounts only where this host declares a layout"
-        ((cfg.disko.enableConfig or false) == (e.mounts != {})))
+      # terraform.sh owns every drive this flake deploys onto (ADR-b77ec913151f), so no host declares
+      # a disko layout: fsLib's mkMounts declares the mounts, and install.sh refuses a host that
+      # declares a layout it has no installer for.
+      (ck "${host}: no disko layout is declared" (((cfg.disko or {}).devices or {}) == {}))
       (ck "${host}: it has a root mount either way" (cfg.fileSystems."/" != null))
+
+      # The recipe, where a host has one, is the layout its mounts name: same drive ownership, same
+      # labels as device names, same mount options. That is the invariant install.sh and terraform.sh
+      # both rely on, checked here rather than in the bats suite because it is about the config.
+      (ck "${host}: its recipe matches the mounts its config declares"
+        (let
+          root = lib.findFirst (p: p.mount == "/") null recipe.partitions or [];
+          esp = lib.findFirst (p: p.mount == "/boot") null recipe.partitions or [];
+          # Every option the recipe mounts with has to be one this host's config declares; NixOS
+          # adds its own flags (x-initrd.mount on /), so this is a subset check, not equality.
+          opts = p: m: lib.all (o: lib.elem o (cfg.fileSystems.${m}.options or [])) (lib.splitString "," (p.options or ""));
+        in
+          !builtins.pathExists ../hosts/${host}/terraform.json
+          || (recipe.owns == cfg.flakeHost.ownsWholeDisk
+            && "/dev/disk/by-label/${root.label}" == cfg.fileSystems."/".device
+            && "/dev/disk/by-label/${esp.label}" == cfg.fileSystems."/boot".device
+            && opts root "/"
+            && opts esp "/boot")))
       (ck "${host}: systemd-boot is the loader, and EFI variables match the host"
         (cfg.boot.loader.systemd-boot.enable && cfg.boot.loader.efi.canTouchEfiVariables == e.efiVariables))
       (ck "${host}: its layout mounts the subvolume tree fsLib declared"

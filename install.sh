@@ -2,8 +2,9 @@
 # install.sh — staged installer for a host, on a drive this flake owns alone or shares.
 #
 #   prepare    read-only: host + drive checks, temporary zram, partition-table checksum
-#   terraform  a drive we own: disko create/format/mount under --root, so the target store lands on
-#            the disk. A drive we share: ./terraform.sh adopts the partitions the host declares.
+#   terraform  ./terraform.sh reproduces the host's layout onto the drive: a drive we own gets a
+#            fresh gpt table from hosts/<host>/terraform.json; a drive we share adopts the
+#            partitions the host declares. Either way the target store lands on the disk.
 #   deploy     nixos-install --root <dir>: the closure builds into <dir>/nix/store and the boot
 #            loader is written (nixos-install runs switch-to-configuration boot itself)
 #   reboot     only after deploy
@@ -105,10 +106,10 @@ admins() {
 # not a table change (ADR-b77ec913151f).
 table_checksum() { dd if="$device" bs=1M count=1 status=none | md5sum | cut -d' ' -f1; }
 
-# The precondition deploy needs: a store on the target disk, not in the ISO's RAM. disko mounts its
-# @nix subvolume at $root/nix; a shared drive mounts the root partition itself at $root, so its
-# store is a directory inside that filesystem -- findmnt answers for a mountpoint, never for a
-# directory inside one, so both placements are checked. A tmpfs source is refused.
+# The precondition deploy needs: a store on the target disk, not in the ISO's RAM. terraform.sh
+# mounts the root subvolume at $root, so the store is a directory inside that filesystem -- findmnt
+# answers for a mountpoint, never for a directory inside one, so both placements are checked. A tmpfs
+# source is refused.
 store_mount() {
   local src
   src=$(findmnt -n -o SOURCE "$root/nix" 2>/dev/null || true)
@@ -121,12 +122,12 @@ store_mount() {
   esac
 }
 
-# The drive a shared host deploys onto, in the order the facts arrive: the drive holding the
-# partition the host's mount names; the drive holding a partition that already carries the declared
-# filesystem; then the one non-removable drive here carrying a partition table. Blank partitions name
-# nothing until terraform.sh formats them, which is why the last step exists — and two candidates is
-# refused, never guessed (ADR-b77ec913151f).
-shared_disk() {
+# The drive the host deploys onto, in the order the facts arrive: the drive holding the partition
+# the host's mount names; the drive holding a partition that already carries the declared
+# filesystem; then the one non-removable drive here. Blank partitions name nothing until
+# terraform.sh formats them, which is why the last step exists — and two candidates is refused,
+# never guessed (ADR-b77ec913151f).
+target_disk() {
   local cand disks="" name type rm
   cand=$(lsblk -n -o PKNAME "$root_device" 2>/dev/null | head -1 || true)
   if [ -n "$cand" ]; then
@@ -169,20 +170,47 @@ resolve() {
     mkdir -p "$scratch"
     # Nix refuses a world-writable store path, and the ISO's umask leaves 777 on a fresh dir.
     # /run is 2G and the ISO's own /nix/store upper tmpfs is already full, so the scratch store gets
-    # a tmpfs of its own — disko's closure fits nowhere else on the ISO. If the mount is refused the
-    # plain directory is still usable.
+    # a tmpfs of its own — a host config's eval fits nowhere else on the ISO. If the mount is
+    # refused the plain directory is still usable.
     if ! findmnt -n -o TARGET "$scratch" >/dev/null 2>&1; then
       mount -t tmpfs -o size=2G tmpfs "$scratch" || true
     fi
     # A fresh tmpfs root is 1777, which Nix refuses; the directory itself is 777 under the ISO umask.
     chmod 755 "$scratch"
   fi
-  owned=$(scoped nix eval --store "$scratch" --impure "$(attr).flakeHost.ownsWholeDisk") || exit 2
-  # A shared host can declare its layout as a recipe instead of leaving it to its mounts. Where the
-  # file exists it is the declaration install.sh acts on, and its owns must agree with the one fact
-  # that says who may partition the drive: a recipe claiming a drive this host does not own is
-  # refused before any write, and a recipe on a host whose layout disko owns is refused rather than
-  # silently ignored.
+  # One eval, five facts: who may partition the drive, what the host's mounts name, and whether the
+  # host still declares a disko layout. Evaluating the config once is cheaper than three narrowed
+  # evals of it, and the ISO's /nix/store is an overlay whose upper half is a tiny tmpfs, so every
+  # eval and build below goes to its own store instead.
+  facts=$(scoped nix eval --store "$scratch" --impure --raw "$(attr)" \
+    --apply 'c: builtins.concatStringsSep "\n" [
+      (builtins.toString c.flakeHost.ownsWholeDisk)
+      (c.fileSystems."/".device or "")
+      (c.fileSystems."/".fsType or "")
+      (c.fileSystems."/boot".device or "")
+      (builtins.concatStringsSep " " (builtins.attrNames (c.disko.devices or {})))
+    ]') || exit 2
+  owned=$(printf '%s\n' "$facts" | sed -n 1p)
+  # `builtins.toString` of a bool is 1/0; the recipe's `owns` is true/false, so both sides are put
+  # in one form before they are compared.
+  case "$owned" in
+    1) owned=true ;;
+    0) owned=false ;;
+  esac
+  root_device=$(printf '%s\n' "$facts" | sed -n 2p)
+  root_fs=$(printf '%s\n' "$facts" | sed -n 3p)
+  esp_device=$(printf '%s\n' "$facts" | sed -n 4p)
+  disko=$(printf '%s\n' "$facts" | sed -n 5p)
+  # terraform.sh is the only thing this script lets touch a drive (ADR-b77ec913151f), so a host
+  # declaring a disko layout has no installer to run it: that layout would be silently skipped.
+  if [ -n "$disko" ]; then
+    say "$host declares a disko layout ($disko): install.sh deploys through terraform.sh — declare hosts/$host/terraform.json instead"
+    exit 2
+  fi
+  # The recipe is the layout declaration. Where the file exists it is what install.sh acts on, and
+  # its owns must agree with the one fact that says who may partition the drive: a recipe claiming a
+  # drive this host does not own is refused before any write. A host that owns its drive must have
+  # one — there is no other declaration of what a fresh gpt table should hold.
   recipe=""
   recipe_file="hosts/$host/terraform.json"
   if [ -f "$recipe_file" ]; then
@@ -191,30 +219,22 @@ resolve() {
       say "$host: $recipe_file says owns=$declared but flakeHost.ownsWholeDisk is $owned — one of them is wrong"
       exit 2
     fi
-    if [ "$owned" = "true" ]; then
-      say "$host owns its disk: disko owns the layout (ADR-eaca61b85782), so $recipe_file is never read — remove it"
-      exit 2
-    fi
     recipe="$recipe_file"
+  elif [ "$owned" = "true" ]; then
+    say "$host owns its disk: $recipe_file must declare the layout terraform.sh reproduces"
+    exit 2
   fi
+  # Both kinds of drive are named the same way: the host's mounts name a partition, lsblk names the
+  # drive holding it, and a drive nothing has formatted yet is the one real drive here (ADR-b77ec913151f).
+  if [ -z "$esp_device" ]; then
+    say "$host: no /boot mount is declared, so there is no ESP to adopt"
+    exit 2
+  fi
+  target_disk
   if [ "$owned" = "true" ]; then
-    device=$(scoped nix eval --store "$scratch" --impure --raw "$(attr).disko.devices.disk" \
-      --apply 'd: (builtins.head (builtins.attrValues d)).device') || exit 2
-    say "$host owns $device outright (disko owns its layout)"
+    say "$host owns $device outright: terraform.sh reproduces $recipe_file onto it"
   else
-    # A shared drive has no disko device: the host's own mounts name the partition, and lsblk names
-    # the disk holding it. terraform.sh then adopts those partitions (ADR-b77ec913151f).
-    mounts=$(scoped nix eval --store "$scratch" --impure --raw "$(attr).fileSystems" \
-      --apply 'fs: builtins.concatStringsSep "\n" [ fs."/".device fs."/".fsType fs."/boot".device ]') || exit 2
-    root_device=$(printf '%s\n' "$mounts" | sed -n 1p)
-    root_fs=$(printf '%s\n' "$mounts" | sed -n 2p)
-    esp_device=$(printf '%s\n' "$mounts" | sed -n 3p)
-    if [ -z "$esp_device" ]; then
-      say "$host: no /boot mount is declared, so there is no ESP to adopt"
-      exit 2
-    fi
-    shared_disk
-    say "$host shares $device (disko is not in play; terraform.sh adopts the partitions it declares)"
+    say "$host shares $device: terraform.sh adopts the partitions it declares"
   fi
   # lsblk lists the drive and each partition on it; only the drive's own line says whether this
   # machine has the whole disk to own. An installed drive (partitions present) is adoptable.
@@ -245,7 +265,7 @@ prepare() {
   resolve
   before=$(table_checksum)
   if [ "$owned" = "true" ]; then
-    say "$host: drive $device, layout owned by disko, mounts under $root"
+    say "$host: drive $device owned, layout from $recipe_file, mounts under $root"
   else
     say "$host: drive $device shared, partitions adopted, mounts under $root"
   fi
@@ -260,63 +280,32 @@ prepare() {
 
 terraform() {
   resolve
-  if [ "$owned" != "true" ]; then
-    # Nothing here wipes anything: terraform.sh formats only partitions blkid reports blank, and it
-    # prompts for each of those itself (ADR-b77ec913151f).
-    tf=()
-    if [ "$dry" = 1 ]; then tf+=(--dry-run); fi
-    if [ "$force" = 1 ]; then tf+=(--force); fi
-    if [ -n "$recipe" ]; then
-      run ./terraform.sh "${tf[@]}" --recipe "$recipe" --disk "$device" --mount "$root"
-    else
-      run ./terraform.sh "${tf[@]}" --disk "$device" --mount "$root" --root-fs "$root_fs" \
-        --root-device "$root_device" --esp-device "$esp_device"
-    fi
-    # Nothing runs under --dry-run, so there is nothing to check afterwards.
-    if [ "$dry" != 1 ]; then
-      src=$(store_mount) || {
-        say "terraform left $root unmounted — the host's root filesystem is not on the drive yet"
-        exit 2
-      }
-      say "terraform ok: $root mounted from the partitions $host declares ($src)"
-    fi
-    return
-  fi
-  mode="create,format,mount"
-  if findmnt -n -o SOURCE "$root/nix" >/dev/null 2>&1; then
-    mode="mount"
-    say "$root/nix is already mounted — the layout is adopted, not rebuilt"
+  # terraform.sh is the only thing that touches the drive, and it prompts for each destructive step
+  # itself (ADR-b77ec913151f): a fresh gpt table on a drive this host owns, a mkfs of a blank
+  # partition on a drive it shares. This stage adds no prompt of its own; --force is the only
+  # non-interactive override, and --dry-run runs nothing. A second run adopts what the drive already
+  # holds instead of rebuilding it.
+  tf=()
+  if [ "$dry" = 1 ]; then tf+=(--dry-run); fi
+  if [ "$force" = 1 ]; then tf+=(--force); fi
+  if [ -n "$recipe" ]; then
+    run ./terraform.sh "${tf[@]}" --recipe "$recipe" --disk "$device" --mount "$root" ||
+      say "terraform.sh reported a failure"
   else
-    confirm "partition table, filesystems and subvolumes on $device: everything currently on it is destroyed"
+    run ./terraform.sh "${tf[@]}" --disk "$device" --mount "$root" --root-fs "$root_fs" \
+      --root-device "$root_device" --esp-device "$esp_device" ||
+      say "terraform.sh reported a failure"
   fi
-  if [ "$dry" = 1 ]; then
-    say "[dry-run] nix build --store $scratch --no-link --print-out-paths $(attr).system.build.diskoScript"
-    script="$scratch/dry-run"
-  else
-    # A store outside /nix/store keeps its paths under <store>/nix/store while nix prints the
-    # canonical /nix/store form, and the out path can be a symlink to another canonical path — both
-    # have to be re-rooted into the scratch store to be runnable.
-    out=$(scoped nix build --store "$scratch" --no-link --print-out-paths \
-      "$(attr).system.build.diskoScript") || {
-      say "terraform: the disko script did not build (scratch store out of space?)"
-      exit 2
-    }
-    script="$scratch$out"
-    if [ -L "$script" ]; then
-      script="$scratch$(readlink "$script")"
-    fi
-    if [ -d "$script" ]; then
-      script="$script/bin/disko"
-    fi
-  fi
-  # No --yes-wipe-all-disks: the script is what asks, and it is what refuses a disk it does not own.
-  # The stage's own contract is the mount, so a disko failure surfaces as the missing mount.
-  run "$script" --mode "$mode" || say "disko reported a failure"
+  # Nothing runs under --dry-run, so there is nothing to check afterwards. The stage's contract is
+  # the mount, so a terraform.sh failure surfaces as the missing mount.
+  if [ "$dry" = 1 ]; then return; fi
   src=$(store_mount) || {
-    say "terraform did not leave a disk-backed $root/nix — deploy cannot run"
+    say "terraform left $root unmounted — the layout is not on the drive yet, deploy cannot run"
     exit 2
   }
-  say "terraform ok: $root/nix mounted from $src"
+  what="the partitions $host declares"
+  [ "$owned" = "true" ] && what="the layout $recipe declares"
+  say "terraform ok: $root mounted from $what ($src)"
 }
 
 deploy() {

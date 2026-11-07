@@ -525,6 +525,7 @@ EOF
   stub_lsblk "$disk_dir/own.img"
   before=$(table_checksum own)
   run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --dry-run
+  [ "$status" -eq 0 ]
   assert_out "esp: create 8M"
   assert_out "root: create 54M"
   assert_out "[dry-run] sfdisk"
@@ -699,6 +700,22 @@ EOF
   run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --verify
   [ "$status" -eq 2 ]
   assert_out "extra"
+}
+
+# A drive with no table at all is the fresh-install case: a plan describes it, a verification says the
+# layout is not on the drive yet.
+@test "--verify in owns mode refuses a drive with no table, and a dry run plans one" {
+  disk own bare
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  stub_lsblk "$disk_dir/own.img"
+  before=$(table_checksum own)
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --verify
+  [ "$status" -eq 2 ]
+  assert_out "not on this drive yet"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --dry-run
+  [ "$status" -eq 0 ]
+  assert_out "root: create 16M"
+  [ "$(table_checksum own)" = "$before" ]
 }
 
 # emit <args...> — the read-only recipe print. stdout and stderr are kept apart on purpose: stdout
