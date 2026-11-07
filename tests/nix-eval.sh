@@ -55,19 +55,26 @@ systemd-run --user --scope -q --expand-environment=no --unit="$unit" \
   "$@" >"$tmp" 2>&1 &
 runner=$!
 # MemoryPeak is anonymous RAM; MemorySwapPeak is what spilled to disk, which is the part that
-# stalls the machine rather than killing it. Older systemd reports nothing for it, so it reads 0.
+# stalls the machine rather than killing the unit. Older systemd reports nothing for it, so it
+# reads 0. One `systemctl show` asks for all three properties and prints them in the order asked;
+# three calls per sample cost ~150 subprocesses per second per job, and with the gate's concurrent
+# jobs that is CPU the suites being measured could have used. `sleep 0.1` is coarse on purpose:
+# MemoryPeak is a cumulative maximum, so it cannot be missed by sampling less often.
 peak=0
 swap=0
+num() {
+  case "${1:-}" in '' | *[!0-9]*) printf '0' ;; *) printf '%s' "$1" ;; esac
+}
 while kill -0 "$runner" 2>/dev/null; do
-  for prop in MemoryCurrent MemoryPeak; do
-    n=$(systemctl --user show "$unit" -p "$prop" --value 2>/dev/null | head -n 1)
-    case "$n" in *[!0-9]* | '') n=0 ;; esac
-    [ "$n" -gt "$peak" ] && peak=$n
-  done
-  n=$(systemctl --user show "$unit" -p MemorySwapPeak --value 2>/dev/null | head -n 1)
-  case "$n" in *[!0-9]* | '') n=0 ;; esac
-  [ "$n" -gt "$swap" ] && swap=$n
-  sleep 0.02
+  mapfile -t vals < <(systemctl --user show "$unit" \
+    -p MemoryCurrent -p MemoryPeak -p MemorySwapPeak --value 2>/dev/null)
+  current=$(num "${vals[0]:-}")
+  reported=$(num "${vals[1]:-}")
+  spilled=$(num "${vals[2]:-}")
+  [ "$reported" -gt "$peak" ] && peak=$reported
+  [ "$current" -gt "$peak" ] && peak=$current
+  [ "$spilled" -gt "$swap" ] && swap=$spilled
+  sleep 0.1
 done
 wait "$runner"
 code=$?

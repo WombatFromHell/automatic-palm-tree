@@ -63,15 +63,88 @@ lint_files=(bootstrap.sh update-all.sh lib/updater.sh lib/cache-check.sh lib/sty
   terraform.sh lib/confirm.sh
   features/hm-gpg/pinentry-tmux.sh features/hm-gpg/pinentry-zellij.sh
   features/hm-nasmount/nasmount-sshfs.sh)
-if ! command -v shellcheck >/dev/null 2>&1; then
-  missing "shipped shell lint" "shellcheck not installed"
-elif out=$(shellcheck -f gcc "${lint_files[@]}" 2>&1); then
-  echo "ok   shipped shell lint  ${#lint_files[@]} files"
-else
-  echo "FAIL shipped shell lint"
-  printf '%s\n' "$out" | tail -20
-  fail=1
+wave=$(mktemp -d "${TMPDIR:-/tmp}/gate-wave.XXXXXX")
+
+# The lint shares nothing with the eval wave, so it runs inside the wave window instead of taking a
+# serial stretch of the script at the top or bottom. A job prints its own verdict line; `collect`
+# below prints it in the order the caller listed it.
+lint=run
+command -v shellcheck >/dev/null 2>&1 || lint=skip
+if [ "$lint" = run ]; then
+  (
+    { shellcheck -f gcc "${lint_files[@]}" 2>&1 && echo "ok   shipped shell lint  ${#lint_files[@]} files"; } >"$wave/lint" 2>&1
+    printf '%s' "$?" >"$wave/lint.rc"
+  ) &
 fi
+
+# collect <label> <out-file> — a background check that prints its own verdict line, so it needs no
+# scope telemetry to interpret. Only the failure details are shown.
+collect() {
+  local label="$1" out="$2"
+  if [ "$(cat "$out.rc")" = 0 ]; then
+    cat "$out"
+  else
+    echo "FAIL $label"
+    tail -20 "$out"
+    fail=1
+  fi
+}
+
+# Byte-parity between the two template expanders, which live in different runtimes:
+# lib/updater.sh render_url (bash, at fetch time) and lib/pin-meta.nix releaseAsset
+# (Nix, at eval time). Both must produce the same URL for every pin and system, or a pin update
+# drifts silently and only shows up as a build-time hash mismatch.
+# One eval lists every pin and system; the bash side expands the same list. Per-pin evals cost
+# ~2.9s each (nixpkgs re-imported), which was most of the gate's runtime. It shares nothing with
+# the suites, so it runs as a job inside the wave window rather than after every verdict.
+parity() {
+  local par=0 pins
+  # The single quotes are deliberate: `${f}` and the `./` paths must reach Nix unexpanded.
+  # shellcheck disable=SC2016
+  local parout
+  parout=$(TEST_SCOPE_NAME=parity tests/nix-eval.sh "$mem" -- nix eval --impure --raw --expr '
+    let lib = (builtins.getFlake (toString ./.)).inputs.nixpkgs.lib;
+        pinMeta = import ./lib/pin-meta.nix {inherit lib;};
+        dirs = builtins.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir ./features));
+        line = f: let
+          pin = builtins.fromJSON (builtins.readFile ./features/${f}/metadata.json);
+        in
+          lib.concatMapStringsSep "\n"
+            (s: "${f}:${s}:${pin.version}:${(pinMeta.releaseAsset pin s).url}")
+            (pinMeta.pinnedSystems pin);
+    in
+      lib.concatMapStringsSep "\n" line
+        (lib.filter (f: builtins.pathExists ./features/${f}/metadata.json) dirs)
+  ' 2>&1) || {
+    echo "FAIL parity (nix eval)"
+    par=1
+  }
+  # The eval result is a line-per-pin list; tests/nix-eval.sh's peak line is not part of it.
+  split_peak "$parout"
+  pins="$body"
+  while IFS=: read -r feature sys ver want; do
+    [ -n "$feature" ] || continue
+    got=$(
+      # Every features/*/update.sh is a symlink to lib/updater.sh (pinned by tests/pins.nix), which
+      # is shellchecked on its own. The path is a variable, so the directive tells shellcheck to
+      # accept the source without following it; naming the target would only resolve relative to
+      # wherever shellcheck happens to be invoked.
+      # shellcheck source=/dev/null
+      . "features/$feature/update.sh"
+      render_url "$sys" "$ver"
+    )
+    if [ "$want" != "$got" ]; then
+      echo "FAIL parity features/$feature $sys"
+      echo "  nix:  $want"
+      echo "  bash: $got"
+      par=1
+    fi
+  done <<<"$pins"
+  if [ "$par" = 0 ]; then
+    echo "ok   expander parity  $peak"
+  fi
+  return "$par"
+}
 
 # tests/nix-eval.sh reports the scope's highest memory on stderr. Keep the suite's own output on
 # one line and carry the peak alongside it, so the cap is auditable: a suite that balloons shows
@@ -142,14 +215,29 @@ throttle() {
 # tools they need must resolve from the devShell, not from whatever the host installed. terraform.sh
 # is the same claim for the disk tools: the installer ISO is not this devShell, so the gate is where
 # "the script only uses tools we ship" gets checked.
+#
+# One devShell call resolves every tool the gate needs and writes the paths to a file. It used to be
+# five devShell evaluations -- this gate, a `nix-unit` probe, the nix-unit run, a `parallel` lookup,
+# and the terraform tier -- and the probe and the lookup only re-resolved paths this call already
+# produced. nix-unit is printed but not required: absent locally is a skip, absent in CI is a FAIL.
+devtools=$(mktemp "${TMPDIR:-/tmp}/gate-tools.XXXXXX")
 gate "nix develop resolves the updater, disk and parallel tools" devshell nix develop --command \
-  bash -c 'command -v curl jq nix bats parallel shellcheck shfmt sfdisk blkid mkfs.vfat mkfs.ext4 mcopy sgdisk >/dev/null'
+  env DEVTOOLS_OUT="$devtools" bash -c 'rc=0
+    for t in curl jq nix bats parallel shellcheck shfmt sfdisk blkid mkfs.vfat mkfs.ext4 mcopy sgdisk nix-unit; do
+      p=$(command -v "$t" 2>/dev/null || true)
+      printf "%s=%s\n" "$t" "$p" >>"$DEVTOOLS_OUT"
+      if [ -z "$p" ] && [ "$t" != nix-unit ]; then rc=1; fi
+    done
+    exit "$rc"'
+devtools_text=$(cat "$devtools")
+rm -f "$devtools"
+devpath() { printf '%s\n' "$devtools_text" | grep "^$1=" | cut -d= -f2-; }
 
 # The value-tier assertions run as nix-unit test attributes in one process (tests/suite.nix), so a
 # failing attribute prints its own diff and the rest keep running instead of the whole suite
 # throwing at the first failure. nix-unit comes from the devShell, so this is skipped when absent,
 # exactly like the bats tier. --impure because tests/support.nix reads the flake itself.
-if nix develop --command sh -c 'command -v nix-unit >/dev/null 2>&1'; then
+if [ -n "$(devpath nix-unit)" ]; then
   gate "tests/suite.nix" nix-unit nix develop --command nix-unit --impure tests/suite.nix
 else
   missing "tests/suite.nix" "nix-unit not in the devShell"
@@ -171,6 +259,13 @@ fi
 # configs.nix evaluates one host per process (see its header): forcing three hosts into one eval
 # needs ~4GB, which is over the cap, so they are three jobs here. support.nix is a fixture library
 # and asserts nothing, so it is not run.
+#
+# The lane is split by what the command does. The four fixture builds are the smallest jobs
+# (0.3-1.65s, <=423MB) and were holding slots behind 736-1004MB evals, so they go first, inside
+# their own subshell: `jobs -r` cannot see a subshell's jobs, so the heavy lane's throttle never
+# counts them, and each build still gets its own scope and its own verdict line. The heavy eval
+# lane is capped at 3 concurrent -- four heavy evals in flight is ~2.5GB, and the caps are per
+# scope, not global (ADR-3ffe3179ebdf).
 labels=(tests/home.nix tests/mounts.nix tests/outputs.nix tests/wrap.nix
   "tests/appdir.nix [fixture build]" "tests/brave-layout.nix [deb fixture build]"
   "tests/shellwrap.nix [wrapper build + shellcheck]" "tests/yazi-install.nix [postInstall fixture]"
@@ -188,13 +283,24 @@ cmds=("nix eval --impure --file tests/home.nix"
   "env TEST_HOST=methyl nix eval --impure --file tests/configs.nix"
   "env TEST_HOST=methyl-nixos nix eval --impure --file tests/configs.nix"
   "env TEST_HOST=propyl nix eval --impure --file tests/configs.nix")
-wave=$(mktemp -d "${TMPDIR:-/tmp}/gate-wave.XXXXXX")
+(
+  for i in "${!labels[@]}"; do
+    case "${cmds[i]}" in *"nix build "*) gate_job "$wave/$i" "${scopes[i]}" bash -c "${cmds[i]}" ;; esac
+  done
+  wait
+) &
 for i in "${!labels[@]}"; do
-  throttle 4
+  case "${cmds[i]}" in *"nix build "*) continue ;; esac
+  throttle 3
   gate_job "$wave/$i" "${scopes[i]}" bash -c "${cmds[i]}"
 done
+# parity is cheap (31MB) and shares nothing with the suites, so it joins the wave rather than
+# taking the last serial stretch of the script.
+( parity >"$wave/parity" 2>&1; printf '%s' "$?" >"$wave/parity.rc" ) &
 wait
+collect "shipped shell lint" "$wave/lint"
 for i in "${!labels[@]}"; do verdict "${labels[i]}" "$wave/$i"; done
+collect "expander parity" "$wave/parity"
 rm -rf "$wave"
 
 # The boot path must be a rebuild that installs the bootloader. nixos-rebuild-ng sets
@@ -271,16 +377,17 @@ if ! command -v bats >/dev/null 2>&1; then
 else
   (
     suites=(tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats
-      tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats tests/floors.bats tests/ci.bats)
+      tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats
+      tests/floors.bats tests/ci.bats tests/nix-eval.bats)
     # One bats call with the files in parallel (--no-parallelize-within-files): each suite still runs
     # its tests sequentially inside its own worker, so shared stub state inside a suite survives.
     # `parallel` is borrowed from the devShell onto PATH rather than swapping shells, because
     # creds.bats and sopsctl.bats run the host's real sops/age/systemd-creds. Without it the tier
     # runs sequentially. Measured 35s -> 8s over 291 tests; a failure still names its file.
     jobs=()
-    par=$(nix develop --command sh -c 'command -v parallel' 2>/dev/null || true)
-    if [ -n "$par" ]; then
-      PATH="$(dirname "$par"):$PATH"
+    parallel_path=$(devpath parallel)
+    if [ -n "$parallel_path" ]; then
+      PATH="$(dirname "$parallel_path"):$PATH"
       jobs=(--jobs 8 --no-parallelize-within-files)
     fi
     bats "${jobs[@]}" "${suites[@]}" >"$tiers/stub" 2>&1
@@ -327,57 +434,7 @@ else
   rm -rf "$tiers"
 fi
 
-# Byte-parity between the two template expanders, which live in different runtimes:
-# lib/updater.sh render_url (bash, at fetch time) and lib/pin-meta.nix releaseAsset
-# (Nix, at eval time). Both must produce the same URL for every pin and system, or a
-# pin update drifts silently and only shows up as a build-time hash mismatch.
-# One eval lists every pin and system; the bash side expands the same list. Per-pin
-# evals cost ~2.9s each (nixpkgs re-imported), which was most of the gate's runtime.
-par=0
-# The single quotes are deliberate: `${f}` and the `./` paths must reach Nix unexpanded.
-# shellcheck disable=SC2016
-parout=$(TEST_SCOPE_NAME=parity tests/nix-eval.sh "$mem" -- nix eval --impure --raw --expr '
-  let lib = (builtins.getFlake (toString ./.)).inputs.nixpkgs.lib;
-      pinMeta = import ./lib/pin-meta.nix {inherit lib;};
-      dirs = builtins.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir ./features));
-      line = f: let
-        pin = builtins.fromJSON (builtins.readFile ./features/${f}/metadata.json);
-      in
-        lib.concatMapStringsSep "\n"
-          (s: "${f}:${s}:${pin.version}:${(pinMeta.releaseAsset pin s).url}")
-          (pinMeta.pinnedSystems pin);
-  in
-    lib.concatMapStringsSep "\n" line
-      (lib.filter (f: builtins.pathExists ./features/${f}/metadata.json) dirs)
-' 2>&1) || {
-  echo "FAIL parity (nix eval)"
-  par=1
-}
-# The eval result is a line-per-pin list; tests/nix-eval.sh's peak line is not part of it.
-split_peak "$parout"
-pins="$body"
-while IFS=: read -r feature sys ver want; do
-  [ -n "$feature" ] || continue
-  got=$(
-    # Every features/*/update.sh is a symlink to lib/updater.sh (pinned by tests/pins.nix), which
-    # is shellchecked on its own. The path is a variable, so the directive tells shellcheck to
-    # accept the source without following it; naming the target would only resolve relative to
-    # wherever shellcheck happens to be invoked.
-    # shellcheck source=/dev/null
-    . "features/$feature/update.sh"
-    render_url "$sys" "$ver"
-  )
-  if [ "$want" != "$got" ]; then
-    echo "FAIL parity features/$feature $sys"
-    echo "  nix:  $want"
-    echo "  bash: $got"
-    par=1
-  fi
-done <<<"$pins"
-if [ "$par" = 0 ]; then
-  echo "ok   expander parity  $peak"
-else
-  fail=1
-fi
+# Byte-parity and the shipped-shell lint both ran after every verdict, alone; they are jobs in the
+# wave above now, so their verdict lines are printed inside the wave window.
 
 exit "$fail"
