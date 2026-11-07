@@ -167,14 +167,17 @@ let
   # the messages. Forcing a *host's* `config.assertions` would force `config.warnings` too.
   failingAssertions = cfg: builtins.filter (a: !a.assertion) cfg.assertions;
 
+  # The name a package reports: `pname`, falling back to `name`. One binding, because the rule is
+  # spelled out in every helper below and in the suites that read package lists directly.
+  pkgName = p: p.pname or p.name;
   # The copies of one derivation that reached a package list, by name. The name lives on the
   # derivation (`pname`, falling back to `name`); `set ? name` only accepts a literal path.
   # An attrset key is not in scope inside the attrset, so this is one binding.
-  pkgNamed = ps: name: lib.filter (p: (p.pname or p.name) == name) ps;
+  pkgNamed = ps: name: lib.filter (p: pkgName p == name) ps;
   # Existence, lazily: `lib.any` stops at the first match, so a hit never forces the packages
   # after it (tests/loader.nix asserts that with a throwing later element). The full-scan forms
   # below are for counting, where forcing everything is the point.
-  hasPkg = ps: name: lib.any (p: (p.pname or p.name) == name) ps;
+  hasPkg = ps: name: lib.any (p: pkgName p == name) ps;
   # Copies on PATH: a feature that lands twice is a config bug, not a host choice.
   countPkg = ps: name: builtins.length (pkgNamed ps name);
 
@@ -198,7 +201,7 @@ let
     then "OK ${name} (${toString (builtins.length checks)} checks)"
     else throw "${name}: FAILED ${lib.concatStringsSep ", " failed}";
 in {
-  inherit lib flake features featuresAt hostLib hostsAt fixtureHost builders hmCfg bareEval assertWarnStubs desktopStubs failingAssertions pkgNamed hasPkg countPkg ck suite fs rawFeaturePkgs;
+  inherit lib flake features featuresAt hostLib hostsAt fixtureHost builders hmCfg bareEval assertWarnStubs desktopStubs failingAssertions pkgName pkgNamed hasPkg countPkg ck suite fs rawFeaturePkgs;
   hosts = hostsAt root;
   pkgs = pkgsSet;
 }

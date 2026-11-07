@@ -23,7 +23,7 @@ tests/ank.nix attrs 5
 tests/caches.nix attrs 13
 tests/disko.nix attrs 6
 tests/filesystems.nix attrs 56
-tests/loader.nix attrs 50
+tests/loader.nix attrs 52
 tests/oomd.nix attrs 14
 tests/package-flags.nix attrs 1
 tests/pins.nix attrs 7

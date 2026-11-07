@@ -99,6 +99,17 @@ in {
     expected = true;
   };
 
+  # The name rule every package helper shares: the derivation says `pname`, and packages built
+  # without one say `name`. It is spelled five times across the suites today.
+  testPkgNamePrefersPname = {
+    expr = s.pkgName { pname = "fish"; name = "fish-bin"; };
+    expected = "fish";
+  };
+  testPkgNameFallsBackToName = {
+    expr = s.pkgName { name = "yt-dlp"; };
+    expected = "yt-dlp";
+  };
+
   # --- feature discovery --------------------------------------------------
   testEveryFeaturesDirectoryIsDiscovered = {
     expr = featureNames;
