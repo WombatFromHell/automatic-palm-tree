@@ -19,6 +19,7 @@ let
     (import ./warnings.nix)
     (import ./ptrace.nix)
     (import ./zram.nix)
+    (import ./oomd.nix)
     (import ./loader.nix)
   ];
 
