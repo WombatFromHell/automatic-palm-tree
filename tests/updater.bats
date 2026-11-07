@@ -69,16 +69,34 @@ EOF
   ln -s "$repo/lib/updater.sh" "$feature/update.sh"
 }
 
-# Two throwaway keys per signed test: Brave signs stable and pre-release checksums with different
-# keys, so the suite needs both to prove a pre-release signature is refused. gen_key makes its own
-# homedir, so no host keyring is touched.
+# setup_file — the two throwaway keypairs, built once for the file. gpg RSA keygen is ~0.3s per key
+# and five tests sign with them, so generating them per test was most of this suite's wall.
+# fixture_teardown_file removes the template; tests only ever read it.
+setup_file() {
+  keys_template="$(mktemp -d)"
+  export keys_template
+  make_keys "$keys_template"
+}
+
+fixture_teardown_file() { rm -rf "$keys_template"; }
+
+# make_keys <dir> — the release and pre-release keypair plus their armored exports, in one homedir
+# tree. Brave signs stable and pre-release checksums with different keys, so the suite needs both to
+# prove a pre-release signature is refused. gen_key makes its own homedir, so no host keyring is
+# touched.
+make_keys() {
+  local home="$1"
+  gen_key "$home/release" "Fixture Checksums Release" >"$home/release.fp"
+  gen_key "$home/pre" "Fixture Checksums Pre Release" >"$home/pre.fp"
+  GNUPGHOME="$home/release" gpg --quiet --export --armor >"$home/release.asc" 2>/dev/null
+  GNUPGHOME="$home/pre" gpg --quiet --export --armor >"$home/pre.asc" 2>/dev/null
+}
+
+# fixture_keys — this test's own copy of the file's keypairs, so a test that signs never touches
+# another test's homedir.
 fixture_keys() {
   keys="$stubs/keys"
-  mkdir -p "$keys"
-  gen_key "$keys/release" "Fixture Checksums Release" >"$keys/release.fp"
-  gen_key "$keys/pre" "Fixture Checksums Pre Release" >"$keys/pre.fp"
-  GNUPGHOME="$keys/release" gpg --quiet --export --armor >"$keys/release.asc" 2>/dev/null
-  GNUPGHOME="$keys/pre" gpg --quiet --export --armor >"$keys/pre.asc" 2>/dev/null
+  cp -r "$keys_template" "$keys"
 }
 
 # gen_key <home> <uid> -> the primary fingerprint, in a throwaway homedir so no host keyring is
@@ -335,4 +353,14 @@ all_repo() {
   all --check
   [ "$status" -eq 1 ]
   assert_out "copies, not symlinks"
+}
+
+# The keypairs are the expensive part of this suite: gpg RSA keygen costs ~0.3s per key and five
+# tests sign with them. setup_file builds them once and a test's copy is the same key -- a copy that
+# silently regenerated would sign with a different key and still pass every signature test above.
+@test "the fixture keypairs are built once for the file, not per test" {
+  [ -f "$keys_template/release.fp" ]
+  fixture_keys
+  [ "$(cat "$keys/release.fp")" = "$(cat "$keys_template/release.fp")" ]
+  [ "$(cat "$keys/pre.fp")" = "$(cat "$keys_template/pre.fp")" ]
 }
