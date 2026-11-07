@@ -5,7 +5,7 @@ slug: a-must-throw-check-is-a-tests-red-guard-never-tr
 title: A must-throw check is a tests/red guard, never tryEval
 created: 2026-11-04T17:24:56Z
 author: josh@methyl-bazzite
-status: accepted
+status: superseded
 scope:
   - tests/red/*.nix
   - tests/run.sh
@@ -17,7 +17,7 @@ verified:
   - by: WombatFromHell@users.noreply.github.com
     at: 2026-11-04T18:06:15Z
 schema: 4
-version: 2
+version: 3
 ---
 
 The accepted text reads "whose first line is ," - the literal was dropped when the entity was
