@@ -26,7 +26,11 @@ let
   # dcal is resolved the way features/hm-dcal/home.nix resolves it.
   dcal = s.pkgs.unstable.flakePackages.dcal.${s.pkgs.unstable.stdenv.hostPlatform.system}.default;
   fx = s.hmCfg (s.fixtureHost false ["hm-dcal" "hm-ghostty" "hm-nixgl"] {});
-  fxInstalled = pkg: s.pkgNamed fx.home.packages (s.pkgName pkg);
+  # The copies of one derivation that reached a package list, by the name the package reports
+  # (support.nix's pkgName). One rule, used on both sides of the builder: a fixture and a host must
+  # not answer the question differently.
+  installedIn = ps: pkg: s.pkgNamed ps (s.pkgName pkg);
+  fxInstalled = installedIn fx.home.packages;
 
   # hm-ank is a cargo build of a pinned commit, handed straight to home.packages: it is a CLI with
   # no GPU, so there is no nixGL wrapper to look for. Identity is name + version, never outPath —
@@ -37,7 +41,7 @@ let
   # The copies of one derivation that reached PATH. Absence is allowed — which GUI features a
   # host enables is the host's business — so the companion check below keeps this from going
   # vacuous on a host with no GUI feature at all.
-  installed = pkg: s.pkgNamed cfg.home.packages (s.pkgName pkg);
+  installed = installedIn cfg.home.packages;
   wrappedOnce = pkg: let
     ps = installed pkg;
   in
