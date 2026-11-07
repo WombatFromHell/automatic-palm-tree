@@ -5,7 +5,7 @@
 # need ~2.1GB, over the cap tests/nix-eval.sh puts on every eval, so one host per process.
 let
   s = import ./support.nix;
-  inherit (s) lib ck suite;
+  inherit (s) fs lib ck suite;
   out = s.flake.outputs;
 
   host = builtins.getEnv "TEST_HOST";
@@ -146,23 +146,33 @@ let
       (ck "${host}: no disko layout is declared" (((cfg.disko or {}).devices or {}) == {}))
       (ck "${host}: it has a root mount either way" (cfg.fileSystems."/" != null))
 
-      # The recipe, where a host has one, is the layout its mounts name: same drive ownership, same
-      # labels as device names, same mount options. That is the invariant install.sh and terraform.sh
-      # both rely on, checked here rather than in the bats suite because it is about the config.
-      (ck "${host}: its recipe matches the mounts its config declares"
+      # The recipe is the source of a host's partition mounts (ADR-62773e12d275): fileSystems is
+      # derived from it, so device, fsType and options agree by construction. What stays worth
+      # checking here is what a hand-written mount could still get wrong: every mount the config
+      # declares is either one the recipe names, or a btrfs subvolume of the labelled root
+      # terraform.sh creates. Anything else names a device this drive does not have.
+      (ck "${host}: every mount is the recipe's or a subvolume of its root"
         (let
-          root = lib.findFirst (p: p.mount == "/") null recipe.partitions or [];
-          esp = lib.findFirst (p: p.mount == "/boot") null recipe.partitions or [];
-          # Every option the recipe mounts with has to be one this host's config declares; NixOS
-          # adds its own flags (x-initrd.mount on /), so this is a subset check, not equality.
-          opts = p: m: lib.all (o: lib.elem o (cfg.fileSystems.${m}.options or [])) (lib.splitString "," (p.options or ""));
+          derived = fs.mountsFromRecipe recipe;
+          rootLabel = (lib.findFirst (p: p.mount == "/") null recipe.partitions or []).label;
+          extra = lib.filterAttrs (m: f: !builtins.hasAttr m derived) cfg.fileSystems;
         in
           !builtins.pathExists ../hosts/${host}/terraform.json
-          || (recipe.owns == cfg.flakeHost.ownsWholeDisk
-            && "/dev/disk/by-label/${root.label}" == cfg.fileSystems."/".device
-            && "/dev/disk/by-label/${esp.label}" == cfg.fileSystems."/boot".device
-            && opts root "/"
-            && opts esp "/boot")))
+          || (recipe.owns
+            == cfg.flakeHost.ownsWholeDisk
+            && lib.all
+            (m:
+              cfg.fileSystems.${m}.device
+              == derived.${m}.device
+              && cfg.fileSystems.${m}.fsType == derived.${m}.fsType)
+            (lib.attrNames derived)
+            && lib.all
+            (f:
+              f.fsType
+              == "btrfs"
+              && f.device == "/dev/disk/by-label/${rootLabel}"
+              && lib.any (o: builtins.match "subvol=@.*" o != null) (f.options or []))
+            (lib.attrValues extra))))
       (ck "${host}: systemd-boot is the loader, and EFI variables match the host"
         (cfg.boot.loader.systemd-boot.enable && cfg.boot.loader.efi.canTouchEfiVariables == e.efiVariables))
       (ck "${host}: its layout mounts the subvolume tree fsLib declared"

@@ -15,6 +15,7 @@ Run from the repo root.
 | `./bootstrap.sh --standalone [--install] [--rebind[=DIR]] [<user>@<host>]`           | Prepares a box with **no Nix**: installs it through the pinned upstream installer's `ostree` plan (`--enable-flakes`, plus `--persistence <dir>` when `--rebind` names the volume), then adds this user to `extra-trusted-users` and restarts `nix-daemon`. `--install` also installs Home Manager through its channel — the release the flake's `home-manager` input pins. With no target it prints one status line and stops. `--rebind` is refused when `nix` is already on PATH, because the store bind only happens while the installer runs; clear Determinate first with `sh <(curl -s https://install.determinate.systems/nix) uninstall`. `--help` prints the usage. |
 | `features/<name>/update.sh [<ref> \| --check]`                                       | Pins one feature. No arg = latest release; `<ref>` = pin that ref explicitly; `--check` = exit 1 when a newer version exists or the pinned hash moved. A symlink to `lib/updater.sh`, configured by that feature's `metadata.json`.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `./update-all.sh [--flake] [--check]`                                                | Runs every `features/*/update.sh` (aborts on the first failure), forwards its args to each, then commits `features/` and `flake.lock`. `--flake` also runs `nix flake update`. Stops if any `update.sh` is a copy instead of a symlink, and skips the commit when the tree is dirty beyond those paths.                                                                                                                                                                                                                                                                                                                                                                       |
+| `./terraform.sh --emit \| --recipe <file> \| --verify`                                | The only thing here that touches a drive: reads a host's `terraform.json`, reproduces it, re-reads the drive before reporting success. Needs `sfdisk`/`blkid`/`lsblk`/`jq` and the `mkfs.*`, so run it as `nix develop --command bash terraform.sh …`. See **Terraform the drive** below. |
 | `bash tests/run.sh`                                                                  | Gate. Green suites print `ok tests/<suite>.nix`; the value-tier assertions run as nix-unit test attributes in `tests/suite.nix`, where a must-throw check is an `expectedError` attribute rather than a separate file. Three tiers run `nix build` on synthetic fixtures (`appdir`, `shellwrap`, `yazi-install`), so a build failure can come from the gate. See **Test gate** below.                                                                                                                                                                                                                                                                                         |
 | `bash tests/build-harness.sh [--cap MB] [--build] [--stats] [--link PATH] -- <attr>` | Build-time telemetry for one attribute under one memory scope, running the exact `nix build` command `njust` runs: `peak`/`swap` from the scope, `wall`, and `out`/`installed` with `--build`. Not part of the gate — it builds. See **Build telemetry** in TEST_DESIGN.md.                                                                                                                                                                                                                                                                                                                                                                                                   |
 
@@ -73,6 +74,82 @@ once Nix is installed.
 
 After a NixOS switch, `/etc/nix/nix.conf` carries the caches from `flakeCache.enable`, so plain
 `nh os switch` is enough from then on. Set `flakeCache.enable = []` to build everything locally.
+
+## Terraform the drive (`terraform.sh`)
+
+`terraform.sh` is the only thing this repo lets touch a drive (ADR-b77ec913151f), and
+`hosts/<host>/terraform.json` is the layout it acts on — the recipe replaced the flags that named a
+filesystem and a device path. Its tools come from the devShell (`util-linux`, `gptfdisk`,
+`dosfstools`, `e2fsprogs`, `btrfs-progs`, `xfsprogs`, `jq`), so the invocation is
+`nix develop --command bash terraform.sh …`. `install.sh --stage terraform` runs it with
+`--recipe <file> --disk <device> --mount <root>`, and `--stage deploy` refuses to install until
+`--verify` passes on the same drive.
+
+```bash
+./terraform.sh --emit [--disk <drive>]              # read-only: the recipe this drive describes
+./terraform.sh --dry-run --recipe <file>            # plan only: "<name>: adopt" / "<name>: format <fs>"
+./terraform.sh --recipe <file> [--mount <dir>]      # reproduce it, one confirm per destructive step
+./terraform.sh --recipe <file> --verify             # verdict: "terraform: recipe satisfied on <drive>"
+```
+
+**Writing the file.** `--emit` prints JSON on stdout alone and every human decision on stderr, so
+`./terraform.sh --emit > hosts/<host>/terraform.json` is the workflow. One entry per partition whose
+`blkid` signature is `ext4`/`vfat`/`btrfs`; a blank partition carries no intent and is never guessed,
+so each partition left out is named on stderr (`left out basic-data (ntfs) linux (no filesystem)`).
+Size is exact bytes reduced to the largest whole unit, `mount` is a guess (largest filesystem as `/`,
+vfat as `/boot`), `options` are terraform.sh's per-filesystem defaults, `type` is never emitted
+(`default_type` derives the ESP or Linux GUID from `fs`), and `owns` is always `false` — claiming a
+drive is what makes a run destructive, so flipping it is a deliberate edit. It writes **no JSON** and
+exits 2 on no partition table, nothing reproducible, more than one disk, or `--emit --recipe`. The
+one thing a drive cannot show is the partition you intend to create, so expect one hand edit:
+
+```bash
+jq '.partitions += [{name: "root", label: "nixos", fs: "ext4", size: "rest", mount: "/"}]' \
+  emitted.json > hosts/<host>/terraform.json
+```
+
+**Schema.**
+
+| field        | rules                                                                                                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `owns`       | `true` reproduces the layout from zero, `false` adopts what exists and appends. Must equal `flakeHost.ownsWholeDisk` — `install.sh` refuses the mismatch, and refuses an owning host with no file at all. |
+| `disk`       | optional `/dev/disk/by-id/...`; only meaningful on a drive with nothing to identify it by, and must resolve (`realpath -e`). `owns: true` always needs it (`--disk` also works): a wipe cannot be discovered. |
+| `partitions` | layout order. Exactly one entry mounts `/`, and that entry must carry a `label` — mkfs is what creates it.                                                                |
+
+| entry field | rules                                                                                                                                          |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`      | handle printed in the plan and by `--emit` (lowercased label, anything else folded to `-`; `esp` for an unlabeled vfat, `p<N>` otherwise). Not a device name. |
+| `label`     | filesystem label, written by `mkfs -L`/`-n` and compared by `--verify`. Omit where the filesystem has none — a foreign ESP is found by its `vfat` signature or GPT type. |
+| `fs`        | `ext4`, `vfat`, `btrfs`, `xfs`. Anything else refuses: terraform.sh does not format it.                                                         |
+| `size`      | bytes, `K`/`M`/`G`, or `rest`. Required when a partition has to be created, and on every entry when `owns: true`; omitted means "adopt whatever it is". `rest` takes what is left of the last gap — a second `rest` gets nothing and refuses. |
+| `type`      | sfdisk typecode (`EF00`, `83`) or GUID, compared as a GUID against `sfdisk --json`. This is the partition *type*, not `PARTUUID`.                                  |
+| `mount`     | `/` makes the entry the root, `vfat` makes it the ESP. `--mount` (default `/mnt`) must resolve to the root entry.                                                  |
+| `options`   | comma list, no spaces. Defaults per filesystem (`ext4` `noatime`, `btrfs` `noatime,compress=zstd`, `xfs` `noatime,logbsize=256k,noquota`, `vfat` `fmask=0077,dmask=0077`); `"options": ""` means the kernel's, not the fallback. Btrfs-only options on a non-btrfs entry, or xfs-only on a non-xfs entry, refuse. |
+
+Btrfs subvolumes are **not** in the recipe: `create_subvolumes` builds the tree the layout mounts
+(`@`, `@home`, `@nix`, `@log`, `@cache`, `@snapshots`, `@swap`) and adopts one that already exists.
+
+**Two modes.** `owns: true` refuses a DOS table, a filesystem signature across the whole drive, and any
+partition signature no entry claims — a mis-declared shared drive cannot be wiped. It writes a fresh GPT
+only when the table is not already exactly the layout, then labels, formats, mounts, and verification
+requires the table to hold exactly the recipe's entries. `owns: false` resolves each entry in one order
+and never guesses — label, then signature + GPT type, then a blank partition carrying the entry's GPT
+`name`, then create into the first 1MiB-aligned gap large enough. Two entries claiming one partition is a
+recipe contradiction; free-space maths is settled before a single write, so "it does not fit" exits 2
+naming needed against free. Resize is never attempted in either direction, and the entries that already
+existed are compared before and after, so a moved partition is a failure rather than a side effect.
+
+A host's mounts **are** the recipe: `lib/filesystems.nix` `mountsFromRecipe` turns every entry into a
+`fileSystems` item — label to `/dev/disk/by-label/`, `fs` to `fsType`, the entry's `options`,
+`bootSupport` for `/boot`, and a btrfs `subVol` for each subvolume — so `hosts/<name>/nixos.nix` declares
+no mount of its own and one edit to the recipe moves both sides together.
+
+The recipe is checked against the config it describes: `tests/configs.nix` asserts `owns` equals
+`flakeHost.ownsWholeDisk`, that the root and `/boot` devices are the recipe's labels, and that every
+option the recipe mounts with is one the host's `fileSystems` declares. A partition that exists on the
+drive but is missing from the recipe shows up as a deploy failure: `install.sh --stage deploy` refuses
+to install until `terraform.sh --recipe <file> --verify` passes on the drive, and `--emit` regenerates
+the file from the drive.
 
 ## Hosts
 

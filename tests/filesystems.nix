@@ -44,6 +44,36 @@ let
     wantedBy = ["graphical-session.target"];
     description = "Data disk";
   };
+  # A recipe in the shape terraform.sh --emit writes: labels are the device names, options are a
+  # comma list, and a partition with no mount is created but never mounted.
+  recipe = {
+    owns = true;
+    partitions = [
+      {
+        name = "esp";
+        label = "boot";
+        fs = "vfat";
+        size = "512M";
+        mount = "/boot";
+        options = "fmask=0077,dmask=0077";
+      }
+      {
+        name = "root";
+        label = "nixos";
+        fs = "btrfs";
+        size = "rest";
+        mount = "/";
+        options = "noatime,compress=zstd";
+      }
+      {
+        name = "spare";
+        fs = "ext4";
+        size = "1G";
+      }
+    ];
+  };
+  recipeMounts = fs.mountsFromRecipe recipe;
+
   joined = fs.joinUnitMounts [
     (fs.mkUnitMounts {} {
       "/a" = {
@@ -317,6 +347,116 @@ in {
   testEscapedAutomountWhere = {
     expr = (builtins.head escaped.automounts).where;
     expected = "/mnt/a-b";
+  };
+
+  # --- mountsFromRecipe -> `fileSystems` from a terraform.json recipe ------
+  # ADR-62773e12d275: the recipe is the layout terraform.sh reproduces, so the mount it names is
+  # the mount the host declares -- the label becomes the device, `fs` the fsType, the comma list the
+  # option list.
+  testRecipeMountUsesLabelAsDevice = {
+    expr = recipeMounts."/";
+    expected = {
+      device = "/dev/disk/by-label/nixos";
+      fsType = "btrfs";
+      options = ["noatime" "compress=zstd"];
+    };
+  };
+  testRecipeBootMountMatchesRecipe = {
+    expr = recipeMounts."/boot";
+    expected = {
+      device = "/dev/disk/by-label/boot";
+      fsType = "vfat";
+      options = ["fmask=0077" "dmask=0077"];
+    };
+  };
+  # A partition terraform.sh creates but nobody mounts stays out of fileSystems.
+  testRecipeSkipsPartitionWithoutMount = {
+    expr = lib.sort (a: b: a < b) (builtins.attrNames recipeMounts);
+    expected = ["/" "/boot"];
+  };
+  # `options: ""` is the recipe's explicit "kernel defaults", and an empty option list is dropped
+  # here the way mkMounts drops it.
+  testRecipeEmptyOptionsAreDropped = {
+    expr = fs.mountsFromRecipe {
+      partitions = [
+        {
+          name = "root";
+          label = "nixos";
+          fs = "ext4";
+          mount = "/";
+          options = "";
+        }
+      ];
+    };
+    expected = {
+      "/" = {
+        device = "/dev/disk/by-label/nixos";
+        fsType = "ext4";
+      };
+    };
+  };
+  # An unlabelled partition has no device name to write. Dropping the mount would boot a host with
+  # no root, so the recipe is refused at eval.
+  testRecipeUnlabelledMountThrows = {
+    expr =
+      (fs.mountsFromRecipe {
+        partitions = [
+          {
+            name = "root";
+            fs = "ext4";
+            mount = "/";
+          }
+        ];
+      })."/";
+    expectedError = {
+      type = "ThrownError";
+      msg = "no label";
+    };
+  };
+  # Two partitions claiming one mount point would silently keep the last one (listToAttrs and //
+  # both drop the earlier entry), so the collision is named instead.
+  testRecipeDuplicateMountPointThrows = {
+    expr = fs.mountsFromRecipe {
+      partitions = [
+        {
+          name = "a";
+          label = "a";
+          fs = "ext4";
+          mount = "/";
+        }
+        {
+          name = "b";
+          label = "b";
+          fs = "ext4";
+          mount = "/";
+        }
+      ];
+    };
+    expectedError = {
+      type = "ThrownError";
+      msg = "claimed by more than one partition";
+    };
+  };
+  # A partition with no filesystem has no fsType for NixOS to mount with.
+  testRecipeMountWithoutFsThrows = {
+    expr =
+      (fs.mountsFromRecipe {
+        partitions = [
+          {
+            name = "root";
+            label = "nixos";
+            mount = "/";
+          }
+        ];
+      })."/";
+    expectedError = {
+      type = "ThrownError";
+      msg = "no filesystem";
+    };
+  };
+  testRecipeWithNoPartitionsMountsNothing = {
+    expr = fs.mountsFromRecipe {};
+    expected = {};
   };
 
   # joinUnitMounts merges groups in order and yields {} on no groups.

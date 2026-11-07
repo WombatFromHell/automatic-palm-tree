@@ -10,7 +10,20 @@
   nixpkgs,
 }: let
   inherit (builtins) intersectAttrs isString removeAttrs;
-  inherit (lib) concatStringsSep filterAttrs mapAttrs mapAttrsToList optional optionalAttrs zipAttrsWith concatLists;
+  inherit
+    (lib)
+    concatStringsSep
+    filterAttrs
+    filter
+    splitString
+    unique
+    mapAttrs
+    mapAttrsToList
+    optional
+    optionalAttrs
+    zipAttrsWith
+    concatLists
+    ;
 
   merge = defaults: entry: let
     all = defaults // entry;
@@ -48,6 +61,44 @@ in {
         then removeAttrs m ["options"]
         else m
     );
+
+  # -> attrset for `fileSystems`, read from a host's terraform.json recipe (ADR-62773e12d275).
+  # The recipe is the layout terraform.sh reproduces, so the partition mounts come from it instead
+  # of being hand-written beside it: the mount point is the key, the label names the device, `fs`
+  # is the fsType, and its comma list is the option list — `""` means the kernel's defaults, so an
+  # empty option list is dropped the way mkMounts drops it.
+  #
+  # A partition with no `mount` is skipped: terraform.sh creates it and NixOS never mounts it.
+  # Everything else that loses a mount quietly is refused. An entry with a mount and no label has
+  # no device to name (`--emit` omits the label when the filesystem carries none), and two entries
+  # claiming one mount point would keep only the last, since listToAttrs and `//` both drop the
+  # earlier one.
+  mountsFromRecipe = recipe: let
+    wanted = filter (p: (p.mount or "") != "") (recipe.partitions or []);
+    points = map (p: p.mount) wanted;
+    doubled = filter (m: builtins.length (filter (p: p.mount == m) wanted) > 1) (unique points);
+    entry = p: let
+      options = filter (o: o != "") (splitString "," (p.options or ""));
+    in
+      if p.label or "" == ""
+      then throw "terraform recipe: partition ${p.name or p.mount} mounts ${p.mount} and has no label, so no device to name"
+      else if p.fs or "" == ""
+      then throw "terraform recipe: partition ${p.name or p.mount} mounts ${p.mount} and has no filesystem"
+      else
+        {
+          device = "/dev/disk/by-label/${p.label}";
+          fsType = p.fs;
+        }
+        // optionalAttrs (options != []) {inherit options;};
+  in
+    if doubled != []
+    then throw "terraform recipe: ${concatStringsSep ", " doubled} is claimed by more than one partition"
+    else
+      builtins.listToAttrs (map (p: {
+          name = p.mount;
+          value = entry p;
+        })
+        wanted);
 
   # -> { mounts, automounts }, both LISTS (systemd derives unit names from `where`); combine
   # groups with `joinUnitMounts`, never `//`.
