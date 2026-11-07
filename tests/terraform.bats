@@ -1161,6 +1161,16 @@ assert_no_json() {
   [ "$(entries_json twice)" = "$before" ]
 }
 
+# fixture_setup_file builds the shapes in the background, so a job that dies leaves a template
+# missing -- and every test's `disk <shape>` copy would then fail inside the fixture rather than on
+# an assertion. This is the fixture's own check, not a test of terraform.sh.
+@test "every drive shape the suite copies exists" {
+  run bash -c 'for s in bare raw esp blank win winblank pick tight full espghost bd pre-btrfs pre-ext4 pre-xfs; do
+    [ -f "$template_dir/$s.img" ] || echo "missing=$s"
+  done'
+  assert_no_out "missing="
+}
+
 # A drive with no partition table must not read as "no entries": entries_json is what the
 # byte-identity assertions compare, and an empty value on both sides of a run compares equal, so a
 # swallowed sfdisk failure is the one way this tier can pass on a wiped GPT (ADR-b77ec913151f).
