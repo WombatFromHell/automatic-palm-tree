@@ -2,12 +2,19 @@
   "repo": "brave/brave-browser",
   "kind": "sri",
   "strategy": "latest",
-  "url": "https://github.com/{repo}/releases/download/v{version}/brave-browser_{version}_{arch}.deb",
-  "arches": {
-    "x86_64-linux": "amd64"
-  },
-  "version": "1.98.63",
+  "channel": ".name | startswith(\"Release \")",
+  "url": "https://github.com/{repo}/releases/download/v{version}/brave-browser_{version}_amd64.deb",
+  "version": "1.99.54",
   "hashes": {
-    "x86_64-linux": "sha256-JCJ81aklnr3FEI2zlMxZmN9aw2NfhPiDinRkp7XN3VU="
+    "x86_64-linux": "sha256-uEskEvFEVN81uX4yLTR7h2vQshnfcv1ha20F+4UB82o="
+  },
+  "sigKey": {
+    "source": "https://brave-browser-downloads.s3.brave.com/keys/github-checksums-release.asc",
+    "file": "checksums-key.asc",
+    "fingerprints": [
+      "10A714FCA3C829A605E686A5C479D18E038EAF42",
+      "7FE68A2E3754FA350A45F0AB68E5C22615F0E249",
+      "B840107020F8BED83CF7696DEDC0814C91A8144D"
+    ]
   }
 }

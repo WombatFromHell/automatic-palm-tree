@@ -18,8 +18,8 @@ let
   # pinMeta comes from the overlay, and hm-brave reads pkgs.unstable.
   raw = s.rawFeaturePkgs;
 
-  # hm-brave's installPhase wraps its bin entries only when flags are present, so this is the
-  # overridden-but-unwrapped derivation.
+  # hm-brave wraps its bin entries unconditionally, so flags are the only difference between
+  # this derivation and the raw one.
   braveWithArgs = pkgs.unstable.callPackage ../features/hm-brave/_package.nix {
     commandLineArgs = "--password-store=basic";
   };
@@ -121,12 +121,13 @@ in
         == "--password-store=basic"
         && (nixosHost.lib.nixGL.wrapGpu braveWithArgs).outPath == braveWithArgs.outPath))
 
-    # hm-brave's installPhase only wraps its bin entries when flags are present; without this
-    # the override would silently drop --password-store.
-    (ck "brave's derivation wraps its bin entries when commandLineArgs are set"
-      (builtins.match ".*makeWrapper.*--password-store=basic.*" (phaseText braveWithArgs)
-        != null
-        && builtins.match ".*ln -s .*/opt/brave.com/brave/brave.*" (phaseText raw.brave) != null))
+    # Every bin entry is wrapped, so an override's flags reach the browser. The driver directory
+    # and xdg-utils belong there whether or not flags are set, and with none --add-flags must not
+    # appear at all. The quotes are the point: escapeShellArg keeps the flag one argument.
+    (ck "brave's bin entries are always wrapped, and only carry flags when a module sets them"
+      (lib.hasInfix "--add-flags '--password-store=basic'" (phaseText braveWithArgs)
+        && lib.hasInfix "--prefix LD_LIBRARY_PATH" (phaseText raw.brave)
+        && !lib.hasInfix "--add-flags" (phaseText raw.brave)))
 
     # Identity alone is not enough: a wrapper that copied bin/ghostty into an empty tree would
     # keep the pname and still resolve no resources at runtime.

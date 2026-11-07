@@ -85,8 +85,10 @@ gate() {
 gate_job() {
   local out="$1" scope="$2"
   shift 2
-  ( TEST_SCOPE_NAME="$scope" tests/nix-eval.sh "$mem" -- "$@" >"$out" 2>&1
-    printf '%s' "$?" >"$out.rc" ) &
+  (
+    TEST_SCOPE_NAME="$scope" tests/nix-eval.sh "$mem" -- "$@" >"$out" 2>&1
+    printf '%s' "$?" >"$out.rc"
+  ) &
 }
 
 verdict() {
@@ -133,15 +135,16 @@ fi
 # home/mounts/wrap force a host config and outputs forces the flake outputs. The four builds check
 # what a derivation puts in its $out, which is not an evaluated value: appdir re-runs
 # hm-ghostty's real installPhase against a synthetic AppDir (src is a placeholder, so no AppImage is
-# ever fetched); brave-layout re-runs hm-brave's real installPhase over a synthetic rpm payload,
-# where a copy of a store ELF stands in for the patched binary (patchelf needs real ELF bytes);
+# ever fetched); brave-layout re-runs hm-brave's real unpackPhase and installPhase over a
+# synthetic .deb built by dpkg-deb, where a copy of a store ELF stands in for the patched binary
+# (patchelf needs real ELF bytes);
 # shellwrap is the shipped writeShellApplication text, which writeShellApplication shellchecks;
 # yazi-install unpacks the real pinned sources and re-runs hm-yazi's real postInstall.
 # configs.nix evaluates one host per process (see its header): forcing three hosts into one eval
 # needs ~4GB, which is over the cap, so they are three jobs here. support.nix is a fixture library
 # and asserts nothing, so it is not run.
 labels=(tests/home.nix tests/mounts.nix tests/outputs.nix tests/wrap.nix
-  "tests/appdir.nix [fixture build]" "tests/brave-layout.nix [rpm fixture build]"
+  "tests/appdir.nix [fixture build]" "tests/brave-layout.nix [deb fixture build]"
   "tests/shellwrap.nix [wrapper build + shellcheck]" "tests/yazi-install.nix [postInstall fixture]"
   "tests/configs.nix [methyl]" "tests/configs.nix [methyl-nixos]" "tests/configs.nix [propyl]")
 scopes=(home mounts outputs wrap appdir brave-layout shellwrap yazi-install
@@ -239,7 +242,7 @@ if ! command -v bats >/dev/null 2>&1; then
   echo "skip tests/terraform.bats [bats not installed]"
 else
   (
-    suites=(tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats \
+    suites=(tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats
       tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats)
     # One bats call with the files in parallel (--no-parallelize-within-files): each suite still runs
     # its tests sequentially inside its own worker, so shared stub state inside a suite survives.

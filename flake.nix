@@ -121,8 +121,10 @@
       in {
         default = pkgs.mkShell {
           packages = with pkgs;
-            # `parallel` is what `bats --jobs` needs; without it bats runs 0 tests and exits 1.
-            [curl jq nix bats parallel shellcheck shfmt nix-unit]
+          # `parallel` is what `bats --jobs` needs; without it bats runs 0 tests and exits 1.
+          # `gnupg` is what lib/updater.sh needs to verify a published checksum's signature
+          # against the vendored keyring; the suite stubs curl/nix but calls real gpg.
+            [curl jq nix bats parallel shellcheck shfmt nix-unit gnupg]
             ++
             # terraform.sh's tools: the table reader, the signature reader, the five filesystem
             # formatters and mtools for reading an ESP that lives in a file (tests/disk-fixture.bash).

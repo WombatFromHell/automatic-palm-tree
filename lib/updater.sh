@@ -10,6 +10,11 @@
 #   strategy  "latest" | "semver" | "none"  (how to auto-discover a newer version)
 #   url       asset/archive URL template with {repo}, {version}, {arch}
 #   arches    optional: nix system -> {arch} token (for multi-arch assets)
+#   sigKey    optional (sri only): {source, file, fingerprints} — a signing key vendored in the
+#           feature directory. When present, `<asset>.sha256` is only read after its detached
+#           signature verifies against that key, and a release publishing no signature is refused.
+#   channel   optional (strategy "latest" only): jq expression applied to each release, e.g.
+#           '.name | startswith("Release ")'. Default selects every non-draft, non-prerelease.
 #   version   pinned version/tag; for a nar pin it is the commit itself, so a
 #           "none" pin is a fixed revision — it only moves when someone passes <ref>
 #   hashes    nix system -> hash of the pinned asset
@@ -23,7 +28,8 @@
 # Scaffolding is not a feature command — it runs on this file directly:
 #   ./lib/updater.sh --install features/<name>   # symlink update.sh + empty metadata.json
 #
-# Dependencies: curl, jq, nix (nix-prefetch-url / nix store prefetch-file)
+# Dependencies: curl, jq, gpg (only when metadata.json declares sigKey), nix
+# (nix-prefetch-url / nix store prefetch-file)
 
 # Single-quoted jq filters below are intentional: the $vars are jq
 # parameters bound via --arg, not shell variables.
@@ -69,6 +75,8 @@ REPO=$(j .repo)
 KIND=$(j .kind)
 STRATEGY=$(j .strategy)
 URL=$(j .url)
+# A jq expression over one release object; "true" is the no-channel case.
+CHANNEL=$(j '.channel // "true"')
 
 meta_version() { j .version; }
 meta_hash() { jq -r --arg s "$1" '.hashes[$s] // ""' "$META"; }
@@ -126,6 +134,51 @@ verify_pin() {
   return 0
 }
 
+# Published checksum for an asset, when the release ships one (`<asset>.sha256`, "<hex>  <name>").
+# Empty when there is no such asset, so a release that publishes none keeps the fetched hash.
+# Only sri pins: a nar pin's hash is a NAR hash, not the file's sha256.
+#
+# With sigKey, the checksum file is read only after its detached signature verifies against the
+# key vendored in the feature directory. Vendored, not fetched: a key fetched over the same channel
+# as the checksum is trust-on-first-use again. A checksum signed by a key we do not vendor fails
+# here rather than pinning it — Brave signs beta and nightly checksums with a separate key, so that
+# is the channel discriminator, not GitHub's prerelease flag.
+published_hash() {
+  local url=$1 hex key tmp
+  [[ $KIND == sri ]] || return 0
+  key=$(j '.sigKey.file // ""')
+  if [[ -n $key ]]; then
+    [[ -e "$FEATURE_DIR/$key" ]] || die "sigKey file '$key' is not vendored in $FEATURE_DIR"
+    tmp=$(mktemp -d)
+    curl -fsSL -o "$tmp/checksum" -- "$url.sha256" || die "release publishes no checksum for $url"
+    curl -fsSL -o "$tmp/checksum.asc" -- "$url.sha256.asc" || die "release publishes no signature for $url"
+    mkdir -m 700 "$tmp/gnupg"
+    gpg --quiet --dearmor <"$FEATURE_DIR/$key" >"$tmp/key.gpg"
+    GNUPGHOME="$tmp/gnupg" gpg --quiet --no-default-keyring --keyring "$tmp/key.gpg" \
+      --verify "$tmp/checksum.asc" "$tmp/checksum" >/dev/null 2>&1 ||
+      die "published checksum for $url is not signed by the vendored key '$key'"
+    hex=$(awk '{print $1}' "$tmp/checksum")
+    rm -rf "$tmp"
+  else
+    hex=$(curl -fsSL -- "$url.sha256" 2>/dev/null | awk '{print $1}') || return 0
+  fi
+  [[ $hex =~ ^[0-9a-f]{64}$ ]] || die "malformed published checksum '$hex' for $url"
+  printf '%s' "$hex"
+}
+
+# base16 of a hash metadata.json carries as an SRI
+hash_hex() { nix hash convert --hash-algo sha256 --to base16 --from sri "$1"; }
+
+# A pin moves forward, never backward: a lower version is a typo or a downgrade of security
+# fixes. Meaningless for a nar pin, whose version is a commit.
+refuse_downgrade() {
+  local cur="$1" ver="$2"
+  [[ $KIND == sri ]] || return 0
+  [[ $ver == "$cur" ]] && return 0
+  [[ "$(printf '%s\n%s\n' "$cur" "$ver" | sort -V | head -n1)" == "$cur" ]] ||
+    die "refusing downgrade $cur -> $ver"
+}
+
 # echo the latest auto-discoverable version, or nothing if strategy is "none"
 latest_version() {
   local endpoint filter tag
@@ -134,8 +187,11 @@ latest_version() {
     return 0
     ;;
   latest)
-    endpoint="releases/latest"
-    filter='.tag_name'
+    # The list endpoint plus the channel filter, not `releases/latest`: GitHub's ordering of
+    # "latest" is not channel-aware for repos that publish nightly and beta releases on other
+    # branches with prerelease=false (Brave does), so a nightly tag can be the newest release.
+    endpoint="releases?per_page=100"
+    filter='[.[] | select(.draft == false) | select(.prerelease == false) | select('"$CHANNEL"')] | sort_by(.published_at) | reverse | .[0].tag_name'
     ;;
   semver)
     endpoint="releases?per_page=20"
@@ -153,12 +209,18 @@ latest_version() {
 }
 
 update_to() {
-  local ver=$1 sys pinHash hashes='{}'
+  local ver=$1 sys url pinHash hashes='{}'
+  refuse_downgrade "$(meta_version)" "$ver"
   # Prefetch before touching metadata.json: a failed fetch leaves the pin intact.
   for sys in $(systems); do
+    url=$(render_url "$sys" "$ver")
     echo "==> Prefetching $sys..." >&2
-    pinHash=$(fetch_hash "$(render_url "$sys" "$ver")") || die "Failed to prefetch $sys at $ver"
+    pinHash=$(fetch_hash "$url") || die "Failed to prefetch $sys at $ver"
     echo "    -> $pinHash" >&2
+    # Trust is established here, at pin time: Nix only verifies the hash it is handed.
+    published=$(published_hash "$url")
+    [[ -z $published || $published == "$(hash_hex "$pinHash")" ]] ||
+      die "checksum mismatch for $sys at $ver: published $published, fetched $(hash_hex "$pinHash")"
     hashes=$(jq -c --arg s "$sys" --arg v "$pinHash" '.[$s] = $v' <<<"$hashes")
   done
   meta_set --arg ver "$ver" --argjson hashes "$hashes" '.version = $ver | .hashes = $hashes'
