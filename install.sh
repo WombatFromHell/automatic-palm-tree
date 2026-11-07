@@ -146,10 +146,13 @@ target_disk() {
   # removable), and the zram device this script may have just made is memory, never a disk. PTTYPE is
   # not asked for — lsblk leaves it blank and collapses the columns — and terraform.sh is what
   # refuses a drive with no partition table. No awk: the suite stubs awk for the meminfo parse.
+  #
+  # An ISO can also present as a plain disk: this VM's /dev/sda is a dos table with iso9660 across the
+  # whole drive. A drive carrying a filesystem end to end is media, not somewhere to lay a partition.
   while read -r name type rm; do
-    if [ "$type" = disk ] && [ "$rm" != 1 ] && [ "/dev/$name" != /dev/zram0 ]; then
-      disks="${disks:+$disks }/dev/$name"
-    fi
+    if [ "$type" != disk ] || [ "$rm" = 1 ] || [ "/dev/$name" = /dev/zram0 ]; then continue; fi
+    if [ -n "$(blkid -o value -s TYPE "/dev/$name" 2>/dev/null || true)" ]; then continue; fi
+    disks="${disks:+$disks }/dev/$name"
   done < <(lsblk -n -o NAME,TYPE,RM --nodeps)
   if [ -z "$disks" ] || [[ $disks == *" "* ]]; then
     say "$host: cannot tell which drive to adopt${disks:+ (candidates: $disks)} — terraform.sh never formats a drive by guess"
@@ -191,11 +194,12 @@ resolve() {
       (builtins.concatStringsSep " " (builtins.attrNames (c.disko.devices or {})))
     ]') || exit 2
   owned=$(printf '%s\n' "$facts" | sed -n 1p)
-  # `builtins.toString` of a bool is 1/0; the recipe's `owns` is true/false, so both sides are put
-  # in one form before they are compared.
+  # `builtins.toString` of a bool is `1` for true and `""` for false, and the recipe's `owns` is
+  # true/false. The eval above exits non-zero when the option is missing, so anything that is not 1 is
+  # a shared drive.
   case "$owned" in
   1) owned=true ;;
-  0) owned=false ;;
+  *) owned=false ;;
   esac
   root_device=$(printf '%s\n' "$facts" | sed -n 2p)
   root_fs=$(printf '%s\n' "$facts" | sed -n 3p)

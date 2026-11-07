@@ -121,6 +121,58 @@ in {
     expr = mk {options = ["noatime"];} {subvol = null;};
     expected = {options = ["noatime"];};
   };
+  # `extraOptions` is the append half: it adds to whatever is there instead of replacing it.
+  testExtraOptionsAppendToDefaults = {
+    expr = mk {options = ["noatime"];} {extraOptions = ["discard"];};
+    expected = {
+      options = ["noatime" "discard"];
+    };
+  };
+  # Appended after the subvol sugar, so a subvolume mount reads options, subvol, extra.
+  testExtraOptionsAppendAfterSubvol = {
+    expr = mk {options = ["noatime"];} {
+      subvol = "@nix";
+      extraOptions = ["commit=async"];
+    };
+    expected = {
+      options = ["noatime" "subvol=@nix" "commit=async"];
+    };
+  };
+  # Defaults' extras and the entry's both survive: appending does not clobber the defaults.
+  testExtraOptionsKeepDefaultsAndEntry = {
+    expr = mk {extraOptions = ["a"];} {extraOptions = ["b"];};
+    expected = {
+      options = ["a" "b"];
+    };
+  };
+  # Overriding `options` stays a replacement, so a mount that restates its own subvol gets it
+  # once: the sugar cannot add a second `subvol=@nix` on top of the one the entry wrote.
+  testRedefinedSubvolIsNotDuplicated = {
+    expr = mk {options = ["noatime"];} {
+      options = ["subvol=@nix" "nodev"];
+      subvol = "@nix";
+    };
+    expected = {
+      options = ["subvol=@nix" "nodev"];
+    };
+  };
+  # Same list contract as `options`: a string must throw rather than become one option.
+  testExtraOptionsMustBeList = {
+    expr = (fs.mkMounts {} {"/m" = {extraOptions = "discard";};})."/m".options;
+    expectedError = {
+      type = "TypeError";
+      msg = "expected a list but found a string";
+    };
+  };
+  # The unit path joins the appended list into the mount's comma string.
+  testUnitExtraOptionsJoinIntoOptionsString = {
+    expr =
+      (mount {} {
+        subvol = "@x";
+        extraOptions = ["discard"];
+      }).options;
+    expected = "subvol=@x,discard";
+  };
   # An empty option list is dropped so NixOS defaults apply.
   testEmptyOptionListIsDropped = {
     expr = mk {} {};

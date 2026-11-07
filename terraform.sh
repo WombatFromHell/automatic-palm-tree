@@ -105,10 +105,12 @@ signature() { blkid -o value -s TYPE "$1" 2>/dev/null || true; }
 label_of() { blkid -o value -s LABEL "$1" 2>/dev/null || true; }
 
 # A partition with no type declared still needs a GPT type: a vfat partition is an ESP, anything
-# else is a Linux filesystem partition.
+# else is a Linux filesystem partition. The ESP GUID, not the FAT32 GUID — firmware scans partitions
+# by the ESP GUID (UEFI 2.7 §12.3), which is what a real ESP carries (C12A7328… on the VM's
+# nvme0n1p1); a FAT32-typed partition is a data volume that firmware walks past.
 default_type() {
   case "$1" in
-  vfat) printf 'C12A7EA9-344C-4175-A575-202976385741\n' ;;
+  vfat) printf 'C12A7328-F81F-11D2-BA4B-00A0C93EC93B\n' ;;
   *) printf '0FC63DAF-8483-4772-8E79-3D69D8457574\n' ;;
   esac
 }
@@ -231,7 +233,7 @@ size_bytes() {
 type_guid() {
   case "${1^^}" in
   83) printf '0FC63DAF-8483-4772-8E79-3D69D8457574\n' ;;
-  EF00) printf 'C12A7EA9-344C-4175-A575-202976385741\n' ;;
+  EF00) printf 'C12A7328-F81F-11D2-BA4B-00A0C93EC93B\n' ;;
   *) printf '%s\n' "${1^^}" ;;
   esac
 }
@@ -267,6 +269,29 @@ declared_node() {
 # gpt_name <node> — the name the GPT gives a partition, read off the table.
 gpt_name() {
   printf '%s\n' "$table" | jq -r --arg node "$1" '.partitiontable.partitions[] | select(.node == $node) | .name // ""'
+}
+
+# What a drive offers as a boot partition that the recipe did not accept: FAT under some other
+# label, or a blank partition whose GPT type says boot. Naming them turns "nothing here is /boot"
+# into "declare the label this ESP actually carries".
+esp_offers() {
+  local cand type sig out=""
+  while read -r cand type; do
+    [ -n "$cand" ] || continue
+    sig=$(signature "$cand")
+    if [ -n "$sig" ]; then
+      [ "$sig" = vfat ] || continue
+      out="$out $cand (vfat, label $(label_of "$cand"))"
+      continue
+    fi
+    case "${type^^}" in
+    C12A7328-F81F-11D2-BA4B-00A0C93EC93B | C12A7EA9-344C-4175-A575-202976385741)
+      out="$out $cand (blank, GPT type ${type^^})"
+      ;;
+    esac
+  done <<<"$parts"
+  [ -n "$out" ] || out=" no FAT partition and no partition the GPT type says is boot"
+  printf '%s\n' "$out"
 }
 
 # resolve_entries — where each recipe entry lives on the drive today, in the order the recipe allows:
@@ -864,8 +889,9 @@ pending=()
 plan=()
 if [ -z "$recipe" ]; then
   # The ESP is the partition the host's /boot names when that name resolves here; failing that, the
-  # one already holding a vfat signature, and failing that a blank one whose GPT type says FAT32 or an
-  # ESP. Anything else on the drive is not ours to look at.
+  # one already holding a vfat signature, and failing that a blank one whose GPT type says ESP. A
+  # blank Basic Data partition is not a candidate: it says nothing about what it should hold, and
+  # formatting one would build a boot partition out of somebody else's reserved space.
   esp=$(declared_node "$esp_device")
   if [ -z "$esp" ]; then
     while read -r node type; do
@@ -879,7 +905,7 @@ if [ -z "$recipe" ]; then
       while read -r node type; do
         [ -n "$node" ] || continue
         case "${type^^}" in
-        C12A7EA9-344C-4175-A575-202976385741 | B461F200-2D0D-4F87-B71B-0D421BA668D7)
+        C12A7328-F81F-11D2-BA4B-00A0C93EC93B | C12A7EA9-344C-4175-A575-202976385741)
           esp="$node"
           break
           ;;
@@ -1015,6 +1041,18 @@ if [ -n "$recipe" ]; then
     gap_sects+=("$size")
   done < <(free_gaps)
   resolve_entries
+  # On a drive this host does not own, the ESP is adopted, never appended: adding a boot partition to
+  # somebody else's drive is a partition-table change terraform.sh never makes, and appending one
+  # before refusing would leave the drive changed with nothing installed. So the ESP is settled here,
+  # before a single sector is written.
+  esp_idx=""
+  for n in "${!entry_lines[@]}"; do
+    IFS="$sep" read -r name _ <<<"${entry_lines[n]}"
+    [ "$name" = "$esp_name" ] && esp_idx="$n"
+  done
+  if [ "$owns" != true ] && [ -n "$esp_idx" ] && [ -z "${resolved[$esp_idx]}" ]; then
+    refuse "recipe entry $esp_name matches no partition on $disk: $(esp_offers) — declare the label or GPT name the ESP on this drive actually carries"
+  fi
   place_creations
   # A dry run plans and writes nothing, so the entries it creates stay creates with no partition.
   if [ "$dry" = 0 ]; then append_creations; fi
@@ -1037,8 +1075,10 @@ if [ -n "$recipe" ]; then
       ;;
     esac
   done
-  [ -n "$esp" ] || refuse "recipe entry $esp_name resolves to no partition on $disk: nothing here is the host's /boot"
-  [ -n "$root_part" ] || refuse "recipe entry $root_name resolves to no partition on $disk: the root has nowhere to live"
+  # A creation has no node yet, so it resolves to nothing; that is the plan, not a refusal. Only a
+  # run that is about to write needs both ends to exist.
+  [ -n "$esp" ] || [ "$dry" = 1 ] || refuse "recipe entry $esp_name resolves to no partition on $disk: nothing here is the host's /boot"
+  [ -n "$root_part" ] || [ "$dry" = 1 ] || refuse "recipe entry $root_name resolves to no partition on $disk: the root has nowhere to live"
 fi
 
 before=$(table_checksum)

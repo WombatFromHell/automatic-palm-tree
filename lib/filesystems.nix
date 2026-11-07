@@ -3,8 +3,11 @@
 # below passes straight through to the target attrset.
 #
 # `options` is a list; an entry's `options` replaces the defaults' (NixOS semantics, keeps
-# `/boot` on vfat correct). `subvol` is sugar for one trailing `subvol=…` option. Sugar keys
-# may sit in defaults or on an entry.
+# `/boot` on vfat correct), so overriding it means restating the whole list — including any
+# `subvol=…` it wants. `extraOptions` is the append half: it adds to whatever is there, defaults
+# first then entry, and never replaces. `subvol` is sugar for one trailing `subvol=…` option, and
+# an option already written in `options` is not repeated. Sugar keys may sit in defaults or on an
+# entry.
 {
   lib,
   nixpkgs,
@@ -27,12 +30,13 @@
 
   merge = defaults: entry: let
     all = defaults // entry;
+    extras = (defaults.extraOptions or []) ++ (entry.extraOptions or []);
   in
-    removeAttrs all ["subvol" "options"]
+    removeAttrs all ["subvol" "options" "extraOptions"]
     // {
-      options =
-        (all.options or [])
-        ++ optional (isString (all.subvol or null)) "subvol=${all.subvol}";
+      options = unique ((all.options or [])
+        ++ optional (isString (all.subvol or null)) "subvol=${all.subvol}"
+        ++ extras);
     };
 
   # systemd.unit(5) escaping, taken from nixpkgs' own utils: '/' -> '-', every character

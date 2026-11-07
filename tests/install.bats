@@ -6,7 +6,8 @@ load helpers
 
 setup() {
   harness_stub_dir
-  printf 'true\n' >"$stubs/owned"
+  # ownsWholeDisk arrives as `builtins.toString` prints it: `1` for true, empty for false.
+  printf '1\n' >"$stubs/owned"
   printf 'disk\n' >"$stubs/disk_type"
   printf '0\n' >"$stubs/mounted"
   printf '' >"$stubs/mounted_at"
@@ -103,6 +104,7 @@ echo "blkid \$*" >> "$calls"
 case "\$*" in
   */dev/vda1*) t="\${ESP_TYPE:-vfat}" ;;
   */dev/vda2*) t="\${ROOT_TYPE-ext4}" ;;
+  */dev/sda*) t="\${ISO_SIG:-}" ;;
   *) t="" ;;
 esac
 if [ -n "\$t" ]; then printf '%s\n' "\$t"; exit 0; fi
@@ -245,7 +247,7 @@ run_install() {
 }
 
 @test "prepare accepts a shared drive and reads the host's mounts, not a disko device" {
-  printf 'false\n' >"$stubs/owned"
+  printf '' >"$stubs/owned"
   run run_install --dry-run --stage prepare methyl
   [ "$status" -eq 0 ]
   assert_out "shares /dev/vda"
@@ -282,7 +284,7 @@ run_install() {
 @test "prepare refuses when the machine has no real drive to adopt" {
   # The host names a partition that is not here, and the only block devices are the ones that are
   # not a drive to install onto: terraform.sh would have nothing to adopt.
-  printf 'false\n' >"$stubs/owned"
+  printf '' >"$stubs/owned"
   LSBLK_MISSING=1 DISKS='' run run_install --stage prepare methyl
   [ "$status" -eq 2 ]
   assert_out "cannot tell which drive"
@@ -292,26 +294,35 @@ run_install() {
 @test "a shared drive whose partitions are still blank is adopted from the drive that has a table" {
   # terraform.sh formats the blank ESP and root, so the host's devices name nothing until it runs.
   # The drive is the one disk here that is neither removable nor the zram swap this script may have
-  # added.
-  printf 'false\n' >"$stubs/owned"
-  LSBLK_MISSING=1 run run_install --dry-run --stage terraform methyl
+  # added. propyl has no recipe, so this is the flags-mode command.
+  printf '' >"$stubs/owned"
+  LSBLK_MISSING=1 run run_install --dry-run --stage terraform propyl
   [ "$status" -eq 0 ]
   assert_out "shares /dev/vda"
   assert_out "[dry-run] ./terraform.sh --dry-run --disk /dev/vda"
 }
 
 @test "two candidate drives are refused rather than guessed" {
-  printf 'false\n' >"$stubs/owned"
+  printf '' >"$stubs/owned"
   LSBLK_MISSING=1 DISKS=$'vda disk 0\nvdb disk 0' run run_install --dry-run --stage terraform methyl
   [ "$status" -eq 2 ]
   assert_out "cannot tell which drive"
   assert_no_call "./terraform.sh"
 }
 
+@test "a drive presenting as the install ISO is not a candidate even when lsblk calls it a disk" {
+  # The VM's ISO presents as /dev/sda: a dos table with iso9660 across the whole drive. It is media,
+  # not a drive to install onto, and the only other disk here is the target.
+  printf '' >"$stubs/owned"
+  LSBLK_MISSING=1 DISKS=$'sda disk 0\nvda disk 0' ISO_SIG=iso9660 run run_install --dry-run --stage terraform methyl
+  [ "$status" -eq 0 ]
+  assert_out "shares /dev/vda"
+}
+
 @test "the install ISO's own devices and the zram swap are never adopted" {
   # The minimal ISO presents as a loop device and a removable sr0; prepare may have added /dev/zram0.
   # None of them is the drive being installed onto, so exactly one candidate remains.
-  printf 'false\n' >"$stubs/owned"
+  printf '' >"$stubs/owned"
   LSBLK_MISSING=1 DISKS=$'loop0 loop 0\nsr0 rom 1\nzram0 disk 0\nvda disk 0' run run_install --dry-run --stage terraform methyl
   [ "$status" -eq 0 ]
   assert_out "shares /dev/vda"
@@ -401,9 +412,11 @@ run_install() {
   assert_calls "./terraform.sh" 1
 }
 
+# propyl is the host with no recipe, so these four are the flags-mode path: the host's own mounts name
+# the partitions, and terraform.sh takes a filesystem and two device paths.
 @test "terraform on a shared drive runs terraform.sh and never disko" {
-  printf 'false\n' >"$stubs/owned"
-  run run_install --dry-run --stage terraform methyl
+  printf '' >"$stubs/owned"
+  run run_install --dry-run --stage terraform propyl
   [ "$status" -eq 0 ]
   assert_out "[dry-run] ./terraform.sh --dry-run --disk /dev/vda --mount /mnt --root-fs ext4"
   assert_no_call "disko --mode"
@@ -411,19 +424,19 @@ run_install() {
 }
 
 @test "terraform on a shared drive adopts the signed partitions and mounts the declared root" {
-  printf 'false\n' >"$stubs/owned"
-  INSTALL_FORCE=1 run run_install --stage terraform methyl
+  printf '' >"$stubs/owned"
+  INSTALL_FORCE=1 run run_install --stage terraform propyl
   [ "$status" -eq 0 ]
   # Both partitions carry a signature, so nothing is formatted and only the root is mounted.
   assert_no_call "mkfs"
   assert_call "^mount -o noatime /dev/vda2 /mnt$"
   assert_no_call "disko --mode"
-  assert_out "mounted from the partitions methyl declares"
+  assert_out "mounted from the partitions propyl declares"
 }
 
 @test "terraform on a shared drive refuses to format a blank partition with nobody to ask" {
-  printf 'false\n' >"$stubs/owned"
-  ROOT_TYPE='' run run_install --stage terraform methyl
+  printf '' >"$stubs/owned"
+  ROOT_TYPE='' run run_install --stage terraform propyl
   [ "$status" -eq 2 ]
   assert_out "needs a confirmation and there is no terminal"
   assert_no_call "mkfs"
@@ -431,9 +444,9 @@ run_install() {
 }
 
 @test "terraform on a shared drive refuses a blank partition the host names by UUID" {
-  printf 'false\n' >"$stubs/owned"
+  printf '' >"$stubs/owned"
   printf '/dev/disk/by-uuid/1234\n' >"$stubs/root_device"
-  ROOT_TYPE='' run run_install --stage terraform methyl
+  ROOT_TYPE='' run run_install --stage terraform propyl
   [ "$status" -eq 2 ]
   assert_out "UUID"
   assert_no_call "^mount /dev"
@@ -483,7 +496,7 @@ run_install_in() { # <repo dir> [install.sh args]
 }
 
 @test "a shared host with a recipe is terraformed from the recipe, not from its mounts" {
-  printf 'false\n' >"$stubs/owned"
+  printf '' >"$stubs/owned"
   dir=$(recipe_repo methyl '{"owns": false, "partitions": [{"name":"esp","fs":"vfat","size":"8M","mount":"/boot"},{"name":"nixos","fs":"ext4","size":"rest","mount":"/"}]}')
   run run_install_in "$dir" --dry-run --stage terraform methyl
   [ "$status" -eq 0 ]
@@ -494,7 +507,7 @@ run_install_in() { # <repo dir> [install.sh args]
 # The recipe and the host fact must agree about who owns the drive. A recipe claiming a drive this
 # host does not own is refused before any write.
 @test "a recipe whose owns disagrees with flakeHost.ownsWholeDisk refuses before any write" {
-  printf 'false\n' >"$stubs/owned"
+  printf '' >"$stubs/owned"
   dir=$(recipe_repo methyl '{"owns": true, "partitions": []}')
   run run_install_in "$dir" --stage terraform methyl
   [ "$status" -eq 2 ]
@@ -504,7 +517,7 @@ run_install_in() { # <repo dir> [install.sh args]
 }
 
 @test "deploy verifies the drive against the recipe before it installs" {
-  printf 'false\n' >"$stubs/owned"
+  printf '' >"$stubs/owned"
   printf '1\n' >"$stubs/mounted"
   dir=$(recipe_repo methyl '{"owns": false, "partitions": [{"name":"nixos","fs":"ext4","size":"rest","mount":"/"}]}')
   INSTALL_FORCE=1 run run_install_in "$dir" --stage terraform methyl
@@ -514,6 +527,19 @@ run_install_in() { # <repo dir> [install.sh args]
   [ "$status" -eq 0 ]
   assert_call "./terraform.sh --verify --recipe hosts/methyl/terraform.json --disk /dev/vda"
   assert_call "nixos-install --flake .#methyl --root /mnt --no-root-passwd"
+}
+
+# `builtins.toString` of a bool is `1` for true and `""` for false, so a shared host answers with an
+# empty line. methyl's committed recipe says owns=false, and that empty line is what it has to agree
+# with — the suite pins the file in the tree so it can never drift from what install.sh acts on.
+@test "methyl's committed recipe agrees with a host whose ownsWholeDisk Nix prints as empty" {
+  printf '' >"$stubs/owned"
+  dir=$(recipe_repo methyl "$(cat "$repo/hosts/methyl/terraform.json")")
+  run run_install_in "$dir" --dry-run --stage terraform methyl
+  [ "$status" -eq 0 ]
+  assert_no_out "ownsWholeDisk"
+  assert_out "--recipe hosts/methyl/terraform.json"
+  assert_no_out "--root-fs"
 }
 
 # The same precondition on the host that owns its whole drive: the recipe committed in the tree is
@@ -528,7 +554,7 @@ run_install_in() { # <repo dir> [install.sh args]
 }
 
 @test "deploy refuses when the drive no longer matches the recipe" {
-  printf 'false\n' >"$stubs/owned"
+  printf '' >"$stubs/owned"
   printf '1\n' >"$stubs/mounted"
   dir=$(recipe_repo methyl '{"owns": false, "partitions": [{"name":"nixos","fs":"ext4","size":"rest","mount":"/"}]}')
   TF_EXIT=1 INSTALL_FORCE=1 run run_install_in "$dir" --stage deploy methyl
@@ -547,14 +573,15 @@ run_install_in() { # <repo dir> [install.sh args]
 @test "deploy accepts a shared drive: the store is inside the root partition mounted at /mnt" {
   # A shared drive has no separate store mount -- terraform.sh mounts the host's root partition at
   # /mnt and nixos-install writes /mnt/nix/store inside it. findmnt does not answer for /mnt/nix,
-  # so deploy has to accept the mount of /mnt itself.
-  printf 'false\n' >"$stubs/owned"
-  INSTALL_FORCE=1 run run_install --stage terraform methyl
+  # so deploy has to accept the mount of /mnt itself. propyl has no recipe, so the mounts name the
+  # partitions here.
+  printf '' >"$stubs/owned"
+  INSTALL_FORCE=1 run run_install --stage terraform propyl
   [ "$status" -eq 0 ]
   assert_call "mount -o noatime /dev/vda2 /mnt"
-  INSTALL_FORCE=1 run run_install --stage deploy methyl
+  INSTALL_FORCE=1 run run_install --stage deploy propyl
   [ "$status" -eq 0 ]
-  assert_call "nixos-install --flake .#methyl --root /mnt --no-root-passwd"
+  assert_call "nixos-install --flake .#propyl --root /mnt --no-root-passwd"
 }
 
 @test "deploy refuses a root mounted from tmpfs, which would build the closure into RAM" {

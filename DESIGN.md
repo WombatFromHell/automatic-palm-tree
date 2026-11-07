@@ -15,9 +15,13 @@ lib/               # pure loader, one concern per file
   host-lib.nix     #   host-facing composition: mergeModules, mergeHome, profiles
   features.nix     #   feature discovery + resolveFeaturePaths (unknown feature = throw)
   builders.nix     #   nixosSystem / homeManagerConfiguration, module order
-  filesystems.nix  #   mkMounts / mkUnitMounts (subvolume -> mount + automount units;
-                   #   automount = true adds the lazy .automount unit, skipIfMissing conditions
-                   #   on the device) / joinUnitMounts (concat groups, never //)
+  filesystems.nix  #   mountsFromRecipe (a host's terraform.json -> fileSystems: label -> device,
+                   #   fs -> fsType, comma options; an entry with no mount is created, not mounted)
+                   #   / mkMounts (defaults + one entry per mount: `options` replaces the defaults,
+                   #   `extraOptions` appends, `subvol` sugar adds one trailing option)
+                   #   / mkUnitMounts (mount + automount units; automount = true adds the lazy
+                   #   .automount unit, skipIfMissing conditions on the device)
+                   #   / joinUnitMounts (concat groups, never //)
                    #   / unitName (where -> unit name, exported so consumers and tests
                    #   name a unit exactly the way mkUnitMounts does)
   pin-meta.nix     #   metadata.json contract: pinnedSystems, assetHash, releaseAsset, gitSource
@@ -26,24 +30,30 @@ modules/           # NixOS/HM modules the loader always imports
   cache-registry.nix caches.nix feature-options.nix host-facts.nix nix-settings.nix
   warnings-gate.nix defaults/{nixos,home-manager}.nix packages/pyz-wrapper.nix
 features/<name>/   # nixos.nix, home.nix, optional _overlays.nix; private helpers are _*.nix
-hosts/             # host records: <name>.nix or <name>/ (nixos.nix + home-<user>.nix)
+hosts/             # host records: <name>.nix or <name>/ (nixos.nix + home-<user>.nix
+                   #   + terraform.json, the drive layout terraform.sh reproduces)
                    #   methyl (KDE gaming) · methyl-nixos (GNOME; niri-spicy on,
                    #   libvirtd off, spice-vdagent as a guest) · propyl (T2 laptop)
                    #   methyl-bazzite (standalone HM) · methyl-base/ (shared records + profiles,
                    #   not a host: no default.nix)
 tests/             # eval-only suite (see TEST_DESIGN.md); nix-eval.sh caps each eval in RAM
+                   #   bats tiers run against PATH stubs; terraform.bats + disk-fixture.bash drive
+                   #   real mkfs/blkid/sgdisk on sparse loop files; deploy-loop.sh needs root
 bootstrap.sh       # day-zero switch: cache urls/keys via --option, then switch
+install.sh         # staged installer: prepare / terraform / deploy / reboot
+terraform.sh       # the only thing here that touches a drive (ADR-b77ec913151f)
+lib/confirm.sh     # one confirm per destructive step, shared by install.sh and terraform.sh
 update-all.sh      # feature updaters, then flake input bumps
 ```
 
-39 features: 12 home-only, 18 NixOS-only, 9 with both a `home.nix` and a `nixos.nix`;
+41 features: 14 home-only, 18 NixOS-only, 9 with both a `home.nix` and a `nixos.nix`;
 2 carry an `_overlays.nix` (`nixos-cachyos`, `nixos-niri`).
 
 ## Loader pipeline
 
 ```mermaid
 flowchart TD
-  I["inputs: nixpkgs, nixpkgs-unstable, home-manager + 9 tool inputs"] --> D["lib/default.nix"]
+  I["inputs: nixpkgs, nixpkgs-unstable, home-manager + 7 tool inputs"] --> D["lib/default.nix"]
   D --> HO["host-options.nix<br/>schema: facts + authoring + derived"]
   D --> H["hosts.nix<br/>discover hosts/ → validate → enrich"]
   H --> HD["host records<br/>name, system, isNixOS, users,<br/>features, nixosModules, homeModules<br/>+ derived name / osUsernames / adminUsernames / hmUsernames"]
@@ -87,6 +97,25 @@ graphical,gaming,extras,nixos-defaults}.nix` plus `hosts/methyl-base/profiles/` 
 `hostLib.mergeModules` (`methyl-kde → methyl-gaming → methyl-common → core/base/graphical`).
 Discovery also accepts symlinked feature dirs, symlinked host files and symlinked module files,
 because `readDir` reports `"symlink"` for a checkout pointing at another tree.
+
+## Drive layout (`terraform.sh` + `hosts/<host>/terraform.json`)
+
+One file describes the drive and both sides read it. `terraform.sh` is the only code allowed to touch
+a disk (ADR-b77ec913151f); `install.sh --stage terraform` is its caller. `owns` decides the direction:
+`true` reproduces the layout from zero (refusing a DOS table, a signature across the whole drive, and
+any signature no entry claims), `false` adopts what already exists — label symlink, then signature +
+GPT type, then a blank partition carrying the entry's name, then creation into an aligned free gap —
+and never resizes or rewrites a partition another OS owns. Adopting an existing ESP is an entry
+resolved by signature, not a flag.
+
+The config reads the same file at eval: `fsLib.mountsFromRecipe` turns each mounted entry into a
+`fileSystems` item, so a mount can never name a device the run will not create
+(ADR-62773e12d275). The btrfs subvolume tree stays host-side (ADR-eaca61b85782): the host derives it
+from the recipe's root entry with `mkMounts mounts."/"`, which inherits that entry's device, fsType
+and options and appends `subvol=@<name>`. Options therefore have two homes — the recipe is what
+`terraform.sh` mounts the drive with, `fileSystems` is what NixOS mounts at boot — and fsLib keeps
+them one-way: `extraOptions` appends, `options` replaces the whole list. An override on a
+recipe-derived mount is the only way the two sides can disagree, and nothing in the gate catches it.
 
 ## NixOS module composition (order matters)
 
@@ -193,8 +222,9 @@ packages there would pull foreign Mesa into the closure. The three callers (`hm-
 
 ## Input boundary
 
-The lock carries seven nixpkgs trees (ours ×2, plus beryl-utils, kait2en, niri-spicy,
-nix-cachyos-kernel, xilo). None uses `follows`, and that is the boundary: forcing one to follow
+The lock carries eight nixpkgs trees (ours ×2, plus beryl-utils, kait2en, niri-spicy,
+nix-cachyos-kernel, xilo, disko — disko's tree is never evaluated here, only its
+`nixosModules.disko` module is imported). None uses `follows`, and that is the boundary: forcing one to follow
 ours would evaluate it against a rev its CI never built, so every path it publishes from its own
 cache stops matching — the CachyOS and KaiT2en kernels would rebuild locally, on the host with
 the least RAM. The caches named in `modules/cache-registry.nix` are the same story: each is
@@ -232,17 +262,18 @@ The eval gate's cap (1792MB in `tests/run.sh`) bounds the suite, not a build —
 build's eval. `flake.nix` reads check systems off the host records instead of forcing every
 configuration's `config.pkgs`, which keeps naming the checks at ~15MB rather than ~510MB.
 
-`rebuild-gate.sh` measures this instead of guessing it: one scoped nix command per target, the
-scope's peak (the eval cost, since evaluation happens in the client process the scope runs) and
-`nix-daemon.service`'s peak (the realisation cost, which no flag here bounds), plus what the
-dry-run says about fetches vs builds. Numbers are appended to `.pi/rebuild-gate.jsonl`, one object
-per phase, so two sessions can be diffed. `--cold` bypasses Nix's eval cache:
+`tests/build-harness.sh` measures this instead of guessing it: one scoped `nix build` per attribute,
+the scope's peak (the eval cost, since evaluation happens in the client process the scope runs),
+`nix-daemon.service`'s peak (the realisation cost, which no flag here bounds), and what the dry-run
+says about fetches vs builds:
 
 ```bash
-rebuild-gate.sh -m plan -c 4096 --cold   # this flake's toplevels and activation packages
+bash tests/build-harness.sh --cap 4096 --build -- .#nixosConfigurations.methyl.config.system.build.toplevel
 ```
 
-Measured cold on this box: methyl 2365MB/13s, methyl-nixos 2261MB/23s, propyl 2284MB/12s, the
+The colder figures below came from a probe harness that since left the tree; they stand as
+measurements, not as a tool that ships. Measured cold on this box: methyl 2365MB/13s, methyl-nixos
+2261MB/23s, propyl 2284MB/12s, the
 standalone activation package 1325MB/8s, with the daemon holding ~1.15GB throughout. A 2048MB cap
 let the methyl eval through at 1845MB — close enough to the limit that a colder run can be killed,
 which is why the scope is 3072MB.
@@ -251,20 +282,19 @@ The eval cache is not a lever for a NixOS config: warming it moved methyl to 236
 2363MB/13s cold. It helps flake metadata and cheap attributes, not module evaluation, so neither
 `bootstrap.sh` nor a rebuild passes `--no-eval-cache` — there is nothing to save.
 
-`-m probe` attributes that RAM instead of guessing it: `-t` is a config expression and each `-e` is
-one attribute forced in its own scoped process. For methyl the spine (module evaluation alone,
+Attribution comes from forcing one attribute per scoped process rather than guessing it. For methyl the spine (module evaluation alone,
 `.config.system.stateVersion`) is 229MB, the installed package list
 (`.config.environment.systemPackages`) is 1475MB, `.config.warnings` is 2067MB and the toplevel is
 2363MB — so ~1.25GB is the closure of packages the host actually installs. Disabling every enabled
 feature one at a time moved the toplevel peak by under 40MB, which is why no feature trimming is
 proposed here. For the standalone profile the spine is 200MB, HM's warnings 202MB, the activation
-package 1324MB, and the wrapped Ghostty package alone 446MB.
+package 1324MB, and the wrapped Ghostty package alone 446MB. Each number is one command — a
+derivation through `tests/build-harness.sh`, anything cheaper through a scoped eval:
 
 ```bash
-rebuild-gate.sh -m probe -c 3000 --cold \
-  -t '(builtins.getFlake (toString ./.)).outputs.nixosConfigurations.methyl' \
-  -e '.config.system.stateVersion' -e '.config.environment.systemPackages' \
-  -e '.config.system.build.toplevel.drvPath'
+bash tests/build-harness.sh --cap 3000 -- .#nixosConfigurations.methyl.config.system.build.toplevel
+tests/nix-eval.sh 3000 -- nix eval --impure \
+  --expr '(builtins.getFlake (toString ./.)).outputs.nixosConfigurations.methyl.config.warnings'
 ```
 
 ### More cores, same RAM
@@ -298,7 +328,8 @@ Measured on this box (3 cores, ~4.6GB free):
 ### Which evaluator
 
 Same attribute (methyl's toplevel), three evaluators, each run directly inside the scope, cap
-3000MB so swap stayed 0. Determinate 3.21.7 wraps Nix 2.34.8; the Lix CLI here is 2.95.4:
+3000MB so swap stayed 0. Determinate 3.21.7 wraps Nix 2.34.8; the Lix CLI here is 2.95.4. The host
+has since moved on (`nix --version` reports 2.35.4), so re-measure before quoting these numbers:
 
 | evaluator                           | one config       | all configs in one process               | cheap suite |
 | ----------------------------------- | ---------------- | ---------------------------------------- | ----------- |
@@ -364,7 +395,9 @@ flowchart LR
   E7["credsctl / sopsctl (on PATH)<br/>credsctl: list, encrypt, decrypt [--env], rm<br/>sopsctl: init [--from-ssh], keys, encrypt, decrypt, get, set,<br/>rekey, recipients, protected, verify"] --> CR["credential records, one file each<br/>name.cred = systemd-creds, sealed to this machine<br/>name.sops.json / name.sops.yaml = sops through sopsctl, portable"]
   E8["nix run .#apps.&lt;system&gt;.cache-check &lt;host&gt;"] --> CF["eval-only cache pre-flight (lib/cache-check.sh):<br/>which caches the host's enabled features require<br/>but do not substitute from"]
   E9["nix run .#apps.&lt;system&gt;.style"] --> ST["lib/style.sh: every .nix through alejandra + statix,<br/>every .sh/.bats through shfmt + shellcheck, markdown through oxfmt (.ank excluded)<br/>tools from the app's runtimeInputs, not the host profile"]
-  E10["nix develop"] --> DEV["curl jq nix bats shellcheck shfmt:<br/>where features/*/update.sh runs"]
+  E10["nix develop"] --> DEV["curl jq nix bats shellcheck shfmt nix-unit<br/>+ terraform.sh's disk tools (util-linux, gptfdisk,<br/>dosfstools, mtools, e2fsprogs, btrfs-progs, xfsprogs):<br/>where features/*/update.sh and terraform.bats run"]
+  E11["install.sh --stage prepare|terraform|deploy|reboot <host>"] --> INS["staged installer on the target drive:<br/>prepare read-only + partition-table checksum,<br/>terraform through terraform.sh, deploy nixos-install --root,<br/>one confirm per destructive step (--force is the testing override)"]
+  E12["terraform.sh --emit | --recipe <file> [--verify]"] --> DRV["reproduce hosts/<host>/terraform.json on its drive<br/>and re-read the drive before reporting success"]
 ```
 
 `bootstrap.sh --standalone` is the host-side bootstrap for a machine that is not NixOS. It runs the
