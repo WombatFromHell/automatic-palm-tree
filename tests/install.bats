@@ -417,7 +417,7 @@ run_install() {
   [ "$status" -eq 0 ]
   # Both partitions carry a signature, so nothing is formatted and only the root is mounted.
   assert_no_call "mkfs"
-  assert_call "^mount /dev/vda2 /mnt$"
+  assert_call "^mount -o noatime /dev/vda2 /mnt$"
   assert_no_call "disko --mode"
   assert_out "mounted from the partitions methyl declares"
 }
@@ -552,7 +552,7 @@ run_install_in() { # <repo dir> [install.sh args]
   printf 'false\n' >"$stubs/owned"
   INSTALL_FORCE=1 run run_install --stage terraform methyl
   [ "$status" -eq 0 ]
-  assert_call "mount /dev/vda2 /mnt"
+  assert_call "mount -o noatime /dev/vda2 /mnt"
   INSTALL_FORCE=1 run run_install --stage deploy methyl
   [ "$status" -eq 0 ]
   assert_call "nixos-install --flake .#methyl --root /mnt --no-root-passwd"

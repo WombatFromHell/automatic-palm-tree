@@ -122,9 +122,9 @@
         default = pkgs.mkShell {
           packages = with pkgs;
             [curl jq nix bats shellcheck shfmt nix-unit] ++
-            # terraform.sh's tools: the table reader, the signature reader, the four filesystem
+            # terraform.sh's tools: the table reader, the signature reader, the five filesystem
             # formatters and mtools for reading an ESP that lives in a file (tests/disk-fixture.bash).
-            [util-linux gptfdisk dosfstools mtools e2fsprogs btrfs-progs];
+            [util-linux gptfdisk dosfstools mtools e2fsprogs btrfs-progs xfsprogs];
         };
       }
     );

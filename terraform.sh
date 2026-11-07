@@ -20,7 +20,9 @@ cd "$(dirname "$0")"
 disk=""
 mount="/mnt"
 root_fs="ext4"
-root_opts=""
+# null means the root's options were never declared, which is what lets mount_opts fall back to the
+# filesystem's defaults; "" is a declared choice and means the kernel's defaults.
+root_opts=null
 root_device=""
 esp_device=""
 recipe=""
@@ -114,17 +116,21 @@ default_type() {
 # mount_opts <fs> [declared] — the options a mount of <fs> is made with, taken from what
 # hosts/methyl-nixos/nixos.nix declares for a btrfs UEFI host: every subvolume of the btrfs root is
 # mounted noatime,compress=zstd (atime writes cost I/O on a store that is read constantly, and zstd
-# is what that host already compresses with), and a vfat ESP is mounted with the 0077 masks so the
-# boot loader files are not world-readable. A recipe entry's own options win; ext4 has no default,
-# so it keeps the kernel's.
+# is what that host already compresses with), an xfs root is mounted noatime with a 256k log buffer
+# and no quota (the log buffer is where xfs spends its journal writes, and quotas are not used here),
+# and a vfat ESP is mounted with the 0077 masks so the boot loader files are not world-readable. A
+# recipe entry's own options win; ext4 gets noatime only, and takes the kernel's for everything else.
+# An entry that declares "options": "" wins too — it means the kernel's defaults, not this fallback.
 mount_opts() {
-  local declared=${2:-}
-  if [ -n "$declared" ]; then
+  local declared=${2-null}
+  if [ "$declared" != null ]; then
     printf '%s\n' "$declared"
     return
   fi
   case "$1" in
+  ext4) printf 'noatime\n' ;;
   btrfs) printf 'noatime,compress=zstd\n' ;;
+  xfs) printf 'noatime,logbsize=256k,noquota\n' ;;
   vfat) printf 'fmask=0077,dmask=0077\n' ;;
   esac
 }
@@ -161,6 +167,12 @@ format_blank() {
     ;;
   ext4)
     args=(-q)
+    [ -n "$label" ] && args+=(-L "$label")
+    ;;
+  xfs)
+    # -f is what lets a fixture format a slice that is a regular file; on a real partition the check
+    # it skips is worth keeping, so it is only added for a file.
+    [ -f "$node" ] && args+=(-f)
     [ -n "$label" ] && args+=(-L "$label")
     ;;
   btrfs)
@@ -485,12 +497,15 @@ if [ -n "$recipe" ]; then
   case "$declared_opts" in
   *" "*) refuse "recipe options must be a comma-separated list, not \"$declared_opts\"" ;;
   esac
-  # Options that only a btrfs filesystem takes are refused on a partition that is not btrfs: mount
-  # would hand them to a filesystem with no such parameter and fail on an unknown option. The
-  # fallback in mount_opts is already scoped by filesystem; this is the declared case.
-  mismatched=$(jq -r '[.partitions[] | select(.fs != "btrfs") | select((.options // "") | test("compress=|subvol=|datacow|space_cache|ssspread|flushoncommit|quota")) | "\(.name): \(.options)"] | join("; ")' "$recipe" 2>/dev/null || true)
+  # Options that only one filesystem takes are refused on a partition that is not that filesystem:
+  # mount would hand them to a filesystem with no such parameter and fail on an unknown option. The
+  # fallback in mount_opts is already scoped by filesystem; this is the declared case. quota is not
+  # in the list because ext4 takes it too.
+  mismatched=$(jq -r '[.partitions[] | select(.fs != "btrfs") | select((.options // "") | test("compress=|subvol=|datacow|space_cache|ssspread|flushoncommit")) | "\(.name): \(.options)"] | join("; ")' "$recipe" 2>/dev/null || true)
   [ -z "$mismatched" ] || refuse "the recipe mounts a non-btrfs partition with btrfs options — $mismatched"
-  root_opts=$(jq -r '.partitions[] | select(.mount == "/") | .options // ""' "$recipe" 2>/dev/null || true)
+  mismatched=$(jq -r '[.partitions[] | select(.fs != "xfs") | select((.options // "") | test("logbsize=|inode64")) | "\(.name): \(.options)"] | join("; ")' "$recipe" 2>/dev/null || true)
+  [ -z "$mismatched" ] || refuse "the recipe mounts a non-xfs partition with xfs options — $mismatched"
+  root_opts=$(jq -r '.partitions[] | select(.mount == "/") | (.options // "null")' "$recipe" 2>/dev/null || true)
   entries=$(jq -r '.partitions[] | "\(.name)\u001f\(.label // "")\u001f\(.fs)\u001f\(.size // "")\u001f\(.type // "")\u001f\(.mount // "")"' "$recipe" 2>/dev/null) ||
     refuse "cannot read recipe $recipe"
   [ -n "$entries" ] || refuse "recipe $recipe declares no partitions"
@@ -501,9 +516,7 @@ if [ -n "$recipe" ]; then
   done <<<"$entries"
   while IFS="$sep" read -r name label fs size type mnt; do
     case "$fs" in
-    # xfs is not in the list because format_blank below has no xfs branch; adding it there is when
-    # this list grows.
-    ext4 | vfat | btrfs) ;;
+    ext4 | vfat | btrfs | xfs) ;;
     *) refuse "recipe declares $fs, which terraform.sh does not know how to format" ;;
     esac
     if [ "$mnt" = "/" ]; then

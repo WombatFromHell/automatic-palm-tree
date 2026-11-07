@@ -129,12 +129,14 @@ format_slice() { # <disk> <index> <start> <count> <fs> [label]
       vfat) mkfs.vfat -F 32 -n "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
       ext4) mkfs.ext4 -q -T ext4 -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
       btrfs) mkfs.btrfs -f -q -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+      xfs) mkfs.xfs -f -q -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
     esac
   else
     case "$fs" in
       vfat) mkfs.vfat -F 32 "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
       ext4) mkfs.ext4 -q -T ext4 "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
       btrfs) mkfs.btrfs -f -q "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+      xfs) mkfs.xfs -f -q "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
     esac
   fi
   adopt "$disk" "$idx" "$start" "$count"

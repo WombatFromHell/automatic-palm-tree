@@ -373,11 +373,18 @@ EOF
   assert_out "reiserfs"
   [ "$(type_of blank 1)" = "" ]
 
-  # xfs is the near miss: the reader lists the filesystems format_blank can actually make.
-  recipe_file "$stubs/noxfs.json" false "esp:boot:vfat:8M:/boot,root:nixos:xfs:16M:/"
+  # xfs is a filesystem format_blank can make, so it is accepted. The near miss is an xfs option on a
+  # partition that is not xfs, which mount would take as a parameter that filesystem does not have.
+  recipe_file "$stubs/xfs.json" false "esp:boot:vfat:8M:/boot,root:nixos:xfs:16M:/"
+  run terraform_recipe_run blank "$stubs/xfs.json" --dry-run
+  [ "$status" -eq 0 ]
+  assert_out "[dry-run] mkfs.xfs"
+  [ "$(type_of blank 1)" = "" ]
+
+  recipe_file "$stubs/noxfs.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/:logbsize=256k"
   run terraform_recipe_run blank "$stubs/noxfs.json"
   [ "$status" -eq 2 ]
-  assert_out "xfs"
+  assert_out "non-xfs partition with xfs options"
   [ "$(type_of blank 1)" = "" ]
 
   recipe_file "$stubs/tworoots.json" false "root:nixos:ext4:16M:/,other:alt:ext4:16M:/"
@@ -646,6 +653,45 @@ EOF
   assert_no_call "mkfs"
 }
 
+# The defaults are per filesystem, so a root that exists already gets its own and not btrfs's.
+# mkfs.xfs refuses a device below 300MiB, so the xfs drive is the big one of the two.
+@test "a root that exists already is mounted with its own filesystem's default options" {
+  for fs in ext4 xfs; do
+    drive=160M
+    [ "$fs" = xfs ] && drive=400M
+    truncate -s "$drive" "$disk_dir/$fs.img"
+    printf '2048 16384 %s\n20480\n' "$ESP_TYPE" | sfdisk -X gpt "$disk_dir/$fs.img" >/dev/null 2>&1
+    format_slice "$fs" 1 "$ESP_START" "$ESP_N" vfat boot
+    sect=$(sfdisk --json "$disk_dir/$fs.img" | jq -r '.partitiontable.partitions[1].size')
+    format_slice "$fs" 2 20480 "$sect" "$fs" nixos
+    stub_lsblk "$disk_dir/$fs.img"
+    recipe_file "$stubs/$fs.json" false "esp:boot:vfat:8M:/boot,root:nixos:$fs:rest:/"
+    : >"$calls"
+    : >"$stubs/mounted_src"   # the mount the previous iteration made must not be seen by this one
+
+    run terraform_recipe_run "$fs" "$stubs/$fs.json" --disk "$disk_dir/$fs.img"
+    [ "$status" -eq 0 ]
+    assert_no_call "mkfs"
+    case "$fs" in
+    ext4) assert_call "^mount -o noatime $disk_dir/ext4.img2 $disk_dir/mnt$" ;;
+    xfs) assert_call "^mount -o noatime,logbsize=256k,noquota $disk_dir/xfs.img2 $disk_dir/mnt$" ;;
+    esac
+  done
+}
+
+# An entry that declares its options as empty is a decision, not a missing field: it asks for the
+# kernel's defaults, so the per-filesystem fallback must not be added back.
+@test "a recipe that declares empty mount options overrides the defaults" {
+  truncate -s 256M "$disk_dir/none.img"
+  stub_lsblk "$disk_dir/none.img"
+  recipe_file "$stubs/none.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/:"
+
+  run terraform_recipe_run none "$stubs/none.json" --disk "$disk_dir/none.img"
+  [ "$status" -eq 0 ]
+  assert_call "^mount $disk_dir/none.img2 $disk_dir/mnt$"
+  assert_call "^mount -o subvol=@ $disk_dir/none.img2 $disk_dir/mnt$"
+}
+
 # Options that cannot survive a word boundary would reach mount as two arguments.
 @test "mount options with a space in them refuse before any write" {
   disk blank blank
@@ -790,8 +836,8 @@ assert_no_json() {
   # Mounts are the one thing the drive cannot show, so they are guesses and stderr says so.
   assert_json '[.partitions[].mount] == ["/boot", "/"]'
   # Options are copied from the mount the host's config makes for that filesystem: a vfat ESP gets
-  # the 0077 masks, ext4 gets nothing, so the emitted recipe says what the host will mount with.
-  assert_json '[.partitions[] | (.options // "")] == ["fmask=0077,dmask=0077", ""]'
+  # the 0077 masks and ext4 gets noatime, so the emitted recipe says what the host will mount with.
+  assert_json '[.partitions[] | (.options // "")] == ["fmask=0077,dmask=0077", "noatime"]'
   assert_err "options"
   # Read-only: no format, no mount, no partition write, and the bytes did not move.
   assert_no_call "mount "
