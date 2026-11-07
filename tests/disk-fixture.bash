@@ -132,7 +132,18 @@ table_checksum() { dd if="$disk_dir/$1.img" bs=1M count=1 status=none | md5sum |
 
 # entries_json <disk> — the partition entries as the drive reports them. Tests compare this before and
 # after a run: appending may add an entry, but an entry that already exists must come back identical.
-entries_json() { sfdisk --json "$disk_dir/$1.img" 2>/dev/null | jq -c '.partitiontable.partitions' || true; }
+# A drive that cannot be read must fail here, not answer "": an empty value on both sides of a run
+# compares equal, so a swallowed sfdisk failure would pass a byte-identity check on a wiped GPT.
+entries_json() {
+  local json
+  # sfdisk's status is checked separately: with an empty stdin jq prints nothing and exits 0, so a
+  # pipeline would swallow "does not contain a recognized partition table" exactly as before.
+  json=$(sfdisk --json "$disk_dir/$1.img") || {
+    echo "entries_json: $1 has no partition table" >&2
+    return 1
+  }
+  printf '%s\n' "$json" | jq -c '.partitiontable.partitions'
+}
 region_checksum() { dd if="$disk_dir/$1.img" bs=512 skip="$2" count="$3" status=none | md5sum | cut -d' ' -f1; }
 
 # seed_region <disk> <start> <count> <byte> — recognizable bytes in a partition another OS owns, so a

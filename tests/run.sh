@@ -33,6 +33,17 @@ export XDG_CACHE_HOME="$cache"
 
 fail=0
 
+# missing <label> <reason> — a tier whose tool is absent is a skip locally, but in CI it is lost
+# coverage: the gate that runs in CI must fail rather than print ok for suites that never ran.
+missing() {
+  if [ -n "${CI:-}" ]; then
+    echo "FAIL $1 [$2]"
+    fail=1
+  else
+    echo "skip $1 [$2]"
+  fi
+}
+
 # Assertion floors (tests/floors.sh against tests/suite-ledger.txt): a suite that stops proving
 # something is a source change, so this guard only greps -- ~0MB, no eval. Its counts are reused on
 # the bats verdict lines below, so an "ok" always says how much was proven.
@@ -53,7 +64,7 @@ lint_files=(bootstrap.sh update-all.sh lib/updater.sh lib/cache-check.sh lib/sty
   features/hm-gpg/pinentry-tmux.sh features/hm-gpg/pinentry-zellij.sh
   features/hm-nasmount/nasmount-sshfs.sh)
 if ! command -v shellcheck >/dev/null 2>&1; then
-  echo "skip shipped shell lint [shellcheck not installed]"
+  missing "shipped shell lint" "shellcheck not installed"
 elif out=$(shellcheck -f gcc "${lint_files[@]}" 2>&1); then
   echo "ok   shipped shell lint  ${#lint_files[@]} files"
 else
@@ -141,7 +152,7 @@ gate "nix develop resolves the updater, disk and parallel tools" devshell nix de
 if nix develop --command sh -c 'command -v nix-unit >/dev/null 2>&1'; then
   gate "tests/suite.nix" nix-unit nix develop --command nix-unit --impure tests/suite.nix
 else
-  echo "skip tests/suite.nix [nix-unit not in the devShell]"
+  missing "tests/suite.nix" "nix-unit not in the devShell"
 fi
 
 # These tiers share nothing but the Nix store, so they run concurrently rather than back to back:
@@ -255,12 +266,12 @@ fi
 # keeps its own scope, and the verdicts are still printed one per line, stub tier first.
 tiers=$(mktemp -d "${TMPDIR:-/tmp}/bats-tiers.XXXXXX")
 if ! command -v bats >/dev/null 2>&1; then
-  echo "skip bats suites [bats not installed]"
-  echo "skip tests/terraform.bats [bats not installed]"
+  missing "bats suites" "bats not installed"
+  missing "tests/terraform.bats" "bats not installed"
 else
   (
     suites=(tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats
-      tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats tests/floors.bats)
+      tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats tests/floors.bats tests/ci.bats)
     # One bats call with the files in parallel (--no-parallelize-within-files): each suite still runs
     # its tests sequentially inside its own worker, so shared stub state inside a suite survives.
     # `parallel` is borrowed from the devShell onto PATH rather than swapping shells, because
@@ -301,7 +312,7 @@ else
     fail=1
   fi
   if [ "$byte" = skip ]; then
-    echo "skip tests/terraform.bats [nix not installed]"
+    missing "tests/terraform.bats" "nix not installed"
   else
     split_peak "$(cat "$tiers/byte")"
     byte_asserts=$(printf '%s\n' "$floors" | awk '$2 == "assert" && $1 == "tests/terraform.bats" {s+=$3} END{print s+0}')

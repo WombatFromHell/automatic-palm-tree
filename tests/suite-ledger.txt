@@ -11,7 +11,7 @@ tests/creds.bats assert 14
 tests/install.bats assert 92
 tests/njust.bats assert 122
 tests/sopsctl.bats assert 79
-tests/terraform.bats assert 157
+tests/terraform.bats assert 158
 tests/updater.bats assert 13
 tests/xilo.bats assert 31
 tests/configs.nix checks 25
@@ -28,7 +28,8 @@ tests/oomd.nix attrs 14
 tests/package-flags.nix attrs 1
 tests/pins.nix attrs 7
 tests/ptrace.nix attrs 5
-tests/suite.nix attrs 3
+tests/suite.nix attrs 4
 tests/warnings.nix attrs 13
 tests/zram.nix attrs 4
 tests/floors.bats assert 6
+tests/ci.bats assert 4

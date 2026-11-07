@@ -38,6 +38,14 @@ in
       expr = lib.unique duplicated;
       expected = [];
     };
+    # The ck tier's analogue of the tripwire above: a suite that contributes no check would print
+    # "OK" while proving nothing (ADR-fb331caa521d carries this to support.nix's suite()).
+    testEmptyCheckListThrows = {
+      expr = s.suite "x" [];
+      expectedError = {
+        msg = "contributes no check";
+      };
+    };
     # The ck tier's verdict line carries its check count (support.nix suite()), so "OK" always
     # says how much was proven. tests/floors.sh floors the same count statically.
     testSuiteVerdictCarriesCheckCount = {

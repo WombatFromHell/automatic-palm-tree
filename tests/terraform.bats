@@ -1160,3 +1160,13 @@ assert_no_json() {
   assert_no_call "sfdisk --append"
   [ "$(entries_json twice)" = "$before" ]
 }
+
+# A drive with no partition table must not read as "no entries": entries_json is what the
+# byte-identity assertions compare, and an empty value on both sides of a run compares equal, so a
+# swallowed sfdisk failure is the one way this tier can pass on a wiped GPT (ADR-b77ec913151f).
+@test "entries_json names a drive with no partition table" {
+  dd if=/dev/zero of="$disk_dir/bare.img" bs=1M count=1 status=none
+  run entries_json bare
+  [ "$status" != 0 ]
+  assert_out "bare"
+}
