@@ -88,11 +88,12 @@ fixture_setup_file() {
   # The drives whose tests only *read* a filesystem that already exists (they assert mkfs is never
   # called) are formatted once here rather than by every test: a real mkfs per test is what made
   # them the slowest tests in the tier. `disk <name> <shape>` copies the formatted bytes, and
-  # `nodes` re-derives the partition files from the image, so no slice file is copied. These stay
-  # serial: build_preformatted rebinds the global disk_dir, so two of them at once would race.
-  build_preformatted pre-btrfs 128M btrfs
-  build_preformatted pre-ext4 128M ext4
-  build_preformatted pre-xfs 320M xfs
+  # `nodes` re-derives the partition files from the image, so no slice file is copied. Concurrent,
+  # because build_preformatted borrows disk_dir with `local` and writes a differently named image.
+  build_preformatted pre-btrfs 128M btrfs &
+  build_preformatted pre-ext4 128M ext4 &
+  build_preformatted pre-xfs 320M xfs &
+  wait
 }
 
 fixture_teardown_file() { rm -rf "$template_dir"; }
@@ -102,20 +103,20 @@ fixture_teardown_file() { rm -rf "$template_dir"; }
 # The sizes are the smallest that work: mkfs.btrfs refuses a filesystem below ~114MB and mkfs.xfs
 # below ~300MB, and the ESP takes 9MB of the drive.
 build_preformatted() {
-  local name="$1" size="$2" fs="$3" sect img="$template_dir/$1.img" saved="${disk_dir:-}"
+  local name="$1" size="$2" fs="$3" sect img="$template_dir/$1.img"
+  # slice and adopt read $disk_dir; `local` borrows the template directory for the duration of this
+  # call and puts the caller's value back on return, which is what makes three of these at once safe
+  # -- each writes a differently named image, and no caller has to restore a global by hand.
+  local disk_dir="$template_dir"
   truncate -s "$size" "$img"
   printf '2048 16384 %s\n20480\n' "$ESP_TYPE" | sfdisk -X gpt "$img" >/dev/null 2>&1
   sect=$(sfdisk --json "$img" | jq -r '.partitiontable.partitions[1].size')
-  # format_slice writes through $disk_dir, so for the duration of this the template directory is the
-  # fixture directory.
-  disk_dir="$template_dir"
   format_slice "$name" 1 "$ESP_START" "$ESP_N" vfat boot
   format_slice "$name" 2 20480 "$sect" "$fs" nixos
   # adopt writes back densely, so the zeros between the filesystems land in tmpfs as real pages.
   # The image is freshly truncated and nothing here overwrote data, so punching those holes out is
   # safe and keeps three big shapes from costing RAM the tests never read.
   fallocate --dig-holes "$img"
-  disk_dir="$saved"
 }
 
 # disk <name> [shape] — this test's own copy of a template, so every test starts from the bytes the
@@ -137,6 +138,13 @@ slice() {
 adopt() { dd if="$disk_dir/$1.img$2" of="$disk_dir/$1.img" bs=512 seek="$3" count="$4" conv=notrunc status=none; }
 
 table_checksum() { dd if="$disk_dir/$1.img" bs=1M count=1 status=none | md5sum | cut -d' ' -f1; }
+
+# partitions <disk> — every partition as "node start size", straight from the drive. nodes and sync
+# are the same enumeration in opposite directions, and this runs once per test, so one sfdisk+jq
+# pair here is what `terraform_run` used to pay twice.
+partitions() {
+  sfdisk --json "$disk_dir/$1.img" | jq -r '.partitiontable.partitions[] | "\(.node) \(.start) \(.size)"'
+}
 
 # entries_json <disk> — the partition entries as the drive reports them. Tests compare this before and
 # after a run: appending may add an entry, but an entry that already exists must come back identical.
@@ -261,7 +269,7 @@ root_data() { printf 'KEEP\n' >"$disk_dir/keep.txt"; debugfs -w -R "write $disk_
 nodes() {
   while read -r node start size; do
     dd if="$disk_dir/$1.img" of="$node" bs=512 skip="$start" count="$size" conv=sparse status=none
-  done < <(sfdisk --json "$disk_dir/$1.img" | jq -r '.partitiontable.partitions[] | "\(.node) \(.start) \(.size)"')
+  done < <(partitions "$1")
 }
 
 # sync <disk> — the partitions written back into the image, which is what a real mkfs does to a real
@@ -269,7 +277,7 @@ nodes() {
 sync() {
   while read -r node start size; do
     dd if="$node" of="$disk_dir/$1.img" bs=512 seek="$start" count="$size" conv=notrunc status=none
-  done < <(sfdisk --json "$disk_dir/$1.img" | jq -r '.partitiontable.partitions[] | "\(.node) \(.start) \(.size)"')
+  done < <(partitions "$1")
 }
 
 # recipe_file <file> <owns> <entries> — a terraform.json the shipped reader parses. Entries are

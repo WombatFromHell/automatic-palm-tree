@@ -90,6 +90,20 @@ collect() {
   fi
 }
 
+# bats_verdict <label> <tap-file> <assert-floor> [peak] — a bats TAP file becomes one verdict line
+# carrying the count the ledger floors, and the failures that explain a red tier. Both tiers need
+# exactly that, so they share it.
+bats_verdict() {
+  local label="$1" file="$2" asserts="$3" extra="${4:-}"
+  if [ "$(cat "$file.rc")" = 0 ]; then
+    echo "ok   $label [$(grep -c '^ok' "$file") passed, $asserts assertions]${extra:+  $extra}"
+  else
+    echo "FAIL $label [$(grep -c '^not ok' "$file") failed]${extra:+  $extra}"
+    grep -E '^not ok|^# ' "$file" | tail -20
+    fail=1
+  fi
+}
+
 # Byte-parity between the two template expanders, which live in different runtimes:
 # lib/updater.sh render_url (bash, at fetch time) and lib/pin-meta.nix releaseAsset
 # (Nix, at eval time). Both must produce the same URL for every pin and system, or a pin update
@@ -266,40 +280,52 @@ fi
 # counts them, and each build still gets its own scope and its own verdict line. The heavy eval
 # lane is capped at 3 concurrent -- four heavy evals in flight is ~2.5GB, and the caps are per
 # scope, not global (ADR-3ffe3179ebdf).
-labels=(tests/home.nix tests/mounts.nix tests/outputs.nix tests/wrap.nix
-  "tests/appdir.nix [fixture build]" "tests/brave-layout.nix [deb fixture build]"
-  "tests/shellwrap.nix [wrapper build + shellcheck]" "tests/yazi-install.nix [postInstall fixture]"
-  "tests/configs.nix [methyl]" "tests/configs.nix [methyl-nixos]" "tests/configs.nix [propyl]")
-scopes=(home mounts outputs wrap appdir brave-layout shellwrap yazi-install
-  configs-methyl configs-methyl-nixos configs-propyl)
-cmds=("nix eval --impure --file tests/home.nix"
-  "nix eval --impure --file tests/mounts.nix"
-  "nix eval --impure --file tests/outputs.nix"
-  "nix eval --impure --file tests/wrap.nix"
-  "nix build --no-link --quiet -f tests/appdir.nix"
-  "nix build --no-link --quiet -f tests/brave-layout.nix"
-  "nix build --no-link --quiet -f tests/shellwrap.nix"
-  "nix build --no-link --quiet -f tests/yazi-install.nix"
-  "env TEST_HOST=methyl nix eval --impure --file tests/configs.nix"
-  "env TEST_HOST=methyl-nixos nix eval --impure --file tests/configs.nix"
-  "env TEST_HOST=propyl nix eval --impure --file tests/configs.nix")
+# One entry per job, "scope|label|cmd". Three parallel arrays had to stay in sync by hand, and
+# drifting one silently mislabels a verdict or renames a scope unit -- the scope name is what shows
+# up in the telemetry line and in the OOM message. No entry contains a '|'.
+wave_jobs=(
+  "home|tests/home.nix|nix eval --impure --file tests/home.nix"
+  "mounts|tests/mounts.nix|nix eval --impure --file tests/mounts.nix"
+  "outputs|tests/outputs.nix|nix eval --impure --file tests/outputs.nix"
+  "wrap|tests/wrap.nix|nix eval --impure --file tests/wrap.nix"
+  "appdir|tests/appdir.nix [fixture build]|nix build --no-link --quiet -f tests/appdir.nix"
+  "brave-layout|tests/brave-layout.nix [deb fixture build]|nix build --no-link --quiet -f tests/brave-layout.nix"
+  "shellwrap|tests/shellwrap.nix [wrapper build + shellcheck]|nix build --no-link --quiet -f tests/shellwrap.nix"
+  "yazi-install|tests/yazi-install.nix [postInstall fixture]|nix build --no-link --quiet -f tests/yazi-install.nix"
+  "configs-methyl|tests/configs.nix [methyl]|env TEST_HOST=methyl nix eval --impure --file tests/configs.nix"
+  "configs-methyl-nixos|tests/configs.nix [methyl-nixos]|env TEST_HOST=methyl-nixos nix eval --impure --file tests/configs.nix"
+  "configs-propyl|tests/configs.nix [propyl]|env TEST_HOST=propyl nix eval --impure --file tests/configs.nix"
+)
+
+# gate_job for one entry: scope up to the first '|', label the next field, cmd the remainder.
+launch() {
+  local entry="$1" i="$2" scope label
+  scope="${entry%%|*}"
+  label="${entry#*|}"
+  label="${label%%|*}"
+  gate_job "$wave/$i" "$scope" bash -c "${entry#*|*|}"
+}
+
 (
-  for i in "${!labels[@]}"; do
-    case "${cmds[i]}" in *"nix build "*) gate_job "$wave/$i" "${scopes[i]}" bash -c "${cmds[i]}" ;; esac
+  for i in "${!wave_jobs[@]}"; do
+    case "${wave_jobs[i]}" in *'|nix build '*) launch "${wave_jobs[i]}" "$i" ;; esac
   done
   wait
 ) &
-for i in "${!labels[@]}"; do
-  case "${cmds[i]}" in *"nix build "*) continue ;; esac
+for i in "${!wave_jobs[@]}"; do
+  case "${wave_jobs[i]}" in *'|nix build '*) continue ;; esac
   throttle 3
-  gate_job "$wave/$i" "${scopes[i]}" bash -c "${cmds[i]}"
+  launch "${wave_jobs[i]}" "$i"
 done
 # parity is cheap (31MB) and shares nothing with the suites, so it joins the wave rather than
 # taking the last serial stretch of the script.
 ( parity >"$wave/parity" 2>&1; printf '%s' "$?" >"$wave/parity.rc" ) &
 wait
 collect "shipped shell lint" "$wave/lint"
-for i in "${!labels[@]}"; do verdict "${labels[i]}" "$wave/$i"; done
+for i in "${!wave_jobs[@]}"; do
+  label="${wave_jobs[i]#*|}"
+  verdict "${label%%|*}" "$wave/$i"
+done
 collect "expander parity" "$wave/parity"
 rm -rf "$wave"
 
@@ -410,26 +436,15 @@ else
     ) &
   fi
   wait
-  if [ "$(cat "$tiers/stub.rc")" = 0 ]; then
-    stub_asserts=$(printf '%s\n' "$floors" | awk '$2 == "assert" && $1 != "tests/terraform.bats" {s+=$3} END{print s+0}')
-    echo "ok   stub bats suites [$(grep -c '^ok' "$tiers/stub") passed, $stub_asserts assertions]"
-  else
-    echo "FAIL stub bats suites [$(grep -c '^not ok' "$tiers/stub") failed]"
-    grep -E '^not ok|^# ' "$tiers/stub" | tail -20
-    fail=1
-  fi
+  stub_asserts=$(printf '%s\n' "$floors" | awk '$2 == "assert" && $1 != "tests/terraform.bats" {s+=$3} END{print s+0}')
+  bats_verdict "stub bats suites" "$tiers/stub" "$stub_asserts"
   if [ "$byte" = skip ]; then
     missing "tests/terraform.bats" "nix not installed"
   else
+    # The scope's peak line is not part of the TAP output, so split it off before reporting.
     split_peak "$(cat "$tiers/byte")"
     byte_asserts=$(printf '%s\n' "$floors" | awk '$2 == "assert" && $1 == "tests/terraform.bats" {s+=$3} END{print s+0}')
-    if [ "$(cat "$tiers/byte.rc")" = 0 ]; then
-      echo "ok   tests/terraform.bats [$(printf '%s\n' "$body" | grep -c '^ok') passed, $byte_asserts assertions]  $peak"
-    else
-      echo "FAIL tests/terraform.bats [$(printf '%s\n' "$body" | grep -c '^not ok') failed]  $peak"
-      printf '%s\n' "$body" | grep -E '^not ok|^# ' | tail -20
-      fail=1
-    fi
+    bats_verdict "tests/terraform.bats" "$tiers/byte" "$byte_asserts" "$peak"
   fi
   rm -rf "$tiers"
 fi
