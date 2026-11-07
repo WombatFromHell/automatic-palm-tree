@@ -5,7 +5,7 @@ slug: terraform-sh-reproduces-a-declared-partition-rec
 title: terraform.sh reproduces a declared partition recipe and verifies the disk
 created: 2026-11-06T15:42:13Z
 author: josh@methyl-bazzite
-status: open
+status: done
 scope:
   - terraform.sh
   - install.sh
@@ -18,8 +18,17 @@ done_criteria: |
 criteria_by: creator
 verify: [gate]
 method: tdd
+proof:
+  - type: test
+    ref: local/fa580d44f40a@34ca7b7
+    tree: scope/f7deff5e7e59
+    criteria: 48d325469161
+    verifier: gate@dc484de6fdb9
+    via: verifier
+    reused: local
+    by: josh@methyl-bottle
 schema: 4
-version: 2
+version: 3
 ---
 
 ADR-b77ec913151f says terraform.sh never creates a partition entry. Reproducing a recipe needs an
