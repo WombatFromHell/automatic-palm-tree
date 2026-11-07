@@ -128,14 +128,14 @@ teardown() {
 
 @test "a blank ESP and a blank root, both declared by label, are formatted once" {
   disk blank
-  before=$(table_checksum blank)
+  snapshot blank
   run terraform_run blank
   [ "$status" -eq 0 ]
   [ "$(type_of blank 1)" = vfat ]
   [ "$(label_of blank 1)" = boot ]
   [ "$(type_of blank 2)" = ext4 ]
   [ "$(label_of blank 2)" = nixos ]
-  [ "$(table_checksum blank)" = "$before" ]
+  assert_unchanged blank
   assert_call "^mount .* $disk_dir/mnt$"
 }
 
@@ -151,11 +151,11 @@ teardown() {
 @test "an ESP that holds something other than vfat is refused, not reformatted" {
   disk badesp blank
   format_slice badesp 1 "$ESP_START" "$ESP_N" ext4
-  before=$(table_checksum badesp)
+  snapshot badesp
   run terraform_run badesp
   [ "$status" -eq 2 ]
   assert_out "not vfat"
-  [ "$(table_checksum badesp)" = "$before" ]
+  assert_unchanged badesp
   [ "$(type_of badesp 1)" = ext4 ]
 }
 
@@ -164,17 +164,11 @@ teardown() {
   esp_foreign win Microsoft/BOOT
   seed_region win "$MSR_START" "$MSR_N" M
   seed_region win "$NTFS_START" "$NTFS_N" W
-  esp_before=$(region_checksum win "$ESP_START" "$ESP_N")
-  msr_before=$(region_checksum win "$MSR_START" "$MSR_N")
-  ntfs_before=$(region_checksum win "$NTFS_START" "$NTFS_N")
-  before=$(table_checksum win)
+  snapshot win "$ESP_START" "$ESP_N" "$MSR_START" "$MSR_N" "$NTFS_START" "$NTFS_N"
   run terraform_run win
   [ "$status" -eq 2 ]
   assert_out "holds ext4"
-  [ "$(table_checksum win)" = "$before" ]
-  [ "$(region_checksum win "$ESP_START" "$ESP_N")" = "$esp_before" ]
-  [ "$(region_checksum win "$MSR_START" "$MSR_N")" = "$msr_before" ]
-  [ "$(region_checksum win "$NTFS_START" "$NTFS_N")" = "$ntfs_before" ]
+  assert_unchanged win
   [ "$(type_of win 1)" = vfat ]
   assert_no_call "mount "
 }
@@ -184,20 +178,14 @@ teardown() {
   esp_foreign winblank Microsoft/BOOT
   seed_region winblank "$MSR_START" "$MSR_N" M
   seed_region winblank "$NTFS_START" "$NTFS_N" W
-  esp_before=$(region_checksum winblank "$ESP_START" "$ESP_N")
-  msr_before=$(region_checksum winblank "$MSR_START" "$MSR_N")
-  ntfs_before=$(region_checksum winblank "$NTFS_START" "$NTFS_N")
-  before=$(table_checksum winblank)
+  snapshot winblank "$ESP_START" "$ESP_N" "$MSR_START" "$MSR_N" "$NTFS_START" "$NTFS_N"
 
   run terraform_run winblank
   [ "$status" -eq 0 ]
   # Windows boot metadata is still there, and the regions it lives in did not move by a byte.
   mcopy -i "$disk_dir/winblank.img1" ::/EFI/Microsoft/BOOT/boot.efi "$disk_dir/winboot.efi"
   cmp "$disk_dir/loader.efi" "$disk_dir/winboot.efi"
-  [ "$(region_checksum winblank "$ESP_START" "$ESP_N")" = "$esp_before" ]
-  [ "$(region_checksum winblank "$MSR_START" "$MSR_N")" = "$msr_before" ]
-  [ "$(region_checksum winblank "$NTFS_START" "$NTFS_N")" = "$ntfs_before" ]
-  [ "$(table_checksum winblank)" = "$before" ]
+  assert_unchanged winblank
   # Only partition 4 was written, and it is now the filesystem the host declared; the ESP still
   # holds the volume it came with, label and all.
   [ "$(type_of winblank 4)" = ext4 ]
@@ -211,9 +199,8 @@ teardown() {
 # a partition terraform.sh creates must carry it. The FAT32 GUID is a data volume, and a drive whose
 # ESP was created by firmware or another installer carries the ESP GUID under some other GPT name.
 @test "a created ESP carries the ESP partition type, not the FAT32 type" {
-  disk own bare
+  owned own bare
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
-  stub_lsblk "$disk_dir/own.img"
   run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 0 ]
   [ "$(entries_json own | jq -r '.[0].type')" = "$ESP_TYPE" ]
@@ -222,8 +209,7 @@ teardown() {
 }
 
 @test "a blank ESP partition typed as an ESP is adopted, whatever its GPT name says" {
-  disk espghost
-  stub_lsblk "$disk_dir/espghost.img"
+  owned espghost
   before=$(entries_json espghost)
   recipe_file "$disk_dir/r.json" false 'esp:boot:vfat:8M:/boot,root:nixos:ext4:rest:/'
   run terraform_recipe_run espghost "$disk_dir/r.json"
@@ -239,21 +225,18 @@ teardown() {
 @test "a shared-mode dry run plans the partition it would append and writes nothing" {
   # The ESP here is the one this host owns (labelled boot, adopted); the root has nowhere to live, so
   # the plan is a creation. A dry run has to show that plan and leave every byte alone.
-  disk tight
-  stub_lsblk "$disk_dir/tight.img"
+  owned tight
   format_slice tight 1 "$ESP_START" "$ESP_N" vfat boot
   seed_region tight "$NTFS_START" "$NTFS_N" W
-  before=$(table_checksum tight)
+  snapshot tight "$NTFS_START" "$NTFS_N"
   entries_before=$(entries_json tight)
-  ntfs_before=$(region_checksum tight "$NTFS_START" "$NTFS_N")
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:rest:/"
   run terraform_recipe_run tight "$stubs/recipe.json" --dry-run
   [ "$status" -eq 0 ]
   assert_out "esp: adopt"
   assert_out "root: create rest"
-  [ "$(table_checksum tight)" = "$before" ]
+  assert_unchanged tight
   [ "$(entries_json tight)" = "$entries_before" ]
-  [ "$(region_checksum tight "$NTFS_START" "$NTFS_N")" = "$ntfs_before" ]
   assert_no_call "mkfs"
   assert_no_call "mount "
 }
@@ -265,9 +248,7 @@ teardown() {
   nodes lin
   root_data lin
   adopt lin 2 "$LINUX_START" "$LINUX_N"
-  esp_before=$(region_checksum lin "$ESP_START" "$ESP_N")
-  root_before=$(region_checksum lin "$LINUX_START" "$LINUX_N")
-  before=$(table_checksum lin)
+  snapshot lin "$ESP_START" "$ESP_N" "$LINUX_START" "$LINUX_N"
 
   run terraform_run lin
   [ "$status" -eq 0 ]
@@ -276,9 +257,7 @@ teardown() {
   cmp "$disk_dir/loader.efi" "$disk_dir/foreign.efi"
   debugfs -R "dump /keep.txt $disk_dir/readback.txt" "$disk_dir/lin.img2" >/dev/null 2>&1
   cmp "$disk_dir/keep.txt" "$disk_dir/readback.txt"
-  [ "$(region_checksum lin "$ESP_START" "$ESP_N")" = "$esp_before" ]
-  [ "$(region_checksum lin "$LINUX_START" "$LINUX_N")" = "$root_before" ]
-  [ "$(table_checksum lin)" = "$before" ]
+  assert_unchanged lin
   assert_call "^mount .* $disk_dir/mnt$"
 }
 
@@ -290,7 +269,7 @@ teardown() {
   nodes pick
   root_data pick
   adopt pick 2 "$LINUX_START" "$LINUX_N"
-  foreign_before=$(region_checksum pick "$LINUX_START" "$LINUX_N")
+  snapshot_regions pick "$LINUX_START" "$LINUX_N"
 
   # The host's mount names partition 3 by device; picking the first ext4 it sees would install over
   # the other install's root.
@@ -299,7 +278,7 @@ teardown() {
   assert_call "^mount .* $disk_dir/mnt$"
   debugfs -R "dump /keep.txt $disk_dir/readback.txt" "$disk_dir/pick.img2" >/dev/null 2>&1
   cmp "$disk_dir/keep.txt" "$disk_dir/readback.txt"
-  [ "$(region_checksum pick "$LINUX_START" "$LINUX_N")" = "$foreign_before" ]
+  assert_unchanged pick
   # Partition 3 is adopted, not reformatted: its own label survives.
   [ "$(label_of pick 3)" = ours ]
 }
@@ -308,12 +287,12 @@ teardown() {
   disk mismatch blank
   format_slice mismatch 1 "$ESP_START" "$ESP_N" vfat boot
   format_slice mismatch 2 "$LINUX_START" "$LINUX_N" ext4
-  before=$(table_checksum mismatch)
+  snapshot mismatch
   TF_ROOT_FS=btrfs run terraform_run mismatch
   [ "$status" -eq 2 ]
   assert_out "ext4"
   [ "$(type_of mismatch 2)" = ext4 ]
-  [ "$(table_checksum mismatch)" = "$before" ]
+  assert_unchanged mismatch
 }
 
 @test "a second run adopts what the first made and issues no mount or mkfs" {
@@ -321,13 +300,13 @@ teardown() {
   run terraform_run again
   [ "$status" -eq 0 ]
   sync again
-  before=$(table_checksum again)
+  snapshot again
   : >"$calls"
   printf '1\n' >"$stubs/mounted"
   run terraform_run again
   [ "$status" -eq 0 ]
   assert_no_call "mount "
-  [ "$(table_checksum again)" = "$before" ]
+  assert_unchanged again
   [ "$(type_of again 1)" = vfat ]
   [ "$(type_of again 2)" = ext4 ]
 }
@@ -363,9 +342,8 @@ EOF
 }
 
 @test "a recipe drives the whole run, and discovery finds the drive from its own fingerprints" {
-  disk blank
+  owned blank
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
-  stub_lsblk "$disk_dir/blank.img"
   run terraform_recipe_run blank "$stubs/recipe.json"
   [ "$status" -eq 0 ]
   [ "$(type_of blank 1)" = vfat ]
@@ -380,30 +358,27 @@ EOF
   disk twin blank
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
   stub_lsblk "$disk_dir/blank.img" "$disk_dir/twin.img"
-  twin_before=$(table_checksum twin)
+  snapshot twin
   run terraform_recipe_run blank "$stubs/recipe.json"
   [ "$status" -eq 2 ]
   assert_out "two drives match"
   [ "$(type_of blank 1)" = "" ]
   [ "$(type_of twin 1)" = "" ]
-  [ "$(table_checksum twin)" = "$twin_before" ]
+  assert_unchanged twin
   assert_no_call "mount "
 }
 
 @test "discovery refuses a drive whose table holds none of the recipe's fingerprints" {
-  disk win
+  owned win
   esp_foreign win Microsoft/BOOT
   seed_region win "$MSR_START" "$MSR_N" M
   seed_region win "$NTFS_START" "$NTFS_N" W
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
-  stub_lsblk "$disk_dir/win.img"
-  ntfs_before=$(region_checksum win "$NTFS_START" "$NTFS_N")
-  before=$(table_checksum win)
+  snapshot win "$NTFS_START" "$NTFS_N"
   run terraform_recipe_run win "$stubs/recipe.json"
   [ "$status" -eq 2 ]
   assert_out "no drive matches"
-  [ "$(table_checksum win)" = "$before" ]
-  [ "$(region_checksum win "$NTFS_START" "$NTFS_N")" = "$ntfs_before" ]
+  assert_unchanged win
   assert_no_call "mount "
 }
 
@@ -415,8 +390,7 @@ EOF
 }
 
 @test "a recipe the reader does not understand is refused before anything is written" {
-  disk blank
-  stub_lsblk "$disk_dir/blank.img"
+  owned blank
 
   recipe_file "$stubs/badfs.json" false "esp:boot:vfat:8M:/boot,root:nixos:reiserfs:16M:/"
   run terraform_recipe_run blank "$stubs/badfs.json"
@@ -450,10 +424,9 @@ EOF
 # fixture the gaps are 8M (between ESP and root) and 34M (after root); the last 1MiB of the drive is
 # the backup partition table, so it is never free space.
 @test "a recipe needing more than the free gaps fails before anything is formatted" {
-  disk spare blank
+  owned spare blank
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/,data:data:ext4:36M:/data"
-  stub_lsblk "$disk_dir/spare.img"
-  before=$(table_checksum spare)
+  snapshot spare
 
   run terraform_recipe_run spare "$stubs/recipe.json"
   [ "$status" -eq 2 ]
@@ -464,14 +437,14 @@ EOF
   assert_no_call "sgdisk"
   assert_no_call "wipefs"
   assert_no_call "mount "
-  [ "$(table_checksum spare)" = "$before" ]
+  assert_unchanged spare
 }
 
 @test "the gap boundary is exact: 34M fits, 35M does not" {
   # Two copies of the same shape: the first run appends, so the second must not see its work.
   disk fits blank
   disk nofits blank
-  before=$(table_checksum nofits)
+  snapshot nofits
 
   stub_lsblk "$disk_dir/fits.img"
   recipe_file "$stubs/fits.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/,data:data:ext4:34M:/data"
@@ -484,47 +457,44 @@ EOF
   [ "$status" = 2 ]
   assert_out "data needs 35M"
   [ "$(type_of nofits 1)" = "" ]
-  [ "$(table_checksum nofits)" = "$before" ]
+  assert_unchanged nofits
 }
 
 @test "an entry that fits a free gap is planned as create, and nothing is written without a yes" {
-  disk spare blank
+  owned spare blank
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/,data:data:ext4:8M:/data"
-  stub_lsblk "$disk_dir/spare.img"
-  before=$(table_checksum spare)
+  snapshot spare
 
   TF_FORCE=0 run terraform_recipe_run spare "$stubs/recipe.json"
   [ "$status" -eq 2 ]
   assert_out "data: create 8M"
   assert_out "needs a confirmation and there is no terminal"
-  [ "$(table_checksum spare)" = "$before" ]
+  assert_unchanged spare
   assert_no_call "mkfs"
 }
 
 @test "rest with no free space left refuses rather than sizing nothing" {
-  disk full
+  owned full
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/,data:data:ext4:rest:/data"
-  stub_lsblk "$disk_dir/full.img"
-  before=$(table_checksum full)
+  snapshot full
 
   run terraform_recipe_run full "$stubs/recipe.json"
   [ "$status" -eq 2 ]
   assert_out "data declares rest"
   assert_out "no free space"
-  [ "$(table_checksum full)" = "$before" ]
+  assert_unchanged full
   assert_no_call "mount "
 }
 
 @test "a size the reader cannot turn into bytes is refused before any write" {
-  disk spare blank
+  owned spare blank
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/,data:data:ext4:12Q:/data"
-  stub_lsblk "$disk_dir/spare.img"
-  before=$(table_checksum spare)
+  snapshot spare
 
   run terraform_recipe_run spare "$stubs/recipe.json"
   [ "$status" -eq 2 ]
   assert_out "12Q"
-  [ "$(table_checksum spare)" = "$before" ]
+  assert_unchanged spare
   assert_no_call "mkfs"
 }
 
@@ -533,11 +503,10 @@ EOF
 # partition nodes, real mkfs) is proven on loop devices by tests/deploy-loop.sh, because sfdisk will
 # not create a partition table on a regular file and mkfs.btrfs refuses one.
 @test "owns=true refuses a drive holding a filesystem the recipe does not claim" {
-  disk own blank
+  owned own blank
   format_slice own 2 "$LINUX_START" "$LINUX_N" ext4 other
   adopt own 2 "$LINUX_START" "$LINUX_N"
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:btrfs:54M:/"
-  stub_lsblk "$disk_dir/own.img"
   run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 2 ]
   assert_out "ext4"
@@ -547,19 +516,17 @@ EOF
 
 # R5: a drive with no partition table but raw filesystem bytes is somebody's data, not blank space.
 @test "owns=true refuses a tableless drive whose raw bytes hold a filesystem" {
-  disk raw
+  owned raw
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
-  stub_lsblk "$disk_dir/raw.img"
-  before=$(table_checksum raw)
+  snapshot raw
   run terraform_recipe_run raw "$stubs/recipe.json" --disk "$disk_dir/raw.img"
   [ "$status" -eq 2 ]
   assert_out "ext4"
-  [ "$(table_checksum raw)" = "$before" ]
+  assert_unchanged raw
 }
 
 @test "owns=true refuses to guess a drive: a wipe needs the drive named" {
-  disk own bare
-  stub_lsblk "$disk_dir/own.img"
+  owned own bare
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
   run terraform_recipe_run own "$stubs/recipe.json"
   [ "$status" -eq 2 ]
@@ -567,21 +534,19 @@ EOF
 }
 
 @test "owns=true with nobody to confirm writes nothing at all" {
-  disk own bare
+  owned own bare
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
-  stub_lsblk "$disk_dir/own.img"
-  before=$(table_checksum own)
+  snapshot own
   TF_FORCE=0 run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 2 ]
   assert_out "no terminal"
-  [ "$(table_checksum own)" = "$before" ]
+  assert_unchanged own
 }
 
 @test "owns=true --dry-run names the layout it would write and writes none of it" {
-  disk own bare
+  owned own bare
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
-  stub_lsblk "$disk_dir/own.img"
-  before=$(table_checksum own)
+  snapshot own
   run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --dry-run
   [ "$status" -eq 0 ]
   assert_out "esp: create 8M"
@@ -589,7 +554,7 @@ EOF
   assert_out "[dry-run] sfdisk"
   assert_out "[dry-run] mkfs.vfat"
   assert_out "[dry-run] mkfs.ext4"
-  [ "$(table_checksum own)" = "$before" ]
+  assert_unchanged own
   [ "$(type_of own 1)" = "" ]
 }
 
@@ -623,7 +588,7 @@ EOF
   run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 0 ]
   sync own
-  before=$(table_checksum own)
+  snapshot own
   entries_before=$(entries_json own)
   : >"$calls"
   printf '1\n' >"$stubs/mounted"
@@ -637,7 +602,7 @@ EOF
   assert_no_call "mkfs"
   assert_no_call "btrfs subvolume create"
   [ "$(entries_json own)" = "$entries_before" ]
-  [ "$(table_checksum own)" = "$before" ]
+  assert_unchanged own
 }
 
 # The tree is content of the root filesystem, not something a run only does when it formatted that
@@ -665,14 +630,13 @@ EOF
 # btrfs options on a partition that is not btrfs reach mount as a parameter that filesystem does not
 # have, so they are refused at recipe read rather than passed on to fail.
 @test "a recipe that mounts a non-btrfs partition with btrfs options is refused before any write" {
-  disk own bare
+  owned own bare
   recipe_file "$stubs/mix.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/:compress=zstd"
-  stub_lsblk "$disk_dir/own.img"
-  before=$(table_checksum own)
+  snapshot own
   run terraform_recipe_run own "$stubs/mix.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 2 ]
   assert_out "non-btrfs partition with btrfs options"
-  [ "$(table_checksum own)" = "$before" ]
+  assert_unchanged own
 }
 
 # The options a btrfs root is mounted with are the ones hosts/methyl-nixos/nixos.nix declares, and an
@@ -691,8 +655,7 @@ EOF
 # A shared drive is mounted by the same code path, so a btrfs root that already exists gets the same
 # options rather than a bare mount.
 @test "a shared btrfs root is mounted with the same options as an owned one" {
-  disk bts pre-btrfs
-  stub_lsblk "$disk_dir/bts.img"
+  owned bts pre-btrfs
   recipe_file "$stubs/bts.json" false "esp:boot:vfat:8M:/boot,root:nixos:btrfs:rest:/"
 
   run terraform_recipe_run bts "$stubs/bts.json" --disk "$disk_dir/bts.img"
@@ -738,30 +701,28 @@ EOF
 
 # Options that cannot survive a word boundary would reach mount as two arguments.
 @test "mount options with a space in them refuse before any write" {
-  disk blank blank
-  stub_lsblk "$disk_dir/blank.img"
+  owned blank blank
   recipe_file "$stubs/spaced.json" false "root:nixos:ext4:16M:/:noatime compress=zstd"
-  before=$(table_checksum blank)
+  snapshot blank
 
   run terraform_recipe_run blank "$stubs/spaced.json" --disk "$disk_dir/blank.img"
   [ "$status" -eq 2 ]
   assert_out "comma-separated"
   assert_no_call "mkfs"
   assert_no_call "mount "
-  [ "$(table_checksum blank)" = "$before" ]
+  assert_unchanged blank
 }
 
 # A filesystem under the recipe's own label that is smaller than the recipe asks for cannot be
 # adopted (resize is never attempted) and cannot be appended to, because two partitions answering to
 # one label is two devices for one name. It refuses, and the drive is untouched.
 @test "a partition holding the recipe's filesystem under its label but too small refuses before any write" {
-  disk small blank
+  owned small blank
   format_slice small 1 "$ESP_START" "$ESP_N" vfat boot
   format_slice small 2 "$LINUX_START" "$LINUX_N" ext4 nixos
   nodes small
-  stub_lsblk "$disk_dir/small.img"
   recipe_file "$stubs/big.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:32M:/"
-  before=$(table_checksum small)
+  snapshot small
 
   run terraform_recipe_run small "$stubs/big.json"
   [ "$status" -eq 2 ]
@@ -769,19 +730,18 @@ EOF
   assert_out "32M"
   assert_no_call "mkfs"
   assert_no_call "mount "
-  [ "$(table_checksum small)" = "$before" ]
+  assert_unchanged small
 }
 
 # A blank partition the entry does not fit is somebody else's space to leave alone: the entry goes
 # into the free gap instead, and the partition that was too small keeps its bytes.
 @test "a blank partition too small for an entry is left alone and the entry is appended into free space" {
-  disk gap winblank
-  stub_lsblk "$disk_dir/gap.img"
+  owned gap winblank
   seed_region gap "$WIN_LINUX_START" "$((WIN_LINUX_END - WIN_LINUX_START + 1))" 'W'
   recipe_file "$stubs/gap.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:20M:/"
   nodes gap
   before=$(entries_json gap)
-  linux_before=$(region_checksum gap "$WIN_LINUX_START" "$((WIN_LINUX_END - WIN_LINUX_START + 1))")
+  snapshot_regions gap "$WIN_LINUX_START" "$((WIN_LINUX_END - WIN_LINUX_START + 1))"
 
   run terraform_recipe_run gap "$stubs/gap.json"
   [ "$status" -eq 0 ]
@@ -792,21 +752,20 @@ EOF
   [ "$(printf '%s\n' "$(entries_json gap)" | jq -c '.[:4]')" = "$before" ]
   [ "$(type_of gap 5)" = ext4 ]
   [ "$(label_of gap 5)" = nixos ]
-  [ "$(region_checksum gap "$WIN_LINUX_START" "$((WIN_LINUX_END - WIN_LINUX_START + 1))")" = "$linux_before" ]
+  assert_unchanged gap
 }
 
 @test "--verify reports what the drive holds against the recipe, read-only" {
-  disk lin blank
+  owned lin blank
   format_slice lin 1 "$ESP_START" "$ESP_N" vfat boot
   format_slice lin 2 "$LINUX_START" "$LINUX_N" ext4 nixos
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
-  stub_lsblk "$disk_dir/lin.img"
-  before=$(table_checksum lin)
+  snapshot lin
 
   run terraform_recipe_run lin "$stubs/recipe.json" --verify
   [ "$status" -eq 0 ]
   assert_out "satisfied"
-  [ "$(table_checksum lin)" = "$before" ]
+  assert_unchanged lin
   assert_no_call "mkfs"
   assert_no_call "mount "
 
@@ -820,9 +779,8 @@ EOF
 # owns=true reproduces the layout, so a table with an entry the recipe never declared is a drive that
 # does not match the recipe.
 @test "--verify in owns mode refuses a table holding entries the recipe did not declare" {
-  disk own pick
+  owned own pick
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
-  stub_lsblk "$disk_dir/own.img"
   run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --verify
   [ "$status" -eq 2 ]
   assert_out "extra"
@@ -831,17 +789,16 @@ EOF
 # A drive with no table at all is the fresh-install case: a plan describes it, a verification says the
 # layout is not on the drive yet.
 @test "--verify in owns mode refuses a drive with no table, and a dry run plans one" {
-  disk own bare
+  owned own bare
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
-  stub_lsblk "$disk_dir/own.img"
-  before=$(table_checksum own)
+  snapshot own
   run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --verify
   [ "$status" -eq 2 ]
   assert_out "not on this drive yet"
   run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --dry-run
   [ "$status" -eq 0 ]
   assert_out "root: create 16M"
-  [ "$(table_checksum own)" = "$before" ]
+  assert_unchanged own
 }
 
 # emit <args...> — the read-only recipe print. stdout and stderr are kept apart on purpose: stdout
@@ -861,13 +818,11 @@ assert_no_json() {
 }
 
 @test "--emit prints the partitions the drive can show a filesystem for, as the reader accepts them" {
-  disk lin blank
+  owned lin blank
   format_slice lin 1 "$ESP_START" "$ESP_N" vfat boot
   format_slice lin 2 "$LINUX_START" "$LINUX_N" ext4 nixos
   nodes lin
-  stub_lsblk "$disk_dir/lin.img"
-  before=$(table_checksum lin)
-  root_before=$(region_checksum lin "$LINUX_START" "$LINUX_N")
+  snapshot lin "$LINUX_START" "$LINUX_N"
 
   run emit_run --emit
   [ "$status" -eq 0 ]
@@ -887,27 +842,23 @@ assert_no_json() {
   assert_no_call "mount "
   assert_no_call "sgdisk"
   assert_no_call "wipefs"
-  [ "$(table_checksum lin)" = "$before" ]
-  [ "$(region_checksum lin "$LINUX_START" "$LINUX_N")" = "$root_before" ]
+  assert_unchanged lin
 }
 
 @test "an emitted recipe round-trips: the run it describes adopts the drive and writes nothing" {
-  disk lin blank
+  owned lin blank
   format_slice lin 1 "$ESP_START" "$ESP_N" vfat boot
   format_slice lin 2 "$LINUX_START" "$LINUX_N" ext4 nixos
   nodes lin
-  stub_lsblk "$disk_dir/lin.img"
   run emit_run --emit
   [ "$status" -eq 0 ]
-  root_before=$(region_checksum lin "$LINUX_START" "$LINUX_N")
-  esp_before=$(region_checksum lin "$ESP_START" "$ESP_N")
+  snapshot_regions lin "$LINUX_START" "$LINUX_N" "$ESP_START" "$ESP_N"
 
   run terraform_recipe_run lin "$stubs/emit.json"
   [ "$status" -eq 0 ]
   assert_out "drive $disk_dir/lin.img"
   assert_out "adopt"
-  [ "$(region_checksum lin "$ESP_START" "$ESP_N")" = "$esp_before" ]
-  [ "$(region_checksum lin "$LINUX_START" "$LINUX_N")" = "$root_before" ]
+  assert_unchanged lin
 
   # The verdict half of the round-trip: --verify alone reads the drive against the emitted recipe and
   # writes nothing. sync puts the run's formatting back into the image, which is what a real mkfs does
@@ -926,11 +877,10 @@ assert_no_json() {
 # appending anything, because appending an ESP and then refusing leaves the drive changed with
 # nothing installed.
 @test "a shared drive whose ESP holds somebody else's label is refused before anything is appended" {
-  disk win
-  stub_lsblk "$disk_dir/win.img"
+  owned win
   format_slice win 1 "$ESP_START" "$NTFS_N" vfat EFIBOOT
   seed_region win "$NTFS_START" "$NTFS_N" W
-  before=$(table_checksum win)
+  snapshot win
   entries_before=$(entries_json win)
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:rest:/"
   run terraform_recipe_run win "$stubs/recipe.json" --disk "$disk_dir/win.img"
@@ -939,29 +889,27 @@ assert_no_json() {
   assert_out "EFIBOOT"
   assert_no_call "sfdisk --append"
   assert_no_call "mkfs"
-  [ "$(table_checksum win)" = "$before" ]
+  assert_unchanged win
   [ "$(entries_json win)" = "$entries_before" ]
 }
 
 @test "flags mode does not take a blank Basic Data partition for the ESP" {
-  disk bd
-  stub_lsblk "$disk_dir/bd.img"
-  before=$(table_checksum bd)
+  owned bd
+  snapshot bd
   TF_FORCE=0 run terraform_run bd
   [ "$status" -eq 2 ]
   assert_no_call "mkfs"
   assert_out "no FAT partition"
-  [ "$(table_checksum bd)" = "$before" ]
+  assert_unchanged bd
 }
 
 @test "--emit leaves out partitions it cannot reproduce and names why" {
-  disk winblank
+  owned winblank
   esp_foreign winblank Microsoft/BOOT
   seed_region winblank "$MSR_START" "$MSR_N" M
   seed_region winblank "$NTFS_START" "$NTFS_N" W
   nodes winblank
-  stub_lsblk "$disk_dir/winblank.img"
-  before=$(table_checksum winblank)
+  snapshot winblank
 
   run emit_run --emit
   [ "$status" -eq 0 ]
@@ -977,16 +925,15 @@ assert_no_json() {
   # The recipe it printed cannot stand alone: the root has to be declared by the human.
   assert_err "/"
   [ "$(type_of winblank 4)" = "" ]
-  [ "$(table_checksum winblank)" = "$before" ]
+  assert_unchanged winblank
 }
 
 @test "the emitted recipe plus the root partition the operator declares runs on a Windows drive" {
-  disk winblank
+  owned winblank
   esp_foreign winblank Microsoft/BOOT
   seed_region winblank "$MSR_START" "$MSR_N" M
   seed_region winblank "$NTFS_START" "$NTFS_N" W
   nodes winblank
-  stub_lsblk "$disk_dir/winblank.img"
   run emit_run --emit
   [ "$status" -eq 0 ]
   assert_json '.partitions | length == 1'
@@ -997,10 +944,7 @@ assert_no_json() {
   # names, so the partition is whatever Windows left and an entry that adopts it asks for nothing.
   jq '.partitions += [{name: "root", label: "nixos", fs: "ext4", mount: "/"}]' "$stubs/emit.json" >"$stubs/declared.json"
 
-  esp_before=$(region_checksum winblank "$ESP_START" "$ESP_N")
-  msr_before=$(region_checksum winblank "$MSR_START" "$MSR_N")
-  ntfs_before=$(region_checksum winblank "$NTFS_START" "$NTFS_N")
-  before=$(table_checksum winblank)
+  snapshot winblank "$ESP_START" "$ESP_N" "$MSR_START" "$MSR_N" "$NTFS_START" "$NTFS_N"
   run terraform_recipe_run winblank "$stubs/declared.json"
   [ "$status" -eq 0 ]
   assert_out "esp: adopt"
@@ -1009,24 +953,20 @@ assert_no_json() {
   [ "$(label_of winblank 4)" = nixos ]
   mcopy -i "$disk_dir/winblank.img1" ::/EFI/Microsoft/BOOT/boot.efi "$disk_dir/winboot.efi"
   cmp "$disk_dir/loader.efi" "$disk_dir/winboot.efi"
-  [ "$(region_checksum winblank "$ESP_START" "$ESP_N")" = "$esp_before" ]
-  [ "$(region_checksum winblank "$MSR_START" "$MSR_N")" = "$msr_before" ]
-  [ "$(region_checksum winblank "$NTFS_START" "$NTFS_N")" = "$ntfs_before" ]
-  [ "$(table_checksum winblank)" = "$before" ]
+  assert_unchanged winblank
 }
 
 @test "--emit refuses a drive with nothing to emit, and prints no recipe" {
-  disk blank
+  owned blank
   nodes blank
-  stub_lsblk "$disk_dir/blank.img"
-  before=$(table_checksum blank)
+  snapshot blank
 
   run emit_run --emit
   [ "$status" -eq 2 ]
   assert_no_json
   assert_err "no filesystem"
   [ "$(type_of blank 1)" = "" ]
-  [ "$(table_checksum blank)" = "$before" ]
+  assert_unchanged blank
 
   disk bare
   run emit_run --emit --disk "$disk_dir/bare.img"
@@ -1083,15 +1023,13 @@ assert_no_json() {
 # ---- slice R6: appending into free space (ADR-c2cd97401185) ----
 
 @test "a recipe entry no partition describes is appended into free space, existing entries untouched" {
-  disk grow win
+  owned grow win
   seed_region grow "$MSR_START" "$MSR_N" M
   seed_region grow "$NTFS_START" "$NTFS_N" W
   nodes grow
-  stub_lsblk "$disk_dir/grow.img"
   recipe_file "$disk_dir/grow.json" false "esp:boot:vfat:8M:/boot,nixos:nixos:ext4:16M:/"
   before=$(entries_json grow)
-  msr_before=$(region_checksum grow "$MSR_START" "$MSR_N")
-  ntfs_before=$(region_checksum grow "$NTFS_START" "$NTFS_N")
+  snapshot_regions grow "$MSR_START" "$MSR_N" "$NTFS_START" "$NTFS_N"
 
   run terraform_recipe_run grow "$disk_dir/grow.json"
   [ "$status" -eq 0 ]
@@ -1111,15 +1049,13 @@ assert_no_json() {
   [ "$size" -ge 32768 ]
   [ "$(type_of grow 4)" = ext4 ]
   [ "$(label_of grow 4)" = nixos ]
-  [ "$(region_checksum grow "$MSR_START" "$MSR_N")" = "$msr_before" ]
-  [ "$(region_checksum grow "$NTFS_START" "$NTFS_N")" = "$ntfs_before" ]
+  assert_unchanged grow
 }
 
 @test "a recipe asking for more than the free space holds refuses before anything is written" {
-  disk tight
+  owned tight
   seed_region tight "$NTFS_START" "$NTFS_N" W
   nodes tight
-  stub_lsblk "$disk_dir/tight.img"
   recipe_file "$disk_dir/tight.json" false "esp:boot:vfat:8M:/boot,nixos:nixos:ext4:44M:/"
   before=$(entries_json tight)
   run terraform_recipe_run tight "$disk_dir/tight.json"
@@ -1131,9 +1067,8 @@ assert_no_json() {
 }
 
 @test "appending a partition needs the confirm gate" {
-  disk gate esp
+  owned gate esp
   nodes gate
-  stub_lsblk "$disk_dir/gate.img"
   recipe_file "$disk_dir/gate.json" false "esp:boot:vfat:8M:/boot,nixos:nixos:ext4:16M:/"
   before=$(entries_json gate)
   TF_FORCE=0 run terraform_recipe_run gate "$disk_dir/gate.json"
@@ -1144,9 +1079,8 @@ assert_no_json() {
 }
 
 @test "a second run adopts the partition the first one appended and writes nothing" {
-  disk twice esp
+  owned twice esp
   nodes twice
-  stub_lsblk "$disk_dir/twice.img"
   recipe_file "$disk_dir/twice.json" false "esp:boot:vfat:8M:/boot,nixos:nixos:ext4:16M:/"
   run terraform_recipe_run twice "$disk_dir/twice.json"
   [ "$status" -eq 0 ]
@@ -1159,6 +1093,37 @@ assert_no_json() {
   assert_no_call "mkfs"
   assert_no_call "sfdisk --append"
   [ "$(entries_json twice)" = "$before" ]
+}
+
+# The fixture factories below are what a new scenario is built from: one call for the drive, one for
+# "this host owns it", one snapshot/compare for byte identity. They live in disk-fixture.bash.
+
+# owned <name> [shape] is disk + stub_lsblk in one call; those two are always paired.
+@test "owned makes a drive a discovery candidate in one call" {
+  owned own bare
+  run cat "$stubs/disks"
+  assert_out "own.img"
+}
+
+# A region that moved must be named. "unchanged" that does not say which region moved is not a proof.
+@test "assert_unchanged names the byte region that moved" {
+  owned win
+  seed_region win "$MSR_START" "$MSR_N" M
+  snapshot win "$MSR_START" "$MSR_N"
+  # Non-zero bytes: the sector-range region is zeros, and writing zeros there would prove nothing.
+  dd if=/dev/zero bs=512 count=1 | tr '\0' 'Z' |
+    dd of="$disk_dir/win.img" bs=512 seek="$MSR_START" conv=notrunc status=none
+  run assert_unchanged win
+  assert_out "CHANGED win $MSR_START $MSR_N"
+}
+
+# The GPT header is its own item, checked separately from every region.
+@test "assert_unchanged names the partition table when the table moves" {
+  owned win
+  snapshot win
+  seed_region win 0 64 Z
+  run assert_unchanged win
+  assert_out "CHANGED win table"
 }
 
 # fixture_setup_file builds the shapes in the background, so a job that dies leaves a template

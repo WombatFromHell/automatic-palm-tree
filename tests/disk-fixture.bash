@@ -154,6 +154,54 @@ entries_json() {
 }
 region_checksum() { dd if="$disk_dir/$1.img" bs=512 skip="$2" count="$3" status=none | md5sum | cut -d' ' -f1; }
 
+# snapshot <name> [start count]... — record the GPT header checksum plus one byte region per
+# (start, count) pair, into a file beside the image. assert_unchanged <name> re-reads every recorded
+# item and names the one that moved; items stay separate checks, because "unchanged" that does not
+# say which region moved is not a proof. A file rather than an array: bats runs each test in its own
+# process, and an associative array declared in a sourced fixture does not survive that fork.
+snapshot() {
+  local name="$1"
+  printf 'table - - %s\n' "$(table_checksum "$name")" >"$disk_dir/.snap-$name"
+  snapshot_regions "$@"
+}
+
+# snapshot_regions <name> <start count>... — regions without the header, for a run that is *meant* to
+# change the table (an append adds an entry), so its header must not be compared.
+snapshot_regions() {
+  local name="$1"
+  shift
+  while [ $# -ge 2 ]; do
+    printf 'region %s %s %s\n' "$1" "$2" "$(region_checksum "$name" "$1" "$2")" >>"$disk_dir/.snap-$name"
+    shift 2
+  done
+}
+
+assert_unchanged() {
+  local name="$1" kind start count stored now item moved=0
+  while read -r kind start count stored; do
+    if [ "$kind" = table ]; then
+      item="table"
+      now=$(table_checksum "$name")
+    else
+      item="$start $count"
+      now=$(region_checksum "$name" "$start" "$count")
+    fi
+    if [ "$now" != "$stored" ]; then
+      echo "CHANGED $name $item"
+      moved=1
+    fi
+  done <"$disk_dir/.snap-$name"
+  [ "$moved" = 0 ]
+}
+
+# owned <name> [shape] — the drive and its "this host owns it" candidate list in one call. `disk` and
+# `stub_lsblk` are always paired, and a drive that is not a candidate is a test that silently
+# discovers nothing.
+owned() {
+  disk "$@"
+  stub_lsblk "$disk_dir/$1.img"
+}
+
 # seed_region <disk> <start> <count> <byte> — recognizable bytes in a partition another OS owns, so a
 # checksum that moves means the region was actually written rather than that it happens to be zeros.
 seed_region() {
