@@ -114,7 +114,8 @@ EOF
   rm "$stubs/nix"
   printf '#!/usr/bin/env bash\necho "curl $*" >> "%s"\nprintf "#!/bin/sh\\nexit 0\\n"\n' "$calls" >"$stubs/curl"
   chmod +x "$stubs/curl"
-  PATH="$stubs:/usr/bin:/bin" bash "$repo/bootstrap.sh" --standalone --rebind=/mnt/data1/nix || true
+  run env PATH="$stubs:/usr/bin:/bin" bash "$repo/bootstrap.sh" --standalone --rebind=/mnt/data1/nix
+  [ "$status" -eq 0 ]
   assert_call "install ostree --enable-flakes --persistence /mnt/data1/nix"
 }
 
@@ -152,7 +153,8 @@ EOF
 echo "systemd-run \$*" >> "$calls"
 echo "path=\$PATH" >> "$calls"
 EOF
-  HOME="$tmp" PATH="$stubs:/usr/bin:/bin" bash "$tmp/bootstrap.sh" --standalone --install josh@methyl || true
+  run env HOME="$tmp" PATH="$stubs:/usr/bin:/bin" bash "$tmp/bootstrap.sh" --standalone --install josh@methyl
+  [ "$status" -eq 0 ]
   assert_call "home-manager switch --flake"
   assert_call "path=.*$tmp/.nix-profile/bin"
   assert_call "path=.*$tmp/state/nix/profile/bin"
@@ -163,7 +165,8 @@ EOF
   tmp="$(mktemp -d)"
   cp "$repo/bootstrap.sh" "$tmp/"
   printf '{\n  inputs.home-manager.url = "github:nix-community/home-manager/release-25.05";\n}\n' >"$tmp/flake.nix"
-  PATH="$stubs:$PATH" bash "$tmp/bootstrap.sh" --standalone --install || true
+  run env PATH="$stubs:$PATH" bash "$tmp/bootstrap.sh" --standalone --install
+  [ "$status" -eq 0 ]
   assert_call "home-manager/archive/release-25.05.tar.gz"
   rm -rf "$tmp"
 }
