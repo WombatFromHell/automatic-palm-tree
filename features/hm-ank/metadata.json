@@ -1,0 +1,10 @@
+{
+  "repo": "haksolot/ank",
+  "kind": "nar",
+  "strategy": "none",
+  "url": "https://github.com/{repo}/archive/{version}.tar.gz",
+  "version": "845d861cda4413c6ebb1b4de87d8b930799dc5be",
+  "hashes": {
+    "x86_64-linux": "sha256-j17lsPIhXTP9jhXQOOH192Hf2K1Ta1wsU9ePKf8jo5o="
+  }
+}

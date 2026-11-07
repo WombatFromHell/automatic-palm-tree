@@ -6,6 +6,7 @@ _: {
     "hm-xilo"
     "hm-creds"
     "hm-njust"
+    "hm-ank"
     #
     "hm-nixgl"
     #

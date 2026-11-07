@@ -13,6 +13,7 @@ let
   parts = [
     (import ./filesystems.nix)
     (import ./package-flags.nix)
+    (import ./ank.nix)
     (import ./pins.nix)
     (import ./caches.nix)
     (import ./disko.nix)

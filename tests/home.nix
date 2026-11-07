@@ -28,6 +28,12 @@ let
   fx = s.hmCfg (s.fixtureHost false ["hm-dcal" "hm-ghostty" "hm-nixgl"] {});
   fxInstalled = pkg: s.pkgNamed fx.home.packages (pkg.pname or pkg.name);
 
+  # hm-ank is a cargo build of a pinned commit, handed straight to home.packages: it is a CLI with
+  # no GPU, so there is no nixGL wrapper to look for. Identity is name + version, never outPath —
+  # forcing that would fetch the crate set behind Cargo.lock, exactly as the yazi check below.
+  ank = s.pkgs.callPackage ../features/hm-ank/_package.nix {};
+  ankPin = builtins.fromJSON (builtins.readFile ../features/hm-ank/metadata.json);
+
   # The copies of one derivation that reached PATH. Absence is allowed — which GUI features a
   # host enables is the host's business — so the companion check below keeps this from going
   # vacuous on a host with no GUI feature at all.
@@ -119,6 +125,12 @@ let
     (ck "programs.yazi installs the pinned fork build"
       (cfg.programs.yazi.enable
         && (cfg.programs.yazi.package.version == (builtins.fromJSON (builtins.readFile ../features/hm-yazi/metadata.json)).version)))
+
+    # The CLI reaches PATH through home.packages, exactly once, carrying the pinned commit as its
+    # version. This is the `~/.cargo/bin` promise in eval form: the package is a store derivation,
+    # so there is no cargo-install step that could write into the home directory.
+    (ck "the standalone host gets the pinned ank-cli on PATH exactly once"
+      (lib.length (installed ank) == 1 && (lib.head (installed ank)).version == ankPin.version))
 
     # hm-base ships packages, not program flags; that contract shows up in the
     # host's own package list, which is what the profile actually promises.
