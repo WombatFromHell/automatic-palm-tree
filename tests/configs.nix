@@ -138,6 +138,13 @@ let
       # Lix's evaluator costs ~450MB more per host config than upstream Nix (DESIGN.md "Which
       # evaluator"), so no host may opt back in. features/nixos-lix was deleted for this.
       (ck "${host}: nix.package is upstream Nix, not Lix" (cfg.nix.package.pname == "nix"))
+      # features/hm-brave/nixos.nix sets this at mkOverride 1100, so it is a default the host
+      # could override; presence here is what the profile's hm-brave actually delivers.
+      (ck "${host}: yama restricts ptrace to descendants" (cfg.boot.kernel.sysctl."kernel.yama.ptrace_scope" == 1))
+      # The hint is for a standalone host only: on NixOS the sysctl is set above, so an
+      # integrated home config must not print one.
+      (ck "${host}: its home config prints no ptrace hint"
+        (!(lib.hasAttr "bravePtraceHint" (homeCfg cfg).home.activation)))
 
       # --- who owns the mounts, and what the firmware boot order is ------------
       # terraform.sh owns every drive this flake deploys onto (ADR-b77ec913151f), so no host declares

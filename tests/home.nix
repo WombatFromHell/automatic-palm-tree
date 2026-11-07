@@ -89,6 +89,14 @@ let
     (ck "hm-nixgl supplies nixGL packages on this non-NixOS host"
       (!isNull cfg.targets.genericLinux.nixGL.packages))
     (ck "this host uses the default nixGL wrapper" (cfg.targets.genericLinux.nixGL.defaultWrapper == "mesa"))
+
+    # On a non-NixOS host nothing can set kernel.yama.ptrace_scope (features/hm-brave/nixos.nix
+    # only exists for NixOS), so activation must tell the user to set it themselves.
+    (ck "the standalone host prints a ptrace hint at activation"
+      (lib.hasAttr "bravePtraceHint" cfg.home.activation))
+    (ck "the hint names the sysctl key and the command to set it"
+      (lib.hasInfix "kernel.yama.ptrace_scope" cfg.home.activation.bravePtraceHint.data
+        && lib.hasInfix "sudo sysctl kernel.yama.ptrace_scope=1" cfg.home.activation.bravePtraceHint.data))
     (ck "this host installs at least one package from a feature derivation"
       (lib.any (pkg: installed pkg != []) rawPkgs))
     (ck "every package from a feature derivation is wrapped and on PATH exactly once"

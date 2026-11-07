@@ -17,6 +17,7 @@ let
     (import ./caches.nix)
     (import ./disko.nix)
     (import ./warnings.nix)
+    (import ./ptrace.nix)
     (import ./zram.nix)
     (import ./loader.nix)
   ];

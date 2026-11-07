@@ -176,6 +176,7 @@ flowchart LR
   S["tests/support.nix<br/>lib, flake outputs, features, hosts, hostLib,<br/>hostsAt(dir), featuresAt(dir), pkgs (nixpkgs + pinMeta overlay),<br/>fs (modules/defaults/filesystems.nix), rawFeaturePkgs, ck, suite,<br/>fixtureHost(dir, features, overrides) and hmCfg(host, args)<br/>which route fixtures through lib/builders.nix,<br/>assertWarnStubs, failingAssertions"] --> L["tests/loader.nix"]
   S --> CA["tests/caches.nix<br/>bare module eval of modules/caches.nix"]
   S --> WA["tests/warnings.nix<br/>bare module eval of modules/warnings-gate.nix"]
+  S --> PT["tests/ptrace.nix<br/>bare module eval of features/hm-brave/nixos.nix,<br/>boot.kernel.sysctl stubbed: the value is a default,<br/>not a force, so mkDefault and a plain assignment win"]
   S --> C["tests/configs.nix"]
   S --> H["tests/home.nix"]
   S --> O["tests/outputs.nix"]
