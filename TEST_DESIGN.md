@@ -83,7 +83,7 @@ built into RAM is not an install), that low RAM is offered as zram rather than t
 destructive step asks for one yes, and that `all` refuses the reboot while the installed system has
 no password. Nothing here takes root, formats, or installs.
 
-`tests/terraform.bats` (58 tests) is the byte-level half, and it is not stub-driven. The fixtures in
+`tests/terraform.bats` (63 tests) is the byte-level half, and it is not stub-driven. The fixtures in
 `tests/disk-fixture.bash` are sparse images with a real GPT, sized to the smallest device each
 filesystem accepts (ext4 6MB, btrfs ~114MB, xfs ~300MB — each `mkfs` refuses below its own floor),
 and built once per file: `sgdisk` costs about a second per call, and the three drives whose tests
@@ -206,8 +206,10 @@ everything else is a boolean check inside a suite. Fixture directories exist so 
 depend on a real host changing shape.
 
 Each suite runs in its own process inside a transient systemd scope (`MemoryMax`, `MemoryHigh` at
-90% of it, `MemorySwapMax` at half of it; RSS polled every 20ms — systemd only reports
-`MemoryPeak` while the unit is alive, so a peak read after the scope exits is gone). Swap is
+90% of it, `MemorySwapMax` at half of it; the scope is polled every 0.1s with one `systemctl show`
+asking for `MemoryCurrent`, `MemoryPeak` and `MemorySwapPeak` together — systemd only reports
+`MemoryPeak` while the unit is alive, so a peak read after the scope exits is gone, and the peak is a
+cumulative maximum, so a 0.1s poll cannot miss it). Swap is
 _capped_, not forbidden: with `MemorySwapMax=0` an allocation that cannot be met from free RAM
 stalls instead of being killed, and the gate hung on this box.
 
@@ -215,23 +217,25 @@ Splitting is not cosmetic: forcing three host configs in one eval peaks at ~2.1G
 `nix flake check --no-build` needs ~2.6GB (measured), both over the 1792MB cap — hence
 `configs.nix` runs one host per process. Going over the cap is a failure (exit 137), not a hang.
 `run.sh` prints each eval's `peak=` on its line. Suites that share nothing but the store run in one
-wave, throttled to 4 in flight, and the two bats tiers run at the same time — 23s of eval/build/config
-work became 7s, and 54s of bats work became 22s. Measured today on this box: the whole gate ~31s,
-**18 verdict lines** green — shell lint (11 files), the devShell tool check, one `nix-unit` run of 151
-attributes, 4 eval suites, 4 fixture builds, 3 host configs, the mocked
-rebuild, the stub bats tier (9 suites, 291 tests) as one parallel bats call, `terraform.bats`
-(58 tests) inside `nix develop` **and inside a scope**, and parity. Widest peaks: `tests/home.nix`
-981MB (the standalone profile, which forces its Home
+wave: the four fixture builds go first, inside their own subshell, and the heavy eval lane keeps at
+most three in flight (four heavy evals stacked is ~2.5GB, and the caps are per scope, not global).
+The shell lint and the expander-parity check are jobs in that same window, and the two bats tiers run
+at the same time. Measured today on this box: the whole gate ~24s warm, **19 verdict lines** green —
+shell lint (11 files), the devShell tool check (one `nix develop` resolves every tool the gate needs),
+one `nix-unit` run of 180 attributes, 4 eval suites, 4 fixture builds, 3 host configs, the mocked
+rebuild, the stub bats tier (9 suites, 315 tests) as one parallel bats call, `terraform.bats`
+(63 tests) inside `nix develop` **and inside a scope**, and parity. Widest peaks: `tests/home.nix`
+~1000MB (the standalone profile, which forces its Home
 Manager users plus the host's own home module and the raw `_package.nix` derivations it compares
-wrapped output against), `terraform.bats` ~841MB at 16 jobs, host configs 666–751MB (propyl /
-methyl-nixos / methyl), `wrap` 716MB
-(derivation-text checks read drvAttrs, so no .drv is realized), `tests/suite.nix` 446MB for the whole
+wrapped output against), `terraform.bats` ~815MB at 16 jobs, host configs 669–747MB (propyl /
+methyl-nixos / methyl), `wrap` ~725MB
+(derivation-text checks read drvAttrs, so no .drv is realized), `tests/suite.nix` ~705MB for the whole
 value tier where the same assertions split across six processes cost ~551MB measured earlier,
-`outputs` 294MB, `mounts` 384MB, `brave-layout` 351MB, the devShell 343MB, the shellwrap fixture
-243MB (nixpkgs' shellcheck is the work), the yazi-install fixture 205MB (two pinned sources
-unpacked, nothing compiled), and the appdir fixture 82MB with no download. The stub bats suites print
+`outputs` ~300MB, `mounts` ~365MB, `brave-layout` ~400MB, the devShell ~325MB, the shellwrap fixture
+~230MB (nixpkgs' shellcheck is the work), the yazi-install fixture ~200MB (two pinned sources
+unpacked, nothing compiled), and the appdir fixture ~56MB with no download. The stub bats suites print
 no `peak=`: they run stubs in the open environment, a few seconds together,
-and GNU `parallel` — which is what `bats --jobs` needs — is asserted by the devShell check above,
+and GNU `parallel` — which is what `bats --jobs` needs — comes from the same devShell call,
 because a missing `parallel` makes `bats --jobs` run zero tests. Peaks move a few MB run to run.
 
 ## Build telemetry, outside the gate

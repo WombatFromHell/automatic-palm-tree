@@ -24,34 +24,38 @@ Run from the repo root.
 
 `bash tests/run.sh` runs every suite with `nix eval --impure --file`, one process per suite, plus
 one `nix-unit` run of the value-tier assertions, and caps each process with a transient systemd
-scope (`MemoryHigh` 90%, `MemoryMax` 1792M, `MemorySwapMax` half that, RSS polled every 20ms).
-Suites that share nothing but the Nix store run concurrently, throttled to 4 in flight; each still
-gets its own scope, so the cap bounds one suite and the throttle bounds the sum.
+scope (`MemoryHigh` 90%, `MemoryMax` 1792M, `MemorySwapMax` half that, polled every 0.1s with one
+`systemctl show` for `MemoryCurrent`, `MemoryPeak` and `MemorySwapPeak`).
+Suites that share nothing but the Nix store run concurrently: the four fixture builds first, inside
+their own subshell, and at most three heavy evals in flight; each still
+gets its own scope, so the cap bounds one suite and the lane bounds the sum.
 Splitting is not cosmetic: a single
 `nix flake check --no-build` needs ~2.6GB in one process (measured), and `methyl-bazzite` — 3 GB
 free, 3 GB swap — thrashes on a whole-tree eval. Going over the cap is a failure (`exit 137`),
 not a hang.
 
-Cost, measured on this host with the cap in force: whole gate ~31s, 18 verdict lines green — shell
-lint, the devShell tool check, one `nix-unit` run of 151 attributes, a concurrent wave of the 4 eval
-suites + 4 fixture builds + 3 host configs (they share only the Nix store; throttled to 4 in
-flight), the mocked rebuild, the 9 stub bats suites (291 tests) as one parallel `bats --jobs 8`
-call, `terraform.bats` (58 tests) at `--jobs 16` inside its own scope, and parity — the two bats
-tiers overlap, so the gate costs the slower of them, not the sum. `run.sh`
-prints each eval's peak on its own line (`peak=981MB`), taken from the scope's `MemoryPeak` while
+Cost, measured on this host with the cap in force: whole gate ~24s warm, 19 verdict lines green — shell
+lint, the devShell tool check (one `nix develop` resolves every tool the gate needs), one `nix-unit`
+run of 180 attributes, a concurrent wave of the 4 eval
+suites + 4 fixture builds + 3 host configs (they share only the Nix store), the mocked rebuild, the
+9 stub bats suites (315 tests) as one parallel `bats --jobs 8`
+call, `terraform.bats` (63 tests) at `--jobs 16` inside its own scope, and parity — the two bats
+tiers and the lint and parity checks overlap the wave, so the gate costs the slower of them, not the
+sum. `run.sh`
+prints each eval's peak on its own line (`peak=998MB`), taken from the scope's `MemoryPeak` while
 the eval is still alive — a killed eval reports the peak it reached before the OOM. Widest peaks:
-`home` ~981MB, `configs` 666–751MB (methyl / methyl-nixos / propyl), `terraform.bats` ~841MB
-(16 parallel fixtures, swap 0), `wrap` ~716MB, `mounts` ~384MB, `brave-layout` 351MB,
-`devshell` ~343MB, `outputs` ~294MB; the value tier (`tests/suite.nix`) sits at ~446MB for 151
+`home` ~998MB, `configs` 669–747MB (methyl / methyl-nixos / propyl), `terraform.bats` ~815MB
+(16 parallel fixtures, swap 0), `wrap` ~725MB, `mounts` ~365MB, `brave-layout` ~400MB,
+`devshell` ~325MB, `outputs` ~300MB; the value tier (`tests/suite.nix`) sits at ~705MB for 180
 attributes, and parity at ~21–40MB, which is `nix` startup. Peaks move a few MB run to run.
 
-Four tiers build, on purpose, and none of them fetches what it is testing: `appdir` (~8s,
+Four tiers build, on purpose, and none of them fetches what it is testing: `appdir` (~0.3s,
 `features/hm-ghostty/_package.nix`'s real installPhase over a synthetic AppDir — `src` is a
-placeholder, so no AppImage is ever downloaded), `brave-layout` (the same shape over a synthetic rpm
-payload — `features/hm-brave/_package.nix`'s real installPhase re-run, so the store layout that ships
-is the layout that is checked), `shellwrap`
-(~4s, the shipped `writeShellApplication` wrappers, so nixpkgs' shellcheck linting is applied to the
-text that ships), and `yazi-install` (~10s, the pinned yazi sources unpacked and their `postInstall`
+placeholder, so no AppImage is ever downloaded), `brave-layout` (~1.6s, the same shape over a synthetic
+rpm payload — `features/hm-brave/_package.nix`'s real installPhase re-run, so the store layout that
+ships is the layout that is checked), `shellwrap`
+(~0.8s, the shipped `writeShellApplication` wrappers, so nixpkgs' shellcheck linting is applied to the
+text that ships), and `yazi-install` (~0.7s, the pinned yazi sources unpacked and their `postInstall`
 re-run). Nothing else is built, so no tier pulls a kernel, firmware or vendor asset.
 
 **The warning invariant.** A config warning must fail a build, not print one line of text. Every

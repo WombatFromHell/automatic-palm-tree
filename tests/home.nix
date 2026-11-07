@@ -1,5 +1,5 @@
 # Home suite: the standalone (non-NixOS) host, evaluated through the flake's own
-# outputs. No build. ~3s.
+# outputs. No build. ~7s serial -- the widest eval in the gate (~1GB), so it is the wave's floor.
 #
 # Expectations here are derived from the host's own module and from what the configuration
 # actually installs, never from a list of features this host happens to enable. A host gaining

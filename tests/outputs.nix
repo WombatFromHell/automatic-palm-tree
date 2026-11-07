@@ -5,7 +5,7 @@
 # it builds them — and that is out of this suite's memory budget on a RAM-constrained box.
 # Exceptions: the devShell and the apps are tiny derivations (mkShell / a shell script), so
 # reading their attrsets is what proves the tools and the wording without a host toplevel.
-# ~8s.
+# ~1.1s.
 let
   s = import ./support.nix;
   inherit (s) lib ck suite;
