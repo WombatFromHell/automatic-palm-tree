@@ -597,8 +597,8 @@ EOF
   recipe_file "$stubs/tree.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
   run terraform_recipe_run tree "$stubs/tree.json" --disk "$disk_dir/tree.img"
   [ "$status" -eq 0 ]
-  printf '@\n' > "$stubs/subvols"
-  : > "$calls"
+  printf '@\n' >"$stubs/subvols"
+  : >"$calls"
 
   run terraform_recipe_run tree "$stubs/tree.json" --disk "$disk_dir/tree.img"
   [ "$status" -eq 0 ]
@@ -667,7 +667,7 @@ EOF
     stub_lsblk "$disk_dir/$fs.img"
     recipe_file "$stubs/$fs.json" false "esp:boot:vfat:8M:/boot,root:nixos:$fs:rest:/"
     : >"$calls"
-    : >"$stubs/mounted_src"   # the mount the previous iteration made must not be seen by this one
+    : >"$stubs/mounted_src" # the mount the previous iteration made must not be seen by this one
 
     run terraform_recipe_run "$fs" "$stubs/$fs.json" --disk "$disk_dir/$fs.img"
     [ "$status" -eq 0 ]

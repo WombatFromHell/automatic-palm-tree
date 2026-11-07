@@ -218,9 +218,9 @@ size_bytes() {
   local s="$1"
   case "$s" in
   rest) printf 'rest\n' ;;
-  *K) printf '%s\n' $(( ${s%K} * 1024 )) ;;
-  *M) printf '%s\n' $(( ${s%M} * 1024 * 1024 )) ;;
-  *G) printf '%s\n' $(( ${s%G} * 1024 * 1024 * 1024 )) ;;
+  *K) printf '%s\n' $((${s%K} * 1024)) ;;
+  *M) printf '%s\n' $((${s%M} * 1024 * 1024)) ;;
+  *G) printf '%s\n' $((${s%G} * 1024 * 1024 * 1024)) ;;
   '' | *[!0-9]*) refuse "recipe size '$s' is not bytes, K, M, G or rest" ;;
   *) printf '%s\n' "$s" ;;
   esac
@@ -304,13 +304,13 @@ resolve_entries() {
             # somebody's install, and a second partition with the same label would be two devices
             # answering to one name. resize is never attempted, so this is answered here, before any
             # write, rather than by formatting something else.
-            refuse "recipe entry $name: $cand holds $fs labelled $label and $(human_size "$(( $(sect_of "$cand") * 512 ))"), which is less than the $size the recipe asks for: resize is never attempted"
+            refuse "recipe entry $name: $cand holds $fs labelled $label and $(human_size "$(($(sect_of "$cand") * 512))"), which is less than the $size the recipe asks for: resize is never attempted"
           fi
         fi
         continue
       fi
       if [ -z "$sig" ] && holds_size "$cand" "$size" &&
-         { [ "${t^^}" = "$(type_guid "${type:-$(default_type "$fs")}")" ] || [ "$(gpt_name "$cand")" = "$name" ]; }; then
+        { [ "${t^^}" = "$(type_guid "${type:-$(default_type "$fs")}")" ] || [ "$(gpt_name "$cand")" = "$name" ]; }; then
         node="$cand"
       fi
     done <<<"$parts"
@@ -431,7 +431,10 @@ if [ -n "$emit" ]; then
     fi
     case "$fs" in
     ext4 | vfat | btrfs) ;;
-    *) skipped="$skipped $known ($fs)"; continue ;;
+    *)
+      skipped="$skipped $known ($fs)"
+      continue
+      ;;
     esac
     label=$(blkid -o value -s LABEL "$node" 2>/dev/null || true)
     name=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')
@@ -539,7 +542,7 @@ if [ -n "$recipe" ]; then
   if [ "$owns" = true ]; then
     # A wipe cannot be guessed. Nothing on a drive that is about to be erased identifies it, so the
     # drive has to be named by the recipe or by --disk.
-    [ -n "$disk" ] || refuse "owns=true wipes the whole drive: name it with --disk or a \"disk\" field"
+    [ -n "$disk" ] || refuse 'owns=true wipes the whole drive: name it with --disk or a "disk" field'
   elif [ -z "$disk" ]; then
     disk=$(discover_disk)
   fi
@@ -709,7 +712,7 @@ owned_run() {
     fi
     printf '%s: create %s (%s)\n' "$name" "$size" "$fs"
     plan="$plan$name$sep$pos$sep$sect$sep$(type_guid "${type:-$(default_type "$fs")}")$sep${label:-$name}$sep$fs$sep$mnt"$'\n'
-    pos=$(( (pos + sect + align - 1) / align * align ))
+    pos=$(((pos + sect + align - 1) / align * align))
   done <<<"$entries"
   [ "$pos" -le $((disk_bytes / 512 - align)) ] ||
     refuse "the layout the recipe declares needs more than $disk holds: resize is never attempted"
@@ -923,7 +926,7 @@ free_gaps() {
   while read -r start size; do
     [ -n "$start" ] || continue
     if [ "$prev" -lt "$start" ]; then printf '%s %s\n' "$prev" "$((start - prev))"; fi
-    prev=$(( (start + size + align - 1) / align * align ))
+    prev=$(((start + size + align - 1) / align * align))
   done <<<"$sorted_parts"
   if [ "$prev" -lt "$total" ]; then printf '%s %s\n' "$prev" "$((total - prev))"; fi
 }

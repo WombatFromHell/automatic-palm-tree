@@ -194,8 +194,8 @@ resolve() {
   # `builtins.toString` of a bool is 1/0; the recipe's `owns` is true/false, so both sides are put
   # in one form before they are compared.
   case "$owned" in
-    1) owned=true ;;
-    0) owned=false ;;
+  1) owned=true ;;
+  0) owned=false ;;
   esac
   root_device=$(printf '%s\n' "$facts" | sed -n 2p)
   root_fs=$(printf '%s\n' "$facts" | sed -n 3p)

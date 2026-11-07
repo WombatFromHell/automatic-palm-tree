@@ -40,8 +40,8 @@ main() {
   owned_dev=$(losetup -f --partscan --show "$work/owned.img")
   # Never proceed on a device we did not create: this harness must only ever touch its own images.
   if [ "$DEV" = "$owned_dev" ] ||
-     ! lsblk -n -o NAME "$DEV" 2>/dev/null | grep -q '^loop' ||
-     ! lsblk -n -o NAME "$owned_dev" 2>/dev/null | grep -q '^loop'; then
+    ! lsblk -n -o NAME "$DEV" 2>/dev/null | grep -q '^loop' ||
+    ! lsblk -n -o NAME "$owned_dev" 2>/dev/null | grep -q '^loop'; then
     printf 'deploy-loop: could not create loop devices (got "%s" and "%s")\n' "$DEV" "$owned_dev"
     exit 1
   fi
@@ -70,9 +70,11 @@ main() {
   region() { dd if="$DEV" bs=512 "skip=$(start_of "$1")" count=2048 2>/dev/null | md5sum | cut -d' ' -f1; }
 
   # 1. A drive with no partition table has nothing to emit: exit 2, and no JSON written at all.
-  cd "$repo" && ./terraform.sh --emit --disk "$DEV" >"$work/emit.out" 2>"$work/emit.err"; rc=$?
+  cd "$repo" && ./terraform.sh --emit --disk "$DEV" >"$work/emit.out" 2>"$work/emit.err"
+  rc=$?
   if [ "$rc" = 2 ] && [ ! -s "$work/emit.out" ] && grep -q 'no partition table' "$work/emit.err"; then
-    pass=$((pass + 1)); printf 'PASS emit refuses a tableless drive and writes no JSON: %s\n' "$(cat "$work/emit.err")"
+    pass=$((pass + 1))
+    printf 'PASS emit refuses a tableless drive and writes no JSON: %s\n' "$(cat "$work/emit.err")"
   else
     fail=$((fail + 1))
     printf 'FAIL emit on a tableless drive (exit %s, %s bytes of JSON)\n%s\n' "$rc" "$(wc -c <"$work/emit.out")" "$(cat "$work/emit.err")"
@@ -91,44 +93,56 @@ size=32M,type=$NTFS_TYPE,name="Basic data partition"
 type=$LINUX_TYPE,name="Linux filesystem"
 EOF
   [ -b "$root" ] || losetup -R "$DEV" 2>/dev/null || true
-  [ -b "$root" ] || { printf 'deploy-loop: no partition nodes on %s after sfdisk\n' "$DEV"; exit 1; }
+  [ -b "$root" ] || {
+    printf 'deploy-loop: no partition nodes on %s after sfdisk\n' "$DEV"
+    exit 1
+  }
   mkfs.vfat -F 32 "$esp" >/dev/null 2>&1
   cp "$loader" "$work/efi/Microsoft/BOOT/boot.efi"
   mcopy -s -i "$esp" "$work/efi" ::/EFI >/dev/null 2>&1
   dd if=/dev/zero of="$root" bs=1M count=2 status=none
   dd if=/dev/zero of="$msr" bs=1M count=1 status=none
   dd if=/dev/zero of="$ntfs" bs=1M count=1 status=none
-  esp_before=$(region 1); msr_before=$(region 2); ntfs_before=$(region 3)
+  esp_before=$(region 1)
+  msr_before=$(region 2)
+  ntfs_before=$(region 3)
   table_before=$(sfdisk --json "$DEV")
 
   # 3. --emit on a real drive finds the ESP only, and names what it left out.
-  out=$(cd "$repo" && ./terraform.sh --emit --disk "$DEV" 2>/dev/null); rc=$?
+  out=$(cd "$repo" && ./terraform.sh --emit --disk "$DEV" 2>/dev/null)
+  rc=$?
   fs=$(printf '%s' "$out" | jq -c '.partitions | map(.fs)')
   if [ "$rc" = 0 ] && [ "$fs" = '["vfat"]' ]; then
-    pass=$((pass + 1)); printf 'PASS emit on a real drive emits the ESP only: %s\n' "$fs"
+    pass=$((pass + 1))
+    printf 'PASS emit on a real drive emits the ESP only: %s\n' "$fs"
   else
-    fail=$((fail + 1)); printf 'FAIL emit on a real drive (exit %s, filesystems %s)\n%s\n' "$rc" "$fs" "$out"
+    fail=$((fail + 1))
+    printf 'FAIL emit on a real drive (exit %s, filesystems %s)\n%s\n' "$rc" "$fs" "$out"
   fi
 
   # 4. The operator adds the one partition the drive cannot describe, and the recipe deploys: the
   #    ESP is adopted, the blank partition is formatted, and the run mounts it for real.
   printf '%s\n' "$out" | jq '.partitions += [{name: "root", label: "nixos", fs: "ext4", size: "2G", mount: "/"}]' >"$work/recipe.json"
-  out=$(cd "$repo" && ./terraform.sh --recipe "$work/recipe.json" --disk "$DEV" --mount "$mount_dir" --force 2>&1); rc=$?
+  out=$(cd "$repo" && ./terraform.sh --recipe "$work/recipe.json" --disk "$DEV" --mount "$mount_dir" --force 2>&1)
+  rc=$?
   src=$(findmnt -n -o SOURCE "$mount_dir" 2>/dev/null || true)
   label=$(blkid -o value -s LABEL "$root" 2>/dev/null || true)
   fs_root=$(blkid -o value -s TYPE "$root" 2>/dev/null || true)
   if [ "$rc" = 0 ] && [ "$src" = "$root" ] && [ "$label" = nixos ] && [ "$fs_root" = ext4 ]; then
-    pass=$((pass + 1)); printf 'PASS recipe deploy: %s mounted at %s (ext4, label %s)\n' "$src" "$mount_dir" "$label"
+    pass=$((pass + 1))
+    printf 'PASS recipe deploy: %s mounted at %s (ext4, label %s)\n' "$src" "$mount_dir" "$label"
   else
-    fail=$((fail + 1)); printf 'FAIL recipe deploy (exit %s, source %s, label %s, signature %s)\n%s\n' "$rc" "$src" "$label" "$fs_root" "$out"
+    fail=$((fail + 1))
+    printf 'FAIL recipe deploy (exit %s, source %s, label %s, signature %s)\n%s\n' "$rc" "$src" "$label" "$fs_root" "$out"
   fi
 
   # 5. Windows bytes survive: the loader is still in the ESP and the foreign regions are unchanged.
   mcopy -i "$esp" ::/EFI/Microsoft/BOOT/boot.efi "$work/loader.read" >/dev/null 2>&1
   if cmp -s "$loader" "$work/loader.read" &&
-     [ "$(region 1)" = "$esp_before" ] && [ "$(region 2)" = "$msr_before" ] &&
-     [ "$(region 3)" = "$ntfs_before" ] && [ "$(sfdisk --json "$DEV")" = "$table_before" ]; then
-    pass=$((pass + 1)); printf 'PASS foreign regions byte-identical, partition table unchanged\n'
+    [ "$(region 1)" = "$esp_before" ] && [ "$(region 2)" = "$msr_before" ] &&
+    [ "$(region 3)" = "$ntfs_before" ] && [ "$(sfdisk --json "$DEV")" = "$table_before" ]; then
+    pass=$((pass + 1))
+    printf 'PASS foreign regions byte-identical, partition table unchanged\n'
   else
     fail=$((fail + 1))
     printf 'FAIL foreign bytes or partition table changed (esp %s/%s msr %s/%s ntfs %s/%s)\n' \
@@ -136,12 +150,15 @@ EOF
   fi
 
   # 6. Re-running the same recipe plans nothing new: no format line, no byte moved.
-  out=$(cd "$repo" && ./terraform.sh --recipe "$work/recipe.json" --disk "$DEV" --mount "$mount_dir" --force 2>&1); rc=$?
+  out=$(cd "$repo" && ./terraform.sh --recipe "$work/recipe.json" --disk "$DEV" --mount "$mount_dir" --force 2>&1)
+  rc=$?
   formats=$(printf '%s' "$out" | grep -c 'format ')
   if [ "$rc" = 0 ] && [ "$formats" = 0 ] && [ "$(region 1)" = "$esp_before" ]; then
-    pass=$((pass + 1)); printf 'PASS second run formats nothing (plan: %s)\n' "$(printf '%s' "$out" | grep -E 'adopt|format' | tr '\n' ' ')"
+    pass=$((pass + 1))
+    printf 'PASS second run formats nothing (plan: %s)\n' "$(printf '%s' "$out" | grep -E 'adopt|format' | tr '\n' ' ')"
   else
-    fail=$((fail + 1)); printf 'FAIL second run (exit %s, format lines %s)\n%s\n' "$rc" "$formats" "$out"
+    fail=$((fail + 1))
+    printf 'FAIL second run (exit %s, format lines %s)\n%s\n' "$rc" "$formats" "$out"
   fi
 
   # 7. Owned mode on a fresh drive: terraform.sh writes the table itself, formats both partitions,
@@ -155,7 +172,8 @@ EOF
   {"name": "nixos", "label": "nixos", "fs": "btrfs", "size": "2G", "mount": "/"}
 ]}
 EOF
-  out=$(cd "$repo" && ./terraform.sh --recipe "$work/owned.json" --disk "$owned_dev" --mount "$owned_dir" --force 2>&1); rc=$?
+  out=$(cd "$repo" && ./terraform.sh --recipe "$work/owned.json" --disk "$owned_dev" --mount "$owned_dir" --force 2>&1)
+  rc=$?
   [ -b "$owned_dev"p2 ] || losetup -R "$owned_dev" 2>/dev/null || true
   entries=$(sfdisk --json "$owned_dev" 2>/dev/null | jq '.partitiontable.partitions | length' 2>/dev/null || echo none)
   esp_fs=$(blkid -o value -s TYPE "$owned_dev"p1 2>/dev/null || true)
@@ -164,9 +182,9 @@ EOF
   src=$(findmnt -n -o SOURCE "$owned_dir" 2>/dev/null || true)
   opts=$(findmnt -n -o OPTIONS "$owned_dir" 2>/dev/null || true)
   if [ "$rc" = 0 ] && [ "$entries" = 2 ] && [ "$esp_fs" = vfat ] && [ "$esp_label" = boot ] &&
-     printf '%s' "$subs" | grep -q '@nix' && printf '%s' "$subs" | grep -q '@home' &&
-     printf '%s' "$opts" | grep -q 'noatime' && printf '%s' "$opts" | grep -q 'compress=zstd' &&
-     [ "$src" = "$owned_dev"'p2[/@]' ]; then
+    printf '%s' "$subs" | grep -q '@nix' && printf '%s' "$subs" | grep -q '@home' &&
+    printf '%s' "$opts" | grep -q 'noatime' && printf '%s' "$opts" | grep -q 'compress=zstd' &&
+    [ "$src" = "$owned_dev"'p2[/@]' ]; then
     pass=$((pass + 1))
     printf 'PASS owned mode reproduces the recipe: 2 partitions, ESP %s/%s, subvolumes %s, root mounted from %s (%s)\n' \
       "$esp_fs" "$esp_label" "$subs" "$src" "$opts"
@@ -180,10 +198,11 @@ EOF
 
   # 8. Re-running the owned recipe on the same drive changes nothing: the table is already there, so
   #    this is shared mode, and deploy reads the same subvolumes back.
-  out=$(cd "$repo" && ./terraform.sh --recipe "$work/owned.json" --disk "$owned_dev" --mount "$owned_dir" --force 2>&1); rc=$?
+  out=$(cd "$repo" && ./terraform.sh --recipe "$work/owned.json" --disk "$owned_dev" --mount "$owned_dir" --force 2>&1)
+  rc=$?
   formats=$(printf '%s' "$out" | grep -c 'format ')
   if [ "$rc" = 0 ] && [ "$formats" = 0 ] && [ "$(sfdisk --json "$owned_dev" 2>/dev/null)" = "$owned_table" ] &&
-     [ "$(btrfs subvolume list "$owned_dir" 2>/dev/null | grep -c '@')" = "$owned_subs" ]; then
+    [ "$(btrfs subvolume list "$owned_dir" 2>/dev/null | grep -c '@')" = "$owned_subs" ]; then
     pass=$((pass + 1))
     printf 'PASS second owned run is idempotent (format lines %s, subvolumes %s, table unchanged)\n' "$formats" "$owned_subs"
   else
@@ -199,10 +218,12 @@ EOF
 size=8M,type=0x07
 EOF
   before=$(dd if="$dos_dev" bs=512 count=1 2>/dev/null | md5sum | cut -d' ' -f1)
-  out=$(cd "$repo" && ./terraform.sh --recipe "$work/owned.json" --disk "$dos_dev" --mount "$work/mnt-dos" --force 2>&1); rc=$?
+  out=$(cd "$repo" && ./terraform.sh --recipe "$work/owned.json" --disk "$dos_dev" --mount "$work/mnt-dos" --force 2>&1)
+  rc=$?
   if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q 'is dos, not gpt' &&
-     [ "$(dd if="$dos_dev" bs=512 count=1 2>/dev/null | md5sum | cut -d' ' -f1)" = "$before" ]; then
-    pass=$((pass + 1)); printf 'PASS owned mode refuses a DOS partition table and writes nothing\n'
+    [ "$(dd if="$dos_dev" bs=512 count=1 2>/dev/null | md5sum | cut -d' ' -f1)" = "$before" ]; then
+    pass=$((pass + 1))
+    printf 'PASS owned mode refuses a DOS partition table and writes nothing\n'
   else
     fail=$((fail + 1))
     printf 'FAIL DOS refusal (exit %s)\n%s\n' "$rc" "$out"
@@ -210,11 +231,14 @@ EOF
   losetup -d "$dos_dev" 2>/dev/null || true
 
   # 10. --verify reads the deployed drive against the recipe and says satisfied, writing nothing.
-  out=$(cd "$repo" && ./terraform.sh --recipe "$work/owned.json" --disk "$owned_dev" --verify 2>&1); rc=$?
+  out=$(cd "$repo" && ./terraform.sh --recipe "$work/owned.json" --disk "$owned_dev" --verify 2>&1)
+  rc=$?
   if [ "$rc" = 0 ] && printf '%s' "$out" | grep -q 'recipe satisfied'; then
-    pass=$((pass + 1)); printf 'PASS --verify on the owned drive: %s\n' "$(printf '%s' "$out" | grep 'recipe satisfied')"
+    pass=$((pass + 1))
+    printf 'PASS --verify on the owned drive: %s\n' "$(printf '%s' "$out" | grep 'recipe satisfied')"
   else
-    fail=$((fail + 1)); printf 'FAIL --verify on the owned drive (exit %s)\n%s\n' "$rc" "$out"
+    fail=$((fail + 1))
+    printf 'FAIL --verify on the owned drive (exit %s)\n%s\n' "$rc" "$out"
   fi
 
   # 11. Appending into free space on a REAL drive. The fixture tier stubs sfdisk --append because a
@@ -236,15 +260,16 @@ EOF
   {"name": "nixos", "label": "nixos", "fs": "ext4", "size": "64M", "mount": "/"}
 ]}
 EOF
-  out=$(cd "$repo" && ./terraform.sh --recipe "$work/append.json" --disk "$ap_dev" --mount "$work/mnt-append" --force 2>&1); rc=$?
+  out=$(cd "$repo" && ./terraform.sh --recipe "$work/append.json" --disk "$ap_dev" --mount "$work/mnt-append" --force 2>&1)
+  rc=$?
   [ -b "$ap_dev"p3 ] || losetup -R "$ap_dev" 2>/dev/null || true
   ap_after=$(sfdisk --json "$ap_dev" 2>/dev/null | jq -c '.partitiontable.partitions')
   ap_fs=$(blkid -o value -s TYPE "$ap_dev"p3 2>/dev/null || true)
   ap_label=$(blkid -o value -s LABEL "$ap_dev"p3 2>/dev/null || true)
   ap_src=$(findmnt -n -o SOURCE "$work/mnt-append" 2>/dev/null || true)
   if [ "$rc" = 0 ] && [ "$(printf '%s' "$ap_after" | jq 'length')" = 3 ] &&
-     [ "$(printf '%s' "$ap_after" | jq -c '.[:2]')" = "$ap_before" ] &&
-     [ "$ap_fs" = ext4 ] && [ "$ap_label" = nixos ] && [ "$ap_src" = "$ap_dev"p3 ]; then
+    [ "$(printf '%s' "$ap_after" | jq -c '.[:2]')" = "$ap_before" ] &&
+    [ "$ap_fs" = ext4 ] && [ "$ap_label" = nixos ] && [ "$ap_src" = "$ap_dev"p3 ]; then
     pass=$((pass + 1))
     printf 'PASS append into free space creates a real partition: 3 entries, first two unchanged, %s (ext4, label %s) mounted from %s\n' \
       "$ap_dev"p3 "$ap_label" "$ap_src"

@@ -109,11 +109,10 @@ if [ -n "\$t" ]; then printf '%s\n' "\$t"; exit 0; fi
 exit 2
 EOF
 
-# terraform.sh reads the table through jq; stubbing it keeps the suite off whatever jq this
-# terraform.sh reads the table and the recipe through jq; stubbing it keeps the suite off whatever
-# jq this machine happens to have. The recipe's `owns` is read from the file itself rather than a
-# fixture value, so the suite can never drift from the recipe committed in the tree.
-stub jq <<EOF
+  # terraform.sh reads the table and the recipe through jq; stubbing it keeps the suite off whatever
+  # jq this machine happens to have. The recipe's `owns` is read from the file itself rather than a
+  # fixture value, so the suite can never drift from the recipe committed in the tree.
+  stub jq <<EOF
 #!/usr/bin/env bash
 echo "jq \$*" >> "$calls"
 file=""
@@ -284,7 +283,7 @@ run_install() {
   # The host names a partition that is not here, and the only block devices are the ones that are
   # not a drive to install onto: terraform.sh would have nothing to adopt.
   printf 'false\n' >"$stubs/owned"
-  LSBLK_MISSING=1 DISKS= run run_install --stage prepare methyl
+  LSBLK_MISSING=1 DISKS='' run run_install --stage prepare methyl
   [ "$status" -eq 2 ]
   assert_out "cannot tell which drive"
   assert_no_call "./terraform.sh"
@@ -424,7 +423,7 @@ run_install() {
 
 @test "terraform on a shared drive refuses to format a blank partition with nobody to ask" {
   printf 'false\n' >"$stubs/owned"
-  ROOT_TYPE= run run_install --stage terraform methyl
+  ROOT_TYPE='' run run_install --stage terraform methyl
   [ "$status" -eq 2 ]
   assert_out "needs a confirmation and there is no terminal"
   assert_no_call "mkfs"
@@ -434,7 +433,7 @@ run_install() {
 @test "terraform on a shared drive refuses a blank partition the host names by UUID" {
   printf 'false\n' >"$stubs/owned"
   printf '/dev/disk/by-uuid/1234\n' >"$stubs/root_device"
-  ROOT_TYPE= run run_install --stage terraform methyl
+  ROOT_TYPE='' run run_install --stage terraform methyl
   [ "$status" -eq 2 ]
   assert_out "UUID"
   assert_no_call "^mount /dev"
