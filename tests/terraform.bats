@@ -207,6 +207,57 @@ teardown() {
   assert_no_call "parted"
 }
 
+# An ESP is a partition type, not just a filesystem: firmware scans the ESP GUID (UEFI 2.7 §12.3), so
+# a partition terraform.sh creates must carry it. The FAT32 GUID is a data volume, and a drive whose
+# ESP was created by firmware or another installer carries the ESP GUID under some other GPT name.
+@test "a created ESP carries the ESP partition type, not the FAT32 type" {
+  disk own bare
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
+  stub_lsblk "$disk_dir/own.img"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img"
+  [ "$status" -eq 0 ]
+  [ "$(entries_json own | jq -r '.[0].type')" = "$ESP_TYPE" ]
+  [ "$(type_of own 1)" = vfat ]
+  [ "$(label_of own 1)" = boot ]
+}
+
+@test "a blank ESP partition typed as an ESP is adopted, whatever its GPT name says" {
+  disk espghost
+  stub_lsblk "$disk_dir/espghost.img"
+  before=$(entries_json espghost)
+  recipe_file "$disk_dir/r.json" false 'esp:boot:vfat:8M:/boot,root:nixos:ext4:rest:/'
+  run terraform_recipe_run espghost "$disk_dir/r.json"
+  [ "$status" -eq 0 ]
+  # The ESP that already existed is the one that got formatted: a second ESP would be two devices
+  # answering to one /boot, and the entry that existed must come back identical.
+  [ "$(printf '%s\n' "$before" | jq -c '.[0]')" = "$(entries_json espghost | jq -c '.[0]')" ]
+  [ "$(entries_json espghost | jq 'length')" = 2 ]
+  [ "$(type_of espghost 1)" = vfat ]
+  [ "$(label_of espghost 1)" = boot ]
+}
+
+@test "a shared-mode dry run plans the partition it would append and writes nothing" {
+  # The ESP here is the one this host owns (labelled boot, adopted); the root has nowhere to live, so
+  # the plan is a creation. A dry run has to show that plan and leave every byte alone.
+  disk tight
+  stub_lsblk "$disk_dir/tight.img"
+  format_slice tight 1 "$ESP_START" "$ESP_N" vfat boot
+  seed_region tight "$NTFS_START" "$NTFS_N" W
+  before=$(table_checksum tight)
+  entries_before=$(entries_json tight)
+  ntfs_before=$(region_checksum tight "$NTFS_START" "$NTFS_N")
+  recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:rest:/"
+  run terraform_recipe_run tight "$stubs/recipe.json" --dry-run
+  [ "$status" -eq 0 ]
+  assert_out "esp: adopt"
+  assert_out "root: create rest"
+  [ "$(table_checksum tight)" = "$before" ]
+  [ "$(entries_json tight)" = "$entries_before" ]
+  [ "$(region_checksum tight "$NTFS_START" "$NTFS_N")" = "$ntfs_before" ]
+  assert_no_call "mkfs"
+  assert_no_call "mount "
+}
+
 @test "a Linux disk shared with another install adopts both partitions and writes nothing" {
   disk lin blank
   esp_foreign lin systemd
@@ -545,8 +596,9 @@ EOF
 # Owned mode on a btrfs root has to lay down the subvolume tree the host's config mounts, or NixOS
 # boots into a mount of a subvolume that was never created.
 @test "owns=true on a btrfs root creates the subvolume tree and mounts @ as /" {
-  # btrfs-progs refuses a filesystem below ~110MB, so this one run uses its own larger sparse image.
-  truncate -s 256M "$disk_dir/own.img"
+  # btrfs-progs refuses a filesystem below ~114MB and the ESP takes 9MB of the drive, so 128M is the
+  # smallest drive that holds an ESP plus a btrfs root. Every owned-mode drive here is that size.
+  truncate -s 128M "$disk_dir/own.img"
   stub_lsblk "$disk_dir/own.img"
   recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
 
@@ -565,7 +617,7 @@ EOF
 # A second owned run is the same recipe on the same drive: the table it would write is already there,
 # so nothing is written and the tree that already exists is adopted rather than recreated.
 @test "a second owned run adopts the table it already wrote and creates nothing" {
-  truncate -s 256M "$disk_dir/own.img"
+  truncate -s 128M "$disk_dir/own.img"
   stub_lsblk "$disk_dir/own.img"
   recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
   run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
@@ -592,7 +644,7 @@ EOF
 # filesystem: a drive that holds the layout but only @ would boot into mounts the config declares and
 # that were never created.
 @test "an adopted btrfs root that lacks the tree lays it down and mounts @ as /" {
-  truncate -s 256M "$disk_dir/tree.img"
+  truncate -s 128M "$disk_dir/tree.img"
   stub_lsblk "$disk_dir/tree.img"
   recipe_file "$stubs/tree.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
   run terraform_recipe_run tree "$stubs/tree.json" --disk "$disk_dir/tree.img"
@@ -626,7 +678,7 @@ EOF
 # The options a btrfs root is mounted with are the ones hosts/methyl-nixos/nixos.nix declares, and an
 # entry that declares its own wins over them.
 @test "a recipe that declares mount options wins over the defaults" {
-  truncate -s 256M "$disk_dir/opt.img"
+  truncate -s 128M "$disk_dir/opt.img"
   stub_lsblk "$disk_dir/opt.img"
   recipe_file "$stubs/opt.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/:nodatacow"
 
@@ -639,11 +691,7 @@ EOF
 # A shared drive is mounted by the same code path, so a btrfs root that already exists gets the same
 # options rather than a bare mount.
 @test "a shared btrfs root is mounted with the same options as an owned one" {
-  truncate -s 160M "$disk_dir/bts.img"
-  printf '2048 16384 %s\n20480\n' "$ESP_TYPE" | sfdisk -X gpt "$disk_dir/bts.img" >/dev/null 2>&1
-  format_slice bts 1 "$ESP_START" "$ESP_N" vfat boot
-  sect=$(sfdisk --json "$disk_dir/bts.img" | jq -r '.partitiontable.partitions[1].size')
-  format_slice bts 2 20480 "$sect" btrfs nixos
+  disk bts pre-btrfs
   stub_lsblk "$disk_dir/bts.img"
   recipe_file "$stubs/bts.json" false "esp:boot:vfat:8M:/boot,root:nixos:btrfs:rest:/"
 
@@ -657,13 +705,9 @@ EOF
 # mkfs.xfs refuses a device below 300MiB, so the xfs drive is the big one of the two.
 @test "a root that exists already is mounted with its own filesystem's default options" {
   for fs in ext4 xfs; do
-    drive=160M
-    [ "$fs" = xfs ] && drive=400M
-    truncate -s "$drive" "$disk_dir/$fs.img"
-    printf '2048 16384 %s\n20480\n' "$ESP_TYPE" | sfdisk -X gpt "$disk_dir/$fs.img" >/dev/null 2>&1
-    format_slice "$fs" 1 "$ESP_START" "$ESP_N" vfat boot
-    sect=$(sfdisk --json "$disk_dir/$fs.img" | jq -r '.partitiontable.partitions[1].size')
-    format_slice "$fs" 2 20480 "$sect" "$fs" nixos
+    # The formatted drives come from the fixture templates (disk-fixture.bash): this test asserts
+    # mkfs is never called, so laying them down per test was pure setup cost.
+    disk "$fs" "pre-$fs"
     stub_lsblk "$disk_dir/$fs.img"
     recipe_file "$stubs/$fs.json" false "esp:boot:vfat:8M:/boot,root:nixos:$fs:rest:/"
     : >"$calls"
@@ -682,7 +726,7 @@ EOF
 # An entry that declares its options as empty is a decision, not a missing field: it asks for the
 # kernel's defaults, so the per-filesystem fallback must not be added back.
 @test "a recipe that declares empty mount options overrides the defaults" {
-  truncate -s 256M "$disk_dir/none.img"
+  truncate -s 128M "$disk_dir/none.img"
   stub_lsblk "$disk_dir/none.img"
   recipe_file "$stubs/none.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/:"
 
@@ -875,6 +919,39 @@ assert_no_json() {
   assert_out "satisfied"
   assert_no_call "mkfs"
   assert_no_call "mount "
+}
+
+# A drive this host does not own gets its ESP from the drive, never from free space. A partition that
+# holds vfat under some other label is somebody else's boot partition: the run has to refuse before
+# appending anything, because appending an ESP and then refusing leaves the drive changed with
+# nothing installed.
+@test "a shared drive whose ESP holds somebody else's label is refused before anything is appended" {
+  disk win
+  stub_lsblk "$disk_dir/win.img"
+  format_slice win 1 "$ESP_START" "$NTFS_N" vfat EFIBOOT
+  seed_region win "$NTFS_START" "$NTFS_N" W
+  before=$(table_checksum win)
+  entries_before=$(entries_json win)
+  recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:rest:/"
+  run terraform_recipe_run win "$stubs/recipe.json" --disk "$disk_dir/win.img"
+  [ "$status" -eq 2 ]
+  assert_out "$disk"
+  assert_out "EFIBOOT"
+  assert_no_call "sfdisk --append"
+  assert_no_call "mkfs"
+  [ "$(table_checksum win)" = "$before" ]
+  [ "$(entries_json win)" = "$entries_before" ]
+}
+
+@test "flags mode does not take a blank Basic Data partition for the ESP" {
+  disk bd
+  stub_lsblk "$disk_dir/bd.img"
+  before=$(table_checksum bd)
+  TF_FORCE=0 run terraform_run bd
+  [ "$status" -eq 2 ]
+  assert_no_call "mkfs"
+  assert_out "no FAT partition"
+  [ "$(table_checksum bd)" = "$before" ]
 }
 
 @test "--emit leaves out partitions it cannot reproduce and names why" {

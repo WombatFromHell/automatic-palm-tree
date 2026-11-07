@@ -79,12 +79,41 @@ gate() {
   fi
 }
 
+# gate_job <out-file> <scope> <cmd...> — a gate in the background, verdict written to <out-file>
+# and its exit status to <out-file>.rc, so several independent suites can run at once and still
+# print one line each, in the order the caller listed them.
+gate_job() {
+  local out="$1" scope="$2"
+  shift 2
+  ( TEST_SCOPE_NAME="$scope" tests/nix-eval.sh "$mem" -- "$@" >"$out" 2>&1
+    printf '%s' "$?" >"$out.rc" ) &
+}
+
+verdict() {
+  local label="$1" out="$2"
+  split_peak "$(cat "$out")"
+  if [ "$(cat "$out.rc")" = 0 ]; then
+    echo "ok   $label  $body  $peak"
+  else
+    echo "FAIL $label  $peak"
+    printf '%s\n' "$body" | tail -20
+    fail=1
+  fi
+}
+
+# throttle <max> — hold until fewer than `max` background jobs are running. Each job is capped at
+# `mem` by its own scope, but the sum of concurrent jobs is not, so this is what keeps the
+# concurrent peak inside what the machine has free.
+throttle() {
+  while [ "$(jobs -r | wc -l)" -ge "$1" ]; do wait -n; done
+}
+
 # `nix develop` is where the pin updaters run (features/*/update.sh -> lib/updater.sh), so the
 # tools they need must resolve from the devShell, not from whatever the host installed. terraform.sh
 # is the same claim for the disk tools: the installer ISO is not this devShell, so the gate is where
 # "the script only uses tools we ship" gets checked.
-gate "nix develop resolves the updater and disk tools" devshell nix develop --command \
-  bash -c 'command -v curl jq nix bats shellcheck shfmt sfdisk blkid mkfs.vfat mkfs.ext4 mcopy sgdisk >/dev/null'
+gate "nix develop resolves the updater, disk and parallel tools" devshell nix develop --command \
+  bash -c 'command -v curl jq nix bats parallel shellcheck shfmt sfdisk blkid mkfs.vfat mkfs.ext4 mcopy sgdisk >/dev/null'
 
 # The value-tier assertions run as nix-unit test attributes in one process (tests/suite.nix), so a
 # failing attribute prints its own diff and the rest keep running instead of the whole suite
@@ -96,51 +125,46 @@ else
   echo "skip tests/suite.nix [nix-unit not in the devShell]"
 fi
 
-# apps.cache-check is a real `nix run` of the app, so it is capped like the rest: forcing one
-# host config is the eval it does (~1.6GB peak, measured here), which the stub bats loop below
-# would run unmeasured.
-gate "tests/cache-check.bats" cache-check bats tests/cache-check.bats
-
-# Eval-only suites, listed explicitly. The suites whose assertions are pure values now run as
-# nix-unit attributes below, so they are not in this list. configs.nix is not here either: it
-# evaluates one host per process (see its header). outputs.nix forces the flake outputs;
-# home.nix/mounts.nix/wrap.nix force a host config. support.nix is a fixture library, and
-# appdir/brave-layout/shellwrap/yazi-install build (below).
-# A failing suite throws with every failing check named; nix eval's exit status is the verdict.
-eval_suites=(tests/home.nix tests/mounts.nix tests/outputs.nix tests/wrap.nix)
-for suite in "${eval_suites[@]}"; do
-  gate "$suite" "$(basename "$suite" .nix)" nix eval --impure --file "$suite"
+# These tiers share nothing but the Nix store, so they run concurrently rather than back to back:
+# 23s sequential -> 8s, with at most 4 in flight. Each job is still wrapped in its own memory
+# scope, so a ballooning suite is killed by the cap instead of swapping the machine, and a failing
+# suite still prints its own diff while the others keep running (nix's exit status is the verdict).
+#
+# home/mounts/wrap force a host config and outputs forces the flake outputs. The four builds check
+# what a derivation puts in its $out, which is not an evaluated value: appdir re-runs
+# hm-ghostty's real installPhase against a synthetic AppDir (src is a placeholder, so no AppImage is
+# ever fetched); brave-layout re-runs hm-brave's real installPhase over a synthetic rpm payload,
+# where a copy of a store ELF stands in for the patched binary (patchelf needs real ELF bytes);
+# shellwrap is the shipped writeShellApplication text, which writeShellApplication shellchecks;
+# yazi-install unpacks the real pinned sources and re-runs hm-yazi's real postInstall.
+# configs.nix evaluates one host per process (see its header): forcing three hosts into one eval
+# needs ~4GB, which is over the cap, so they are three jobs here. support.nix is a fixture library
+# and asserts nothing, so it is not run.
+labels=(tests/home.nix tests/mounts.nix tests/outputs.nix tests/wrap.nix
+  "tests/appdir.nix [fixture build]" "tests/brave-layout.nix [rpm fixture build]"
+  "tests/shellwrap.nix [wrapper build + shellcheck]" "tests/yazi-install.nix [postInstall fixture]"
+  "tests/configs.nix [methyl]" "tests/configs.nix [methyl-nixos]" "tests/configs.nix [propyl]")
+scopes=(home mounts outputs wrap appdir brave-layout shellwrap yazi-install
+  configs-methyl configs-methyl-nixos configs-propyl)
+cmds=("nix eval --impure --file tests/home.nix"
+  "nix eval --impure --file tests/mounts.nix"
+  "nix eval --impure --file tests/outputs.nix"
+  "nix eval --impure --file tests/wrap.nix"
+  "nix build --no-link --quiet -f tests/appdir.nix"
+  "nix build --no-link --quiet -f tests/brave-layout.nix"
+  "nix build --no-link --quiet -f tests/shellwrap.nix"
+  "nix build --no-link --quiet -f tests/yazi-install.nix"
+  "env TEST_HOST=methyl nix eval --impure --file tests/configs.nix"
+  "env TEST_HOST=methyl-nixos nix eval --impure --file tests/configs.nix"
+  "env TEST_HOST=propyl nix eval --impure --file tests/configs.nix")
+wave=$(mktemp -d "${TMPDIR:-/tmp}/gate-wave.XXXXXX")
+for i in "${!labels[@]}"; do
+  throttle 4
+  gate_job "$wave/$i" "${scopes[i]}" bash -c "${cmds[i]}"
 done
-
-# What a derivation puts in its $out is not an evaluated value, so tests/appdir.nix re-runs
-# features/hm-ghostty/_package.nix's real installPhase against a synthetic AppDir and the gate
-# reads the build's exit status. src is a placeholder, so no AppImage is ever fetched; this is
-# the only build the gate performs (~8s on a warm store).
-gate "tests/appdir.nix [fixture build]" appdir nix build --no-link --quiet -f tests/appdir.nix
-
-# The same build-tier logic for hm-brave's store layout: tests/brave-layout.nix re-runs the
-# derivation's real installPhase over a synthetic rpm payload, where a copy of a store ELF stands
-# in for the patched binary (patchelf needs real ELF bytes). bin/ symlinks, the desktop-entry Exec
-# rewrite and the icon placement are checked against the tree that ships (~5s on a warm store,
-# and the rpm is never fetched).
-gate "tests/brave-layout.nix [rpm fixture build]" brave-layout nix build --no-link --quiet -f tests/brave-layout.nix
-
-# The same build-tier logic for the shipped shell wrappers: writeShellApplication shellchecks the
-# text it wraps, so the thing that ships is the thing that is linted (~4s on a warm store, and no
-# upstream fetch -- xilo's store path is a placeholder in tests/shellwrap.nix).
-gate "tests/shellwrap.nix [wrapper build + shellcheck]" shellwrap nix build --no-link --quiet -f tests/shellwrap.nix
-
-# The same build-tier logic for the pinned yazi build: tests/yazi-install.nix unpacks the real
-# pinned sources and re-runs features/hm-yazi/_package.nix's real postInstall, so the completion
-# names, man pages, desktop entry and resized logos are checked against the revision actually
-# pinned rather than a tree the test drew (~10s on a warm store, ~15 MB of sources once).
-gate "tests/yazi-install.nix [postInstall fixture]" yazi-install nix build --no-link --quiet -f tests/yazi-install.nix
-
-# tests/configs.nix evaluates one host per process (see its header): forcing three hosts in
-# one eval needs ~4GB, which is over the cap.
-for host in methyl methyl-nixos propyl; do
-  TEST_HOST="$host" gate "tests/configs.nix [$host]" "configs-$host" nix eval --impure --file tests/configs.nix
-done
+wait
+for i in "${!labels[@]}"; do verdict "${labels[i]}" "$wave/$i"; done
+rm -rf "$wave"
 
 # The boot path must be a rebuild that installs the bootloader. nixos-rebuild-ng sets
 # NIXOS_INSTALL_BOOTLOADER itself and runs the activation under `env -i`, so an `env`
@@ -199,37 +223,75 @@ fi
 # CLI's own argv and exit status survive, so tests/xilo.bats joins them.
 # install.sh is staged destruction: which step asks for a yes, what a scripted run refuses, and that
 # prepare leaves the partition table byte-identical, so tests/install.bats joins them on stubs.
+# cache-check is the eval-only cache pre-flight: its exit codes (0 clean, 1 naming a cache, 2 bad
+# host/argument) and the fact that a host name reaches the Nix expression only after it matched the
+# flake's own configurations are argv-level, so tests/cache-check.bats joins them on a stubbed `nix`.
+# The cache logic itself is eval-tier: tests/caches.nix on the module, tests/configs.nix on real hosts.
 # terraform.sh is the shared-drive half, so tests/terraform.bats runs it against real filesystems in
 # files: a blank partition gets really formatted, and a partition another OS owns must come back
 # byte-identical. No root, no loop device, no derivation (ADR-b77ec913151f).
+# The two bats tiers touch nothing in common — every suite and every fixture gets its own temp dir —
+# so they overlap instead of running back to back: 8s + 22s -> ~22s, concurrent peak ~850MB. Each
+# keeps its own scope, and the verdicts are still printed one per line, stub tier first.
+tiers=$(mktemp -d "${TMPDIR:-/tmp}/bats-tiers.XXXXXX")
 if ! command -v bats >/dev/null 2>&1; then
   echo "skip bats suites [bats not installed]"
+  echo "skip tests/terraform.bats [bats not installed]"
 else
-  for suite in tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats \
-    tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats; do
-    if out=$(bats "$suite" 2>&1); then
-      echo "ok   $suite [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
-    else
-      echo "FAIL $suite"
-      printf '%s\n' "$out" | grep -E '^not ok|^# ' | tail -20
-      fail=1
+  (
+    suites=(tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats \
+      tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats)
+    # One bats call with the files in parallel (--no-parallelize-within-files): each suite still runs
+    # its tests sequentially inside its own worker, so shared stub state inside a suite survives.
+    # `parallel` is borrowed from the devShell onto PATH rather than swapping shells, because
+    # creds.bats and sopsctl.bats run the host's real sops/age/systemd-creds. Without it the tier
+    # runs sequentially. Measured 35s -> 8s over 291 tests; a failure still names its file.
+    jobs=()
+    par=$(nix develop --command sh -c 'command -v parallel' 2>/dev/null || true)
+    if [ -n "$par" ]; then
+      PATH="$(dirname "$par"):$PATH"
+      jobs=(--jobs 8 --no-parallelize-within-files)
     fi
-  done
-fi
-
-# terraform.bats is not stub-driven: it runs real mkfs, blkid, mtools and sgdisk on sparse files,
-# so it runs in the devShell, which is the environment that carries those tools (ADR-b77ec913151f).
-# Running it plainly would skip it on any machine without them, which is where the proof matters.
-if command -v nix >/dev/null 2>&1 && command -v bats >/dev/null 2>&1; then
-  if out=$(nix develop --command bats tests/terraform.bats 2>&1); then
-    echo "ok   tests/terraform.bats [$(printf '%s\n' "$out" | grep -c '^ok') passed]"
+    bats "${jobs[@]}" "${suites[@]}" >"$tiers/stub" 2>&1
+    printf '%s' "$?" >"$tiers/stub.rc"
+  ) &
+  # terraform.bats is not stub-driven: it runs real mkfs, blkid, mtools and sgdisk on sparse files,
+  # so it runs in the devShell, which is the environment that carries those tools
+  # (ADR-b77ec913151f). Running it plainly would skip it on any machine without them, which is where
+  # the proof matters. 16 jobs: the fixture copies are sparse now, so the peak is ~841MB with no
+  # swap -- dense copies at 16 jobs put ~637MB of tmpfs into swap, the only way this tier ever
+  # touches the SSD. Measured 46s -> 17s, 58/58 green.
+  byte=run
+  if ! command -v nix >/dev/null 2>&1; then
+    byte=skip
   else
-    echo "FAIL tests/terraform.bats"
-    printf '%s\n' "$out" | grep -E '^not ok|^# ' | tail -20
+    (
+      TEST_SCOPE_NAME=terraform tests/nix-eval.sh "$mem" -- nix develop --command \
+        bash -c 'bats --jobs 16 tests/terraform.bats' >"$tiers/byte" 2>&1
+      printf '%s' "$?" >"$tiers/byte.rc"
+    ) &
+  fi
+  wait
+  if [ "$(cat "$tiers/stub.rc")" = 0 ]; then
+    echo "ok   stub bats suites [$(grep -c '^ok' "$tiers/stub") passed]"
+  else
+    echo "FAIL stub bats suites [$(grep -c '^not ok' "$tiers/stub") failed]"
+    grep -E '^not ok|^# ' "$tiers/stub" | tail -20
     fail=1
   fi
-else
-  echo "skip tests/terraform.bats [nix or bats not installed]"
+  if [ "$byte" = skip ]; then
+    echo "skip tests/terraform.bats [nix not installed]"
+  else
+    split_peak "$(cat "$tiers/byte")"
+    if [ "$(cat "$tiers/byte.rc")" = 0 ]; then
+      echo "ok   tests/terraform.bats [$(printf '%s\n' "$body" | grep -c '^ok') passed]  $peak"
+    else
+      echo "FAIL tests/terraform.bats [$(printf '%s\n' "$body" | grep -c '^not ok') failed]  $peak"
+      printf '%s\n' "$body" | grep -E '^not ok|^# ' | tail -20
+      fail=1
+    fi
+  fi
+  rm -rf "$tiers"
 fi
 
 # Byte-parity between the two template expanders, which live in different runtimes:

@@ -26,6 +26,51 @@
 # shellcheck disable=SC2030,SC2031
 load helpers
 
+# setup_file builds the fixtures once per file. bats runs every @test in its own subshell with a
+# fresh stub dir, and keygen plus the pty runner cost about 150ms of each of this suite's 62 tests;
+# setup copies these into the test's stub dir.
+setup_file() {
+  sops_template="$(mktemp -d)"
+  export sops_template
+  # Real keypairs for the passphrase probe: the check reads an OpenSSH header, so the fixture has
+  # to be a real key. ssh-keygen is on a Linux host already; a host without it skips those tests.
+  ssh-keygen -q -t ed25519 -N 'protectpass' -f "$sops_template/ssh_protected" 2>/dev/null || true
+  ssh-keygen -q -t ed25519 -N '' -f "$sops_template/ssh_unlocked" 2>/dev/null || true
+  # A pre-2014 keypair: PEM, not the OpenSSH format ssh-to-age parses. `-m PEM` is how you still
+  # make one; `ssh-keygen -o` is how you fix one.
+  ssh-keygen -q -t rsa -b 2048 -m PEM -N '' -f "$sops_template/ssh_pem" 2>/dev/null || true
+
+  # A real terminal on stdin, so a `-t 0` branch is exercised rather than assumed. This host has no
+  # `script`, so python's pty is the only way to hand a child a tty. The runner kills the child after
+  # 5s and reports 124, so a hang shows up as a failing status instead of a wedged suite.
+  # `pty` imports the stdlib `tty` module, so the runner must not be named tty.py — python would
+  # import this file instead of the stdlib.
+  python=$(command -v python3 || true)
+  export python
+  if [ -n "$python" ]; then
+    cat >"$sops_template/ptyrun.py" <<'EOF'
+import os, pty, signal, subprocess, sys
+master, slave = pty.openpty()
+p = subprocess.Popen(sys.argv[1:], stdin=slave, stdout=subprocess.PIPE,
+                     stderr=subprocess.STDOUT, close_fds=True, start_new_session=True)
+os.close(slave)
+try:
+    out, _ = p.communicate(timeout=3)
+    code = p.returncode
+except subprocess.TimeoutExpired:
+    # Killing the child alone leaves its own children alive holding the stdout pipe open, so
+    # reading to EOF would hang forever: kill the whole session.
+    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+    out = p.communicate()[0]
+    code = 124
+sys.stdout.buffer.write(out)
+sys.exit(code)
+EOF
+  fi
+}
+
+teardown_file() { rm -rf "$sops_template"; }
+
 setup() {
   harness_stub_dir
   export CALLS="$calls" STUBS="$stubs"
@@ -33,6 +78,15 @@ setup() {
   store="$stubs/store"
   mkdir -p "$store"
   printf 'age1aaa\nage1bbb\n' >"$store/recipient"
+
+  # The keypairs and the pty runner are fixtures, copied per test rather than built in it.
+  cp "$sops_template/ssh_protected"* "$sops_template/ssh_unlocked"* "$sops_template/ssh_pem"* "$stubs/" 2>/dev/null || true
+  cp "$sops_template/ptyrun.py" "$stubs/ptyrun.py" 2>/dev/null || true
+  tty="$stubs/tty"
+  if [ -f "$stubs/ptyrun.py" ]; then
+    printf '#!/usr/bin/env bash\nexec "%s" "%s/ptyrun.py" "$@"\n' "$python" "$stubs" >"$tty"
+    chmod +x "$tty"
+  fi
 
   # ksshaskpass exists in the suite only as a trap: nothing in sopsctl may run it, and the stub
   # outranks whatever the host has on PATH, so any askpass call shows up in the call log.
@@ -100,15 +154,6 @@ echo "ssh-to-age $*" >> "$CALLS"
 printf 'age1stubderived\n'
 EOF
 
-  # Real keypairs for the passphrase probe: the check reads an OpenSSH header, so the fixture has
-  # to be a real key. ssh-keygen is on a Linux host already; a host without it skips those tests.
-  ssh-keygen -q -t ed25519 -N 'protectpass' -f "$stubs/ssh_protected" 2>/dev/null || true
-  ssh-keygen -q -t ed25519 -N '' -f "$stubs/ssh_unlocked" 2>/dev/null || true
-
-  # A pre-2014 keypair: PEM, not the OpenSSH format ssh-to-age parses. `-m PEM` is how you still
-  # make one; `ssh-keygen -o` is how you fix one.
-  ssh-keygen -q -t rsa -b 2048 -m PEM -N '' -f "$stubs/ssh_pem" 2>/dev/null || true
-
   # init writes the identity here instead of into a wallet, and the rules file beside the records.
   # CREDS_ROOT keeps the whole public store — rules, recipient file, records — inside the fixture, so
   # the suite never touches the real ~/.local/share/credentials.
@@ -129,36 +174,6 @@ EOF
   yaml_record="$store/XILO.sops.yaml"
   printf 'secret: ENC[AGE1,mock]\nTOKEN: ENC[AGE1,mock]\nsops:\n  age:\n    - recipient: age1meta\n' >"$yaml_record"
   chmod 400 "$yaml_record"
-
-  # A real terminal on stdin, so a `-t 0` branch is exercised rather than assumed. This host has no
-  # `script`, so python's pty is the only way to hand a child a tty. The runner kills the child after
-  # 5s and reports 124, so a hang shows up as a failing status instead of a wedged suite.
-  # `pty` imports the stdlib `tty` module, so the runner must not be named tty.py — python would
-  # import this file instead of the stdlib.
-  tty="$stubs/tty"
-  py=$(command -v python3 || true)
-  if [ -n "$py" ]; then
-    cat >"$stubs/ptyrun.py" <<'EOF'
-import os, pty, signal, subprocess, sys
-master, slave = pty.openpty()
-p = subprocess.Popen(sys.argv[1:], stdin=slave, stdout=subprocess.PIPE,
-                     stderr=subprocess.STDOUT, close_fds=True, start_new_session=True)
-os.close(slave)
-try:
-    out, _ = p.communicate(timeout=3)
-    code = p.returncode
-except subprocess.TimeoutExpired:
-    # Killing the child alone leaves its own children alive holding the stdout pipe open, so
-    # reading to EOF would hang forever: kill the whole session.
-    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-    out = p.communicate()[0]
-    code = 124
-sys.stdout.buffer.write(out)
-sys.exit(code)
-EOF
-    printf '#!/usr/bin/env bash\nexec "%s" "%s/ptyrun.py" "$@"\n' "$py" "$stubs" >"$tty"
-    chmod +x "$tty"
-  fi
 }
 
 ctl() { bash "$script" "$@"; }

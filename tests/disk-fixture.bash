@@ -14,9 +14,10 @@
 #   msr   18432..26623    8192 (4MB)   windows only
 #   ntfs  26624..42999   16384 (8MB)   windows only
 #   root  26624..59391   32768 (16MB)  linux / blank disks
-FAT32_TYPE=C12A7EA9-344C-4175-A575-202976385741
+# The ESP GUID, not the FAT32 GUID: firmware scans partitions by the ESP GUID (UEFI 2.7 §12.3), which
+# is what the VM's own ESP carries (`C12A7328…`, seen on nvme0n1p1 on 192.168.1.237).
 LINUX_TYPE=0FC63DAF-8483-4772-8E79-3D69D8457574
-ESP_TYPE=C12A7EA9-344C-4175-A575-202976385741
+ESP_TYPE=C12A7328-F81F-11D2-BA4B-00A0C93EC93B
 MSR_TYPE=E8250974-344C-FF3D-9D17-806509A1E1AA
 NTFS_TYPE=0657FE6D-A4A1-43C4-A16B-7172F04D58CD
 ESP_START=2048 ESP_END=18431 ESP_N=16384
@@ -56,7 +57,7 @@ fixture_setup_file() {
   # tests, which each run in a separate one.
   template_dir="$(mktemp -d)"
   export template_dir
-  local esp="1:$ESP_START:$ESP_END:$FAT32_TYPE:esp"
+  local esp="1:$ESP_START:$ESP_END:$ESP_TYPE:esp"
   local root="2:$LINUX_START:$LINUX_END:$LINUX_TYPE:root"
   local msr="2:$MSR_START:$MSR_END:$MSR_TYPE:msr"
   local ntfs="3:$NTFS_START:$NTFS_END:$NTFS_TYPE:basic-data"
@@ -70,19 +71,61 @@ fixture_setup_file() {
   build_shape pick "$esp" "2:$LINUX_START:$LINUX_END:$LINUX_TYPE:foreign-root" "3:$LINUX2_START:$LINUX2_END:$LINUX_TYPE:nixos-root"
   build_shape tight "$esp" "2:$NTFS_START:$NTFS_END:$NTFS_TYPE:basic-data"
   build_shape full "$esp" "2:$FULL_START:$FULL_END:$LINUX_TYPE:root"
+  # A blank ESP carrying the ESP GUID under a name that is not `esp`: adoption has to match the
+  # partition type, because a Windows or firmware-created ESP names itself something else.
+  build_shape espghost "1:$ESP_START:$ESP_END:$ESP_TYPE:firmware"
+  # A drive with no ESP at all: one blank Basic Data partition. Flags mode must not fill it in as a
+  # boot partition — a blank Basic Data partition says nothing about what it should hold.
+  build_shape bd "1:$ESP_START:$ESP_END:$NTFS_TYPE:basic-data"
+
+  # The drives whose tests only *read* a filesystem that already exists (they assert mkfs is never
+  # called) are formatted once here rather than by every test: a real mkfs per test is what made
+  # them the slowest tests in the tier. `disk <name> <shape>` copies the formatted bytes, and
+  # `nodes` re-derives the partition files from the image, so no slice file is copied.
+  build_preformatted pre-btrfs 128M btrfs
+  build_preformatted pre-ext4 128M ext4
+  build_preformatted pre-xfs 320M xfs
 }
 
 fixture_teardown_file() { rm -rf "$template_dir"; }
 
+# build_preformatted <name> <size> <root-fs> — an ESP and a root that already hold real filesystems,
+# at the geometry those tests wrote: ESP at 2048..18431, root from 20480 to the end of the drive.
+# The sizes are the smallest that work: mkfs.btrfs refuses a filesystem below ~114MB and mkfs.xfs
+# below ~300MB, and the ESP takes 9MB of the drive.
+build_preformatted() {
+  local name="$1" size="$2" fs="$3" sect img="$template_dir/$1.img" saved="${disk_dir:-}"
+  truncate -s "$size" "$img"
+  printf '2048 16384 %s\n20480\n' "$ESP_TYPE" | sfdisk -X gpt "$img" >/dev/null 2>&1
+  sect=$(sfdisk --json "$img" | jq -r '.partitiontable.partitions[1].size')
+  # format_slice writes through $disk_dir, so for the duration of this the template directory is the
+  # fixture directory.
+  disk_dir="$template_dir"
+  format_slice "$name" 1 "$ESP_START" "$ESP_N" vfat boot
+  format_slice "$name" 2 20480 "$sect" "$fs" nixos
+  # adopt writes back densely, so the zeros between the filesystems land in tmpfs as real pages.
+  # The image is freshly truncated and nothing here overwrote data, so punching those holes out is
+  # safe and keeps three big shapes from costing RAM the tests never read.
+  fallocate --dig-holes "$img"
+  disk_dir="$saved"
+}
+
 # disk <name> [shape] — this test's own copy of a template, so every test starts from the bytes the
-# shape was built with and nothing a test writes reaches another test.
-disk() { cp --reflink=auto "$template_dir/${2:-$1}.img" "$disk_dir/$1.img"; }
+# shape was built with and nothing a test writes reaches another test. `--sparse=always` keeps the
+# copy's holes as holes: the images live in tmpfs, where written pages are charged to the scope, so
+# a dense copy of a 64M image costs RAM the test never reads.
+disk() { cp --reflink=auto --sparse=always "$template_dir/${2:-$1}.img" "$disk_dir/$1.img"; }
 
 # slice <disk> <index> <start> <count> — the partition as its own file, named as sfdisk names it.
-slice() { dd if="$disk_dir/$1.img" of="$disk_dir/$1.img$2" bs=512 skip="$3" count="$4" status=none; }
+# `conv=sparse` skips the zero blocks of a blank partition, which is what blkid reads as no
+# signature either way.
+slice() {
+  dd if="$disk_dir/$1.img" of="$disk_dir/$1.img$2" bs=512 skip="$3" count="$4" conv=sparse status=none
+}
 
 # adopt <disk> <index> — the slice written back into the image, which is what a real mkfs would do
-# to a real partition.
+# to a real partition. Dense on purpose: zeros here overwrite bytes the image already holds, so
+# `conv=sparse` would leave a foreign partition's data behind and break the byte-identity checks.
 adopt() { dd if="$disk_dir/$1.img$2" of="$disk_dir/$1.img" bs=512 seek="$3" count="$4" conv=notrunc status=none; }
 
 table_checksum() { dd if="$disk_dir/$1.img" bs=1M count=1 status=none | md5sum | cut -d' ' -f1; }
@@ -150,7 +193,7 @@ root_data() { printf 'KEEP\n' >"$disk_dir/keep.txt"; debugfs -w -R "write $disk_
 # partition comes out as zeros, which is exactly what blkid reads as no signature.
 nodes() {
   while read -r node start size; do
-    dd if="$disk_dir/$1.img" of="$node" bs=512 skip="$start" count="$size" status=none
+    dd if="$disk_dir/$1.img" of="$node" bs=512 skip="$start" count="$size" conv=sparse status=none
   done < <(sfdisk --json "$disk_dir/$1.img" | jq -r '.partitiontable.partitions[] | "\(.node) \(.start) \(.size)"')
 }
 

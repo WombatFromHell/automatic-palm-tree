@@ -121,7 +121,8 @@
       in {
         default = pkgs.mkShell {
           packages = with pkgs;
-            [curl jq nix bats shellcheck shfmt nix-unit]
+            # `parallel` is what `bats --jobs` needs; without it bats runs 0 tests and exits 1.
+            [curl jq nix bats parallel shellcheck shfmt nix-unit]
             ++
             # terraform.sh's tools: the table reader, the signature reader, the five filesystem
             # formatters and mtools for reading an ESP that lives in a file (tests/disk-fixture.bash).
