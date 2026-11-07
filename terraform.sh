@@ -485,6 +485,11 @@ if [ -n "$recipe" ]; then
   case "$declared_opts" in
   *" "*) refuse "recipe options must be a comma-separated list, not \"$declared_opts\"" ;;
   esac
+  # Options that only a btrfs filesystem takes are refused on a partition that is not btrfs: mount
+  # would hand them to a filesystem with no such parameter and fail on an unknown option. The
+  # fallback in mount_opts is already scoped by filesystem; this is the declared case.
+  mismatched=$(jq -r '[.partitions[] | select(.fs != "btrfs") | select((.options // "") | test("compress=|subvol=|datacow|space_cache|ssspread|flushoncommit|quota")) | "\(.name): \(.options)"] | join("; ")' "$recipe" 2>/dev/null || true)
+  [ -z "$mismatched" ] || refuse "the recipe mounts a non-btrfs partition with btrfs options — $mismatched"
   root_opts=$(jq -r '.partitions[] | select(.mount == "/") | .options // ""' "$recipe" 2>/dev/null || true)
   entries=$(jq -r '.partitions[] | "\(.name)\u001f\(.label // "")\u001f\(.fs)\u001f\(.size // "")\u001f\(.type // "")\u001f\(.mount // "")"' "$recipe" 2>/dev/null) ||
     refuse "cannot read recipe $recipe"
@@ -677,7 +682,7 @@ create_subvolumes() {
 }
 
 owned_run() {
-  local name label fs size type mnt need sect pos plan node i src root_node root_fresh adopted declared current opts
+  local name label fs size type mnt need sect pos plan node i src root_node adopted declared current opts
   pos=$align
   plan=""
   while IFS="$sep" read -r name label fs size type mnt; do
@@ -739,7 +744,6 @@ owned_run() {
   parts=$(printf '%s\n' "$table" | jq -r '.partitiontable.partitions[] | "\(.node) \(.type)"')
   i=0
   root_node=""
-  root_fresh=0
   while IFS="$sep" read -r name start sect type label fs mnt; do
     [ -n "$name" ] || continue
     if [ "$dry" = 1 ]; then
@@ -755,7 +759,6 @@ owned_run() {
     sig=$(signature "$node")
     if [ "$mnt" = / ]; then
       root_node="$node"
-      [ -z "$sig" ] && root_fresh=1
     fi
     format_blank "$node" "$fs" "/dev/disk/by-label/$label" "$sig" || exit 2
     i=$((i + 1))
@@ -776,13 +779,24 @@ owned_run() {
     mounted_now=1
   fi
 
-  # A btrfs root this run just formatted needs its tree before anything is written into it; an
-  # adopted one already has it. The tree is made from the filesystem root, then / is mounted as the @
-  # subvolume the host's config asks for.
-  if [ "$root_fs" = btrfs ] && [ "$root_fresh" = 1 ] && [ "$dry" = 0 ]; then
+  # The tree is the content of the root filesystem, so an adopted root that lacks it is the same gap
+  # the host's config would hit at boot: @ is what / mounts, @nix is where deploy puts the store, and
+  # the others are mounts the config declares. Creation is idempotent (`show` first), and the
+  # siblings of @ can only be made with the filesystem root mounted, so the mount is switched here
+  # rather than trusted.
+  if [ "$root_fs" = btrfs ] && [ "$dry" = 0 ]; then
+    src=$(findmnt -n -o SOURCE "$mount" 2>/dev/null || true)
+    src=${src%%\[*}
+    [ -z "$src" ] || [ "$src" = "$root_node" ] ||
+      refuse "$mount is mounted from ${src:-nothing}, not the root partition $root_node: terraform.sh will not lay a subvolume tree into somebody else's mount"
+    if [ -n "$src" ]; then
+      run umount "$mount"
+    fi
+    run mount "$root_node" "$mount"
     create_subvolumes "$mount"
     run umount "$mount"
     run mount -o "subvol=@${opts:+,$opts}" "$root_node" "$mount"
+    mounted_now=1
   fi
 
   # A dry run wrote nothing, so there is no drive to re-read: the plan printed above is the answer.

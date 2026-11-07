@@ -569,7 +569,8 @@ EOF
   : >"$calls"
   printf '1\n' >"$stubs/mounted"
 
-  run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
+  # findmnt has to report the root partition this run mounted, not a canned /dev/vda2.
+  MOUNTED_SRC="$disk_dir/own.img2" run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 0 ]
   assert_out "already holds the layout the recipe declares"
   assert_out "already mounted"
@@ -577,6 +578,41 @@ EOF
   assert_no_call "mkfs"
   assert_no_call "btrfs subvolume create"
   [ "$(entries_json own)" = "$entries_before" ]
+  [ "$(table_checksum own)" = "$before" ]
+}
+
+# The tree is content of the root filesystem, not something a run only does when it formatted that
+# filesystem: a drive that holds the layout but only @ would boot into mounts the config declares and
+# that were never created.
+@test "an adopted btrfs root that lacks the tree lays it down and mounts @ as /" {
+  truncate -s 256M "$disk_dir/tree.img"
+  stub_lsblk "$disk_dir/tree.img"
+  recipe_file "$stubs/tree.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
+  run terraform_recipe_run tree "$stubs/tree.json" --disk "$disk_dir/tree.img"
+  [ "$status" -eq 0 ]
+  printf '@\n' > "$stubs/subvols"
+  : > "$calls"
+
+  run terraform_recipe_run tree "$stubs/tree.json" --disk "$disk_dir/tree.img"
+  [ "$status" -eq 0 ]
+  assert_out "already holds the layout the recipe declares"
+  assert_call "^btrfs subvolume create $disk_dir/mnt/@nix$"
+  assert_call "^btrfs subvolume create $disk_dir/mnt/@swap$"
+  assert_no_call "btrfs subvolume create $disk_dir/mnt/@$"
+  assert_call "^mount -o subvol=@,noatime,compress=zstd $disk_dir/tree.img2 $disk_dir/mnt$"
+  assert_no_call "mkfs"
+}
+
+# btrfs options on a partition that is not btrfs reach mount as a parameter that filesystem does not
+# have, so they are refused at recipe read rather than passed on to fail.
+@test "a recipe that mounts a non-btrfs partition with btrfs options is refused before any write" {
+  disk own bare
+  recipe_file "$stubs/mix.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/:compress=zstd"
+  stub_lsblk "$disk_dir/own.img"
+  before=$(table_checksum own)
+  run terraform_recipe_run own "$stubs/mix.json" --disk "$disk_dir/own.img"
+  [ "$status" -eq 2 ]
+  assert_out "non-btrfs partition with btrfs options"
   [ "$(table_checksum own)" = "$before" ]
 }
 
