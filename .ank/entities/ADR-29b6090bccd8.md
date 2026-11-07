@@ -5,15 +5,19 @@ slug: oom-limits-land-on-the-monitored-cgroups-and-mem
 title: OOM limits land on the monitored cgroups, and MemoryMax= on -.slice is the RAM ceiling
 created: 2026-11-07T18:23:57Z
 author: josh@methyl-bazzite
-status: proposed
+status: accepted
 scope:
   - features/nixos-oom/**
   - tests/oomd.nix
   - hosts/methyl-base/**
 constraint: |
   systemd-oomd limits must be written on the cgroups systemd-oomd monitors (-.slice and user.slice, each declaring ManagedOOMSwap=kill), and the bound on RAM usage is MemoryMax= on -.slice, because oomd itself has no memory-usage knob and a limit written on a unit nobody monitors binds nothing.
+ratified: 8becf5a33c28
+verified:
+  - by: josh@methyl-bazzite
+    at: 2026-11-07T18:27:45Z
 schema: 4
-version: 1
+version: 2
 ---
 
 The measured input is methyl-bazzite: Strata sits at roughly 90% of methyl's 32GB during inference, and a run that pushes past that has locked the machine. The rule the feature now implements is a danger band, not a threshold: nothing is throttled below 93%, 93-97% is where reclaim pushes pages into zswap and systemd-oomd looks for a candidate, and 97% is the line the kernel is allowed to cross nothing past.
