@@ -17,6 +17,8 @@ ratified: 01f7bab91b70
 verified:
   - by: josh@methyl-bazzite
     at: 2026-11-06T23:43:54Z
+  - by: josh@methyl-bazzite
+    at: 2026-11-07T00:06:48Z
 schema: 4
-version: 2
+version: 3
 ---
