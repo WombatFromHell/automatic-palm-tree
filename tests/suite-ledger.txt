@@ -1,0 +1,34 @@
+# Assertion floors, held by tests/floors.sh. One line per suite: "<path> <kind> <floor>", where
+# kind is assert (an assert_* call in a bats suite), checks (a ck "…" call in an eval-tier suite)
+# or attrs (a test* attribute run by nix-unit). Floors are the counts measured today and ratchet up
+# only: deleting a check is a deliberate edit to this file, so it shows up in the diff.
+# Build suites (appdir, brave-layout, shellwrap, yazi-install) are absent on purpose -- they assert
+# by throwing inside a build, so there is no count to floor.
+tests/bootstrap.bats assert 19
+tests/build-harness.bats assert 6
+tests/cache-check.bats assert 13
+tests/creds.bats assert 14
+tests/install.bats assert 92
+tests/njust.bats assert 122
+tests/sopsctl.bats assert 79
+tests/terraform.bats assert 157
+tests/updater.bats assert 13
+tests/xilo.bats assert 31
+tests/configs.nix checks 25
+tests/home.nix checks 21
+tests/mounts.nix checks 8
+tests/outputs.nix checks 11
+tests/wrap.nix checks 15
+tests/ank.nix attrs 5
+tests/caches.nix attrs 13
+tests/disko.nix attrs 6
+tests/filesystems.nix attrs 56
+tests/loader.nix attrs 50
+tests/oomd.nix attrs 14
+tests/package-flags.nix attrs 1
+tests/pins.nix attrs 7
+tests/ptrace.nix attrs 5
+tests/suite.nix attrs 3
+tests/warnings.nix attrs 13
+tests/zram.nix attrs 4
+tests/floors.bats assert 6

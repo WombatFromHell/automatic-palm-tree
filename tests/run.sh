@@ -33,6 +33,17 @@ export XDG_CACHE_HOME="$cache"
 
 fail=0
 
+# Assertion floors (tests/floors.sh against tests/suite-ledger.txt): a suite that stops proving
+# something is a source change, so this guard only greps -- ~0MB, no eval. Its counts are reused on
+# the bats verdict lines below, so an "ok" always says how much was proven.
+if floors=$(tests/floors.sh 2>&1); then
+  echo "ok   assertion floors [$(awk '{a[$2]+=$3} END{printf "%d assertions, %d checks, %d attrs", a["assert"], a["checks"], a["attrs"]}' <<<"$floors")]"
+else
+  echo "FAIL assertion floors"
+  printf '%s\n' "$floors" | grep '^FAIL' | tail -20
+  fail=1
+fi
+
 # Shell that ships without writeShellApplication is never linted: nixpkgs' checkPhase only sees the
 # text it wraps. These are shipped as-is, so the gate lints them itself (~0MB, ~1s, no nix).
 # shortcut: inline text passed to writeShellScriptBin (features/hm-gpg/home.nix's pinentry-fallback)
@@ -56,8 +67,14 @@ fi
 # up here instead of only in a separate measurement.
 peak=""
 body=""
+shown=""
 split_peak() {
   body=$(printf '%s\n' "$1" | grep -v '^peak=')
+  # A suite's verdict is its "OK …" line (with its check count) or nix-unit's own tally; nix's
+  # warnings and fetch waits land in the same output, so the verdict line shows the verdict rather
+  # than whichever line came first.
+  shown=$(printf '%s\n' "$body" | grep -E '^"OK|^🎉' | head -n 1)
+  [ -n "$shown" ] || shown=$(printf '%s\n' "$body" | head -n 1)
   peak=$(printf '%s\n' "$1" | grep '^peak=' | tail -n 1)
   [ -n "$peak" ] || peak="peak=n/a"
 }
@@ -70,7 +87,7 @@ gate() {
   local out
   if out=$(TEST_SCOPE_NAME="$scope" tests/nix-eval.sh "$mem" -- "$@" 2>&1); then
     split_peak "$out"
-    echo "ok   $label  $body  $peak"
+    echo "ok   $label  $shown  $peak"
   else
     split_peak "$out"
     echo "FAIL $label  $peak"
@@ -95,7 +112,7 @@ verdict() {
   local label="$1" out="$2"
   split_peak "$(cat "$out")"
   if [ "$(cat "$out.rc")" = 0 ]; then
-    echo "ok   $label  $body  $peak"
+    echo "ok   $label  $shown  $peak"
   else
     echo "FAIL $label  $peak"
     printf '%s\n' "$body" | tail -20
@@ -243,7 +260,7 @@ if ! command -v bats >/dev/null 2>&1; then
 else
   (
     suites=(tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats
-      tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats)
+      tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats tests/floors.bats)
     # One bats call with the files in parallel (--no-parallelize-within-files): each suite still runs
     # its tests sequentially inside its own worker, so shared stub state inside a suite survives.
     # `parallel` is borrowed from the devShell onto PATH rather than swapping shells, because
@@ -276,7 +293,8 @@ else
   fi
   wait
   if [ "$(cat "$tiers/stub.rc")" = 0 ]; then
-    echo "ok   stub bats suites [$(grep -c '^ok' "$tiers/stub") passed]"
+    stub_asserts=$(printf '%s\n' "$floors" | awk '$2 == "assert" && $1 != "tests/terraform.bats" {s+=$3} END{print s+0}')
+    echo "ok   stub bats suites [$(grep -c '^ok' "$tiers/stub") passed, $stub_asserts assertions]"
   else
     echo "FAIL stub bats suites [$(grep -c '^not ok' "$tiers/stub") failed]"
     grep -E '^not ok|^# ' "$tiers/stub" | tail -20
@@ -286,8 +304,9 @@ else
     echo "skip tests/terraform.bats [nix not installed]"
   else
     split_peak "$(cat "$tiers/byte")"
+    byte_asserts=$(printf '%s\n' "$floors" | awk '$2 == "assert" && $1 == "tests/terraform.bats" {s+=$3} END{print s+0}')
     if [ "$(cat "$tiers/byte.rc")" = 0 ]; then
-      echo "ok   tests/terraform.bats [$(printf '%s\n' "$body" | grep -c '^ok') passed]  $peak"
+      echo "ok   tests/terraform.bats [$(printf '%s\n' "$body" | grep -c '^ok') passed, $byte_asserts assertions]  $peak"
     else
       echo "FAIL tests/terraform.bats [$(printf '%s\n' "$body" | grep -c '^not ok') failed]  $peak"
       printf '%s\n' "$body" | grep -E '^not ok|^# ' | tail -20

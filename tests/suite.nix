@@ -38,4 +38,10 @@ in
       expr = lib.unique duplicated;
       expected = [];
     };
+    # The ck tier's verdict line carries its check count (support.nix suite()), so "OK" always
+    # says how much was proven. tests/floors.sh floors the same count statically.
+    testSuiteVerdictCarriesCheckCount = {
+      expr = s.suite "x" [(s.ck "a" true)];
+      expected = "OK x (1 checks)";
+    };
   }

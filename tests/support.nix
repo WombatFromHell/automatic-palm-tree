@@ -185,12 +185,14 @@ let
     ok = cond;
   };
 
-  # A suite prints "OK <name>" or throws naming every failing check.
+  # A suite prints "OK <name>" with its check count, or throws naming every failing check. The
+  # count is on the verdict line so the gate never prints "ok" for a suite that proves less than
+  # it used to; tests/floors.sh holds the same number as a floor.
   suite = name: checks: let
     failed = map (c: c.name) (builtins.filter (c: !c.ok) checks);
   in
     if failed == []
-    then "OK ${name}"
+    then "OK ${name} (${toString (builtins.length checks)} checks)"
     else throw "${name}: FAILED ${lib.concatStringsSep ", " failed}";
 in {
   inherit lib flake features featuresAt hostLib hostsAt fixtureHost builders hmCfg bareEval assertWarnStubs desktopStubs failingAssertions pkgNamed hasPkg countPkg ck suite fs rawFeaturePkgs;
