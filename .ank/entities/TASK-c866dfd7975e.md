@@ -10,7 +10,6 @@ scope:
   - terraform.sh
   - install.sh
   - hosts/**
-  - modules/terraform-recipe.nix
   - tests/terraform.bats
 blocked_by: []
 done_criteria: |
@@ -28,7 +27,7 @@ proof:
     reused: local
     by: josh@methyl-bottle
 schema: 4
-version: 3
+version: 4
 ---
 
 ADR-b77ec913151f says terraform.sh never creates a partition entry. Reproducing a recipe needs an
