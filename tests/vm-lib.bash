@@ -60,9 +60,14 @@ vm_build() {
 # The fifo must already exist: opening a fifo that is not there creates a regular file, which is
 # how qemu ends up reading an empty stdin and exits at once.
 vm_boot() {
-	local guest=$1 run_dir=$2 serial=$3 timeout=${4:-300} fifo=${5:-}
-	vm_scope "vm-boot-$$" 1300M bash -c \
-		"TMPDIR=$run_dir USE_TMPDIR=1 timeout $timeout $guest/bin/run-*-vm${fifo:+ < $fifo}" >>"$serial" 2>&1
+	local guest=$1 run_dir=$2 serial=$3 timeout=${4:-300} fifo=${5:-} mode=${6:-redirect}
+	local cmd="TMPDIR=$run_dir USE_TMPDIR=1 timeout $timeout $guest/bin/run-*-vm${fifo:+ < $fifo}"
+	if [ "$mode" = tee ]; then
+		# The console is the interface: the caller sees it while the host keeps the transcript.
+		vm_scope "vm-boot-$$" 1300M bash -c "$cmd" 2>&1 | tee -a "$serial"
+	else
+		vm_scope "vm-boot-$$" 1300M bash -c "$cmd" >>"$serial" 2>&1
+	fi
 }
 
 vm_serial_open() { exec 9>"$1"; }
@@ -127,6 +132,12 @@ vm_serial_login() {
 	# The prompt is what proves a shell came back. Not "# ": a colourised PS1 emits escape
 	# sequences and ends in "#" with no trailing space, so that pattern never matches.
 	vm_wait_for "$log" "$user@" "$timeout" || return 1
-	printf 'echo %s; exit\n' "$tag" >&9
-	vm_wait_for "$log" "$tag" "$timeout"
+	# uptime proves the shell is a live session, and poweroff ends the run instead of waiting for the
+	# boot timeout — both must run in this shell, because `exit` first would put poweroff on the
+	# respawned login prompt, where it is read as a username. qemu exits when the guest shuts down;
+	# `timeout 300` stays as the backstop for a guest that never gets here.
+	printf 'uptime; echo %s; poweroff\n' "$tag" >&9
+	vm_wait_for "$log" "$tag" "$timeout" || return 1
+	# uptime prints before the marker, so the marker already proves it ran; this checks the output.
+	grep -aq 'load average' "$log" || return 1
 }

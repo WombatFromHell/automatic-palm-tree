@@ -25,6 +25,37 @@ setup() {
   assert_out "selinux=Enforcing"
 }
 
+# The human-facing harness, driven the way a person drives it: commands typed into the console,
+# markers read back from the host's log. S2's proof is that the guest can see what the stages need.
+@test "the interactive harness boots a guest that sees the repo, the stage tools and a blank drive" {
+  local run_root=${VM_TMP:-/var/mnt/data0/temp/flakeroot-tmp}
+  local before
+  before=$(find "$run_root" -maxdepth 1 -name 'vm-shell-*' -type d | wc -l)
+
+  run bash "$repo/tests/vm-shell.sh" --script "$repo/tests/vm-shell-probe.sh"
+  [ "$status" -eq 0 ]
+
+  local log
+  log=$(grep -o '^log=.*' <<<"$output" | cut -d= -f2)
+  [ -f "$log" ]
+  for marker in 'SHELL OK: repo visible' 'SHELL OK: stage tools present' \
+    'SHELL OK: target drive blank' 'SHELL OK: drive named: /dev/vdb' \
+    'SHELL OK: secret file delivered' 'SHELL DONE'; do
+    grep -q "$marker" "$log"
+  done
+
+  local peak
+  peak=$(grep -o 'peak_guest_mb=[0-9]*' "$log" | cut -d= -f2)
+  [ "$peak" -le 1300 ]
+
+  # Nothing carries over: the run dir is gone, so the next invocation starts empty.
+  [ "$(find "$run_root" -maxdepth 1 -name 'vm-shell-*' -type d | wc -l)" -eq "$before" ]
+
+  # The probe reads the secret file but never prints it, so the host's log holds no password.
+  run grep -q 'toortest' "$log"
+  [ "$status" -ne 0 ]
+}
+
 @test "the spike boots fresh, stays inside its cap, leaves nothing behind, and logs on this host" {
   local run_root=${VM_TMP:-/var/mnt/data0/temp/flakeroot-tmp}
   local before

@@ -61,6 +61,6 @@ lines=$(grep '^[A-Za-z0-9_-]*:' "$cred")
 printf '%s\n' "$lines" | chpasswd || fail "chpasswd refused"
 ok "passwords applied for: $(cut -d: -f1 <<<"$lines" | paste -sd, -)"
 
-# No poweroff: the runner drives the serial login while the VM is alive, and its own timeout ends
-# the run.
+# The runner types poweroff once the login marker lands, so the run ends when its proof is done
+# instead of idling until the boot timeout — which stays as the backstop.
 echo "SPIKE DONE"

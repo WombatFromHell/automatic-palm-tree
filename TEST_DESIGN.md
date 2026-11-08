@@ -441,6 +441,13 @@ not systemd credentials — measured on this guest kernel, `fw_cfg` delivers not
 never typed into argv or echoed to the console, so the log the host keeps carries the login but not
 the password.
 
+A person drives the same harness through `tests/vm-shell.sh`, which hands the serial console to the
+terminal (`tee`, not a redirect) instead of asserting markers. `tests/vm-check.bats` drives it with
+`--script` so the interactive path is exercised rather than assumed. Either way the guest ends the run
+by powering off — `uptime; echo MARKER; poweroff` on one line, because `exit` first would land the
+shutdown on the respawned login prompt, where it reads as a username — and the boot's `timeout` stays
+as the backstop for a guest that never gets there.
+
 ## What we do not cover
 
 ```mermaid

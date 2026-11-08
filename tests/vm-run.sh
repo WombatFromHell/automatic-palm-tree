@@ -48,7 +48,10 @@ rc=0
 (cd "$vm_repo" && bats "${suites[@]}") >>"$log" 2>&1 || rc=$?
 wait "$peak"
 
-observed=$(grep -o 'peak_guest_mb=[0-9]*' "$log" | cut -d= -f2)
+# Every suite samples its own peak, so more than one line can appear; the ceiling is about a
+# single guest, so the first one is the number. grep exits 1 when nothing was sampled, which under
+# set -e would abort here and leave the gate reporting no verdict at all.
+observed=$(grep -o 'peak_guest_mb=[0-9]*' "$log" | cut -d= -f2 | head -1 || true)
 if [ "$rc" -ne 0 ]; then
   printf 'FAIL VM tier [%s suites]\n' "${#suites[@]}"
   tail -n 20 "$log"
