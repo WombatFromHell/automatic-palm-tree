@@ -189,7 +189,7 @@ in {
   # --- host discovery -----------------------------------------------------
   testHostNamesMatchHostsDir = {
     expr = builtins.attrNames d;
-    expected = ["methyl" "methyl-bazzite" "methyl-nixos" "propyl"];
+    expected = ["methyl" "methyl-bazzite" "methyl-nixos" "methyl-test" "propyl"];
   };
   testEveryFeatureAHostListsResolves = {
     expr = lib.all (host: lib.all resolves host.features) (builtins.attrValues d);

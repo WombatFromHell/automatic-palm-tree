@@ -84,7 +84,12 @@ echo "findmnt \$*" >> "$calls"
 case "\$*" in *scratch*) exit 1 ;; esac
 path="\${@:\$#}"
 src="\${TMPFS:-/dev/vda2}"
-if [ "\$(cat "$stubs/mounted_at" 2>/dev/null)" = "\$path" ]; then echo "\$src"; exit 0; fi
+# Each mount is recorded as "<target> <device>", so a mount of the ESP at /mnt/boot never answers
+# for /mnt. A line naming only a target is the fake terraform.sh's answer, and gets the default src.
+# grep is stubbed in this suite, so the file is read line by line instead.
+while read -r target device; do
+  if [ "\$target" = "\$path" ]; then echo "\${device:-\$src}"; exit 0; fi
+done < "$stubs/mounted_at"
 if [ "\$(cat "$stubs/mounted" 2>/dev/null)" = 1 ] && [ "\$path" = /mnt/nix ]; then echo "\$src"; exit 0; fi
 exit 1
 EOF
@@ -137,13 +142,27 @@ EOF
   done
 
   # Only a mount of a real device counts as the root being mounted. The scratch store is a tmpfs
+  # mkdir is stubbed too: terraform.sh creates the mount point for the ESP, and a real mkdir of /mnt
+  # would write to this machine rather than to the fixture. Paths inside the fixture are created for
+  # real, because install.sh then chmods and writes into its own scratch store.
+  mkdir_real=$(command -v mkdir)
+  stub mkdir <<EOF
+#!/usr/bin/env bash
+echo "mkdir \$*" >> "$calls"
+case "\${@: -1}" in
+  "$stubs"/*) exec "$mkdir_real" -p "\${@: -1}" ;;
+esac
+exit \${MKDIR_EXIT:-0}
+EOF
+
   # install.sh creates itself, and recording that would make every later findmnt answer for /mnt —
-  # which is how deploy could pass without terraform ever having run.
+  # which is how deploy could pass without terraform ever having run. Each mount is recorded against
+  # its own target, so an ESP mounted at /mnt/boot never answers for /mnt.
   stub mount <<EOF
 #!/usr/bin/env bash
 echo "mount \$*" >> "$calls"
 case "\$*" in
-  */dev/*) printf '%s\n' "\${@: -1}" > "$stubs/mounted_at" ;;
+  */dev/*) printf '%s %s\n' "\${@: -1}" "\${@: -2}" >> "$stubs/mounted_at" ;;
 esac
 exit \${MOUNT_EXIT:-0}
 EOF
@@ -418,7 +437,9 @@ run_install() {
   [ "$status" -eq 0 ]
   # Both partitions carry a signature, so nothing is formatted and only the root is mounted.
   assert_no_call "mkfs"
+  # The root and the ESP are both mounted: deploy writes the boot loader into the ESP.
   assert_call "^mount -o noatime /dev/vda2 /mnt$"
+  assert_call "^mount -o fmask=0077,dmask=0077 /dev/vda1 /mnt/boot$"
   assert_no_call "disko --mode"
   assert_out "mounted from the partitions propyl declares"
 }
@@ -446,6 +467,17 @@ run_install() {
   TF_EXIT=1 run run_install_in "$dir" --stage terraform methyl-nixos
   [ "$status" -eq 2 ]
   assert_out "terraform left /mnt unmounted"
+}
+
+# A failing terraform.sh can leave the root mounted from a layout that is not the recipe's -- stale
+# superblocks under a fresh table is exactly that. The stage must not report ok.
+@test "terraform reports failure even when the root stayed mounted" {
+  dir=$(recipe_repo methyl-nixos "$(owned_recipe)")
+  printf '/mnt\n' >"$stubs/mounted_at"
+  TF_EXIT=1 run run_install_in "$dir" --stage terraform methyl-nixos
+  [ "$status" -eq 2 ]
+  assert_out "terraform.sh reported a failure"
+  assert_no_out "terraform ok"
 }
 
 # A recipe file is the layout declaration for a host, shared or owned. It lives in a temp repo so the

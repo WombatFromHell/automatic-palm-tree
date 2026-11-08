@@ -1,0 +1,21 @@
+{
+  "owns": true,
+  "partitions": [
+    {
+      "name": "esp",
+      "label": "boot",
+      "fs": "vfat",
+      "size": "512M",
+      "mount": "/boot",
+      "options": "fmask=0077,dmask=0077"
+    },
+    {
+      "name": "root",
+      "label": "nixos",
+      "fs": "btrfs",
+      "size": "rest",
+      "mount": "/",
+      "options": "noatime,compress=zstd"
+    }
+  ]
+}

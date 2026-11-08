@@ -92,6 +92,10 @@ refuse() {
   exit 2
 }
 
+# Checked once, up front: every partition-table read below goes through jq, and a table that holds
+# no partitions must be reported as an empty table, never as a missing tool.
+command -v jq >/dev/null || refuse "jq is required to read the partition table"
+
 # Field separator for the rows jq hands to the read loops below. A tab would not do: read collapses
 # consecutive whitespace separators, so a partition with no filesystem label or no GPT name would
 # shift every field after it. Unit separator is not whitespace and appears in no path or label.
@@ -137,6 +141,35 @@ mount_opts() {
   esac
 }
 
+# mount_extra <node> <dir> <fs> [declared options] — mount a partition under the mount root. Mounting
+# is not destructive, so it is never prompted, and a mount that is already there is adopted. deploy
+# needs every mount the host declares present: nixos-install writes the boot loader into
+# efiSysMountPoint, and systemd-boot refuses a /boot that is not a mount.
+mount_extra() {
+  local node="$1" dir="$2" fs="$3" opts
+  opts=$(mount_opts "$3" "${4-null}")
+  # The mount point has to exist before anything can be mounted on it, and an empty directory on a
+  # filesystem being installed onto is not a destructive step.
+  run mkdir -p "$dir"
+  if findmnt -n -o SOURCE "$dir" >/dev/null 2>&1; then
+    say "$dir already mounted — adopted, not rebuilt"
+    return
+  fi
+  if [ -n "$opts" ]; then
+    run mount -o "$opts" "$node" "$dir"
+  else
+    run mount "$node" "$dir"
+  fi
+}
+
+# recipe_opts <name> — the options string a recipe entry declares. "null" is printed when the entry
+# declares none, which is what mount_opts reads as "use the per-filesystem defaults"; an entry that
+# declares "options": "" prints the empty string, which means the kernel's defaults.
+recipe_opts() {
+  [ -n "$recipe" ] || return 0
+  jq -r --arg n "$1" '.partitions[] | select(.name == $n) | (if .options == null then "null" else .options end)' "$recipe" 2>/dev/null || true
+}
+
 # A device path that names a partition by the UUID a generated hardware-configuration.nix recorded.
 # Formatting a partition that a UUID path points at is the failure this refuses: a mkfs that
 # cannot finish never leaves half a disk formatted: mkfs would create a UUID the generated
@@ -153,8 +186,14 @@ check_uuid() {
 
 # Format a blank partition, and only a blank one.
 format_blank() {
-  local node="$1" fs="$2" device="$3" sig="$4"
-  [ -n "$sig" ] && return 0
+  local node="$1" fs="$2" device="$3" sig="$4" fresh="${5:-0}"
+  # A partition already holding the filesystem the recipe declares is adopted, not formatted.
+  [ -n "$sig" ] && [ "$sig" = "$fs" ] && return 0
+  # A partition holding some other filesystem is formatted only where this run owns it: a partition
+  # freshly created under a new table (the old table's superblocks stay in those bytes), or an owned
+  # drive whose partition carries the wrong filesystem. On a shared drive it is somebody else's data,
+  # so it is left alone and verification refuses the drive.
+  [ -n "$sig" ] && [ "$fresh" = 0 ] && return 0
 
   local label=""
   case "$device" in /dev/disk/by-label/*) label="${device##*/}" ;; esac
@@ -164,20 +203,25 @@ format_blank() {
   local args=()
   case "$fs" in
   vfat)
+    # mkfs.fat has no force flag: it writes over whatever is there.
     args=(-F 32)
     [ -n "$label" ] && args+=(-n "$label")
     ;;
   ext4)
     args=(-q)
     [ -n "$label" ] && args+=(-L "$label")
+    # -F (not -f) is what lets mkfs.ext4 write over a partition that still carries a superblock.
+    [ "$fresh" = 1 ] && args+=(-F)
     ;;
   xfs)
-    # -f is what lets a fixture format a slice that is a regular file; on a real partition the check
-    # it skips is worth keeping, so it is only added for a file.
-    [ -f "$node" ] && args+=(-f)
+    # -f is what lets a fixture format a slice that is a regular file, and what lets a real one write
+    # over a partition whose old superblock is still in place.
+    if [ -f "$node" ] || [ "$fresh" = 1 ]; then args+=(-f); fi
     [ -n "$label" ] && args+=(-L "$label")
     ;;
   btrfs)
+    # mkfs.btrfs refuses a partition that still carries another filesystem's superblock.
+    [ "$fresh" = 1 ] && args+=(-f)
     [ -n "$label" ] && args+=(-L "$label")
     ;;
   *) refuse "terraform.sh does not know how to format $fs" ;;
@@ -353,7 +397,7 @@ resolve_entries() {
 drive_matches() {
   local path="$1" n
   table=$(sfdisk --json "$path" 2>/dev/null) || return 1
-  parts=$(printf '%s\n' "$table" | jq -r '.partitiontable.partitions[] | "\(.node) \(.type)"' 2>/dev/null) || return 1
+  parts=$(printf '%s\n' "$table" | jq -r '(.partitiontable.partitions // [])[] | "\(.node) \(.type)"' 2>/dev/null) || return 1
   nodes=$(printf '%s\n' "$parts" | cut -d ' ' -f1)
   # While discovery is asking, "this drive cannot hold the recipe" is an answer about one drive, not
   # a refusal of the whole run: the drive that gets chosen is the one the run then refuses loudly.
@@ -435,8 +479,9 @@ if [ -n "$emit" ]; then
   fi
   command -v sfdisk >/dev/null || refuse "sfdisk is required to read the partition table"
   table=$(sfdisk --json "$disk" 2>/dev/null) || refuse "no partition table on $disk: nothing to emit"
-  rows=$(printf '%s\n' "$table" | jq -r '.partitiontable.partitions | to_entries[] | "\(.key+1)\u001f\(.value.node)\u001f\(.value.size)\u001f\(.value.name // "")"' 2>/dev/null) ||
-    refuse "jq is required to read the partition table"
+  rows=$(printf '%s\n' "$table" | jq -r '(.partitiontable.partitions // []) | to_entries[] | "\(.key+1)\u001f\(.value.node)\u001f\(.value.size)\u001f\(.value.name // "")"' 2>/dev/null) ||
+    refuse "cannot read the partition table on $disk"
+  [ -n "$rows" ] || refuse "no partitions on $disk: nothing to emit"
 
   # The largest non-vfat filesystem is the root candidate; its name is remembered so its mount is
   # set when the JSON is written, rather than patched into the rows afterwards.
@@ -592,8 +637,8 @@ command -v sfdisk >/dev/null || refuse "sfdisk is required to read the partition
 table=$(sfdisk --json "$disk" 2>/dev/null || true)
 parts=""
 if [ -n "$table" ]; then
-  parts=$(printf '%s\n' "$table" | jq -r '.partitiontable.partitions[] | "\(.node) \(.type)"' 2>/dev/null) ||
-    refuse "jq is required to read the partition table"
+  parts=$(printf '%s\n' "$table" | jq -r '(.partitiontable.partitions // [])[] | "\(.node) \(.type)"' 2>/dev/null) ||
+    refuse "cannot read the partition table on $disk"
 fi
 if [ "$owns" = false ]; then
   [ -n "$table" ] ||
@@ -611,12 +656,18 @@ fi
 
 # Owned mode claims the whole drive, so everything already on it has to be something the recipe
 # reproduces. Raw filesystem bytes with no table are somebody's data; a DOS table is somebody else's
-# layout; a filesystem no entry claims would be erased. Every one of those refuses before any write.
+# layout; a filesystem no entry claims would be erased. Without --force every one of those refuses
+# before any write. --force is the operator's answer to the destructive prompt, so a drive that already
+# holds a partition table is rewritten over: what is being wiped is named first. A filesystem covering
+# the whole drive is not a layout the recipe replaces, so that one stays refused either way.
 if [ "$owns" = true ]; then
   if [ -n "$table" ]; then
     table_label=$(printf '%s\n' "$table" | jq -r '.partitiontable.label // "gpt"')
-    [ "$table_label" = gpt ] ||
-      refuse "the partition table on $disk is $table_label, not gpt: owns=true rewrites the table, and a DOS table is somebody else's layout"
+    if [ "$table_label" != gpt ]; then
+      [ "$force" = 1 ] ||
+        refuse "the partition table on $disk is $table_label, not gpt: owns=true rewrites the table, and a DOS table is somebody else's layout"
+      say "$disk holds a $table_label table: --force replaces it with the recipe's gpt layout"
+    fi
   else
     raw=$(blkid -o value -s TYPE "$disk" 2>/dev/null || true)
     [ -z "$raw" ] || refuse "$disk holds $raw across the whole drive: owns=true would wipe a filesystem no recipe entry claims"
@@ -627,7 +678,11 @@ if [ "$owns" = true ]; then
     [ -n "$sig" ] || continue
     case "$claimed" in
     *"$sep$sig$sep"*) ;;
-    *) refuse "$node holds $sig, which no entry of the recipe claims: owns=true claims the whole drive" ;;
+    *)
+      [ "$force" = 1 ] ||
+        refuse "$node holds $sig, which no entry of the recipe claims: owns=true claims the whole drive"
+      say "$node holds $sig: --force wipes it and lays the recipe's layout over it"
+      ;;
     esac
   done <<<"$parts"
 fi
@@ -767,12 +822,15 @@ owned_run() {
     fi
     confirm "write a fresh GPT partition table on $disk: every partition currently on it is gone" || exit 2
     # sfdisk takes the layout on stdin. A here-string rather than a pipe: in a dry run nothing reads
-    # stdin, and a pipe would kill the writer with SIGPIPE.
+    # stdin, and a pipe would kill the writer with SIGPIPE. --force is what lets sfdisk overwrite a
+    # table that is already there; without it sfdisk asks a question this run has no terminal to answer.
     layout=$(while IFS="$sep" read -r _name start sect type _label _fs _mnt; do
       [ -n "$_name" ] || continue
       printf '%s %s %s\n' "$start" "$sect" "$type"
     done <<<"$plan")$'\n'
-    run sfdisk -X gpt "$disk" <<<"$layout"
+    sf=()
+    if [ "$force" = 1 ]; then sf+=(--force); fi
+    run sfdisk "${sf[@]}" -X gpt "$disk" <<<"$layout"
 
     # Partition nodes only exist once the table is written, and their names are the kernel's, not ours
     # to guess. In a dry run there is no table to read, so the plan is printed against placeholder names.
@@ -798,10 +856,14 @@ owned_run() {
       run sfdisk --part-label "$disk" "$((i + 1))" "$label" >/dev/null
     fi
     sig=$(signature "$node")
+    # owns=true claims the partition, so anything in it that is not the filesystem the recipe declares
+    # is this run's to overwrite -- with mkfs -f, because a rewritten table leaves the old superblocks.
+    fresh=0
+    if [ "$sig" != "$fs" ]; then fresh=1; fi
     if [ "$mnt" = / ]; then
       root_node="$node"
     fi
-    format_blank "$node" "$fs" "/dev/disk/by-label/$label" "$sig" || exit 2
+    format_blank "$node" "$fs" "/dev/disk/by-label/$label" "$sig" "$fresh" || exit 2
     i=$((i + 1))
   done <<<"$plan"
   [ -n "$root_node" ] || refuse "recipe declares no partition mounting /"
@@ -839,6 +901,21 @@ owned_run() {
     run mount -o "subvol=@${opts:+,$opts}" "$root_node" "$mount"
     mounted_now=1
   fi
+
+  # Every other mount the recipe declares lives under $mount too, so the installer has an ESP to
+  # write its boot loader into.
+  i=0
+  while IFS="$sep" read -r entry_name _p _s _t _l entry_fs entry_mnt; do
+    [ -n "$entry_name" ] || continue
+    if [ "$dry" = 1 ]; then
+      node="${disk}p$((i + 1))"
+    else
+      node=$(printf '%s\n' "$table" | jq -r ".partitiontable.partitions[$i].node")
+    fi
+    i=$((i + 1))
+    [ -n "$entry_mnt" ] && [ "$entry_mnt" != / ] || continue
+    mount_extra "$node" "$mount$entry_mnt" "$entry_fs" "$(recipe_opts "$entry_name")"
+  done <<<"$plan"
 
   # A dry run wrote nothing, so there is no drive to re-read: the plan printed above is the answer.
   if [ "$dry" = 1 ]; then return; fi
@@ -1033,8 +1110,8 @@ append_creations() {
 # Recipe mode: resolve every entry, append the ones nothing describes, then treat each resolved
 # partition the same way — adopt what holds a filesystem, format only what blkid reports blank.
 if [ -n "$recipe" ]; then
-  sorted_parts=$(printf '%s\n' "$table" | jq -r '.partitiontable.partitions | sort_by(.start) | .[] | "\(.start) \(.size)"') ||
-    refuse "jq is required to read the partition table"
+  sorted_parts=$(printf '%s\n' "$table" | jq -r '(.partitiontable.partitions // []) | sort_by(.start) | .[] | "\(.start) \(.size)"') ||
+    refuse "cannot read the partition table on $disk"
   while read -r start size; do
     [ -n "$start" ] || continue
     gap_start+=("$start")
@@ -1121,6 +1198,12 @@ else
 fi
 
 say "terraform: adopted ESP $esp (${esp_sig:-vfat, newly formatted}), root $root_part (${root_sig:-$root_fs, newly formatted})"
+
+# deploy writes the boot loader into efiSysMountPoint, so the ESP has to be mounted where the config
+# names it.
+if [ -n "$esp" ]; then
+  mount_extra "$esp" "$mount/boot" vfat
+fi
 
 # The run is not finished until the drive is re-read (spec: verification is the third use of the same
 # routine). Flags mode names a filesystem and a device path rather than declaring a recipe, so there

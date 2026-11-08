@@ -285,19 +285,24 @@ terraform() {
   tf=()
   if [ "$dry" = 1 ]; then tf+=(--dry-run); fi
   if [ "$force" = 1 ]; then tf+=(--force); fi
+  failed=0
   if [ -n "$recipe" ]; then
-    run ./terraform.sh "${tf[@]}" --recipe "$recipe" --disk "$device" --mount "$root" ||
-      say "terraform.sh reported a failure"
+    run ./terraform.sh "${tf[@]}" --recipe "$recipe" --disk "$device" --mount "$root" || failed=1
   else
     run ./terraform.sh "${tf[@]}" --disk "$device" --mount "$root" --root-fs "$root_fs" \
-      --root-device "$root_device" --esp-device "$esp_device" ||
-      say "terraform.sh reported a failure"
+      --root-device "$root_device" --esp-device "$esp_device" || failed=1
   fi
   # Nothing runs under --dry-run, so there is nothing to check afterwards. The stage's contract is
   # the mount, so a terraform.sh failure surfaces as the missing mount.
   if [ "$dry" = 1 ]; then return; fi
   src=$(store_mount) || {
     say "terraform left $root unmounted — the layout is not on the drive yet, deploy cannot run"
+    exit 2
+  }
+  # A failure can still leave the root mounted: the drive holds a layout that is not the recipe's, so
+  # the stage must not call that ok.
+  [ "$failed" = 0 ] || {
+    say "terraform.sh reported a failure — the layout on $device is not what $recipe declares"
     exit 2
   }
   what="the partitions $host declares"

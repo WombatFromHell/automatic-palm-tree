@@ -226,7 +226,13 @@ let
                 (lib.toList u.Service.ExecStop)
               ])
               && s.hasPkg (homeCfg cfg).home.packages "procps"
-              && s.hasPkg (homeCfg cfg).home.packages "nvtop"))))
+              && s.hasPkg (homeCfg cfg).home.packages "nvtop"
+              # `nvtopPackages.full` builds every GPU family, so its inputs carry CUDA
+              # (`cuda-merged`) and the install build dies on it. The watcher only needs the
+              # GPU family this host has, so the variant is asserted here.
+              && (let
+                nvtop = lib.head (s.pkgNamed (homeCfg cfg).home.packages "nvtop");
+              in lib.all (i: !lib.hasPrefix "cuda" (s.pkgName i)) nvtop.buildInputs)))))
 
       # --- this host's own profile effects -------------------------------------
       (ck "${host}: its packages are installed" (lib.all (p: sysPkg cfg p) e.packages))

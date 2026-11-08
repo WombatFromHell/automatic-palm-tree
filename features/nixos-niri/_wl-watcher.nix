@@ -43,7 +43,9 @@ in {
 
   config = lib.mkIf cfg.enable {
     # `procps` and `nvtop` are what wl_watcher.py calls by bare name; see the note above.
-    home.packages = [watcherPkg gamemodePkg pkgs.procps pkgs.nvtopPackages.full];
+    # The amd variant, not `full`: `full` builds every GPU family and its inputs carry CUDA
+    # (`cuda-merged`), which fails the install build on a machine with an AMD GPU.
+    home.packages = [watcherPkg gamemodePkg pkgs.procps pkgs.nvtopPackages.amd];
 
     systemd.user.services.wl-watcher = {
       Unit = {

@@ -22,9 +22,10 @@ setup() {
 echo "mount \$*" >> "$calls"
 last=\$#
 # The device is the second-to-last argument and the target is the last one, so this models
-# \`mount <node> <dir>\` and \`mount -o subvol=@ <node> <dir>\` alike.
+# \`mount <node> <dir>\` and \`mount -o subvol=@ <node> <dir>\` alike. Each mount is recorded against
+# its own target, so findmnt below can answer per path rather than "something is mounted".
 mkdir -p "\${@:last:1}"
-printf '%s\n' "\${@:last-1:1}" > "$stubs/mounted_src"
+printf '%s %s\n' "\${@:last:1}" "\${@:last-1:1}" >> "$stubs/mounts"
 exit \${MOUNT_EXIT:-0}
 EOF
 
@@ -57,8 +58,10 @@ EOF
   stub findmnt <<EOF
 #!/usr/bin/env bash
 echo "findmnt \$*" >> "$calls"
+path="\${@:\$#}"
+src="\$(grep -m1 "^\$path " "$stubs/mounts" 2>/dev/null | cut -d' ' -f2)"
+if [ -n "\$src" ]; then echo "\$src"; exit 0; fi
 if [ "\$(cat "$stubs/mounted" 2>/dev/null)" = 1 ]; then echo "\${MOUNTED_SRC:-/dev/vda2}"; exit 0; fi
-if [ -s "$stubs/mounted_src" ]; then echo "\$(cat "$stubs/mounted_src")"; exit 0; fi
 exit 1
 EOF
 
@@ -72,6 +75,9 @@ EOF
   stub sfdisk <<EOF
 #!/usr/bin/env bash
 echo "sfdisk \$*" >> "$calls"
+# --force is the overwrite answer the shipped script passes when the drive already holds a table.
+# Stripped here so the branches below still dispatch on the layout they were written for.
+if [ "\$1" = --force ]; then shift; fi
 if [ "\$1" = --append ]; then
   cat > "$stubs/append.txt"
   # The layout arrives on stdin, the way terraform.sh feeds it; naming the file would make
@@ -107,7 +113,7 @@ EOF
   done
 
   printf '0\n' >"$stubs/mounted"
-  : >"$stubs/mounted_src"
+  : >"$stubs/mounts"
 }
 
 teardown() {
@@ -497,11 +503,40 @@ EOF
   format_slice own 2 "$LINUX_START" "$LINUX_N" ext4 other
   adopt own 2 "$LINUX_START" "$LINUX_N"
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:btrfs:54M:/"
-  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img"
+  TF_FORCE=0 run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 2 ]
   assert_out "ext4"
   [ "$(type_of own 2)" = ext4 ]
   assert_no_call "sfdisk -X gpt"
+}
+
+# --force is the operator's answer to the destructive prompt, so a drive that already holds somebody's
+# partitions is wiped and the recipe's layout is laid over it. Without this the deploy contract could
+# never run on a drive that had been installed on before: any partition holding a filesystem the recipe
+# does not claim refused the run outright, --force included.
+@test "owns=true --force wipes a drive whose partitions hold filesystems the recipe does not claim" {
+  # A drive installed before: an ESP this recipe claims and a root holding ext4 it does not.
+  # mkfs.btrfs refuses below ~114MB, so the root is `rest` on a 128M drive.
+  owned own pre-ext4
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:btrfs:114M:/"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --force
+  [ "$status" -eq 0 ]
+  assert_out "ext4"
+  assert_out "fresh GPT partition table"
+  [ "$(type_of own 2)" = btrfs ]
+  [ "$(label_of own 2)" = nixos ]
+}
+
+# The geometry may already match while a partition holds the wrong filesystem: the table is adopted,
+# and the partition owns=true claims is formatted to what the recipe declares.
+@test "owns=true formats an adopted partition holding the filesystem the recipe does not declare" {
+  owned own pre-ext4
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:btrfs:rest:/"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --force
+  [ "$status" -eq 0 ]
+  [ "$(type_of own 1)" = vfat ]
+  [ "$(type_of own 2)" = btrfs ]
+  [ "$(label_of own 2)" = nixos ]
 }
 
 # R5: a drive with no partition table but raw filesystem bytes is somebody's data, not blank space.
@@ -550,6 +585,22 @@ EOF
 
 # Owned mode on a btrfs root has to lay down the subvolume tree the host's config mounts, or NixOS
 # boots into a mount of a subvolume that was never created.
+# deploy writes the boot loader into the config's efiSysMountPoint, and systemd-boot refuses a /boot
+# that is not a mount. terraform.sh mounts every mount the recipe declares, not just the root, and a
+# rerun adopts the mount it already made.
+@test "owns=true mounts every mount the recipe declares, and a rerun adopts it" {
+  truncate -s 128M "$disk_dir/own.img"
+  stub_lsblk "$disk_dir/own.img"
+  recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
+  run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
+  [ "$status" -eq 0 ]
+  assert_call "^mount -o fmask=0077,dmask=0077 $disk_dir/own.img1 $disk_dir/mnt/boot$"
+  nodes own
+  run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
+  [ "$status" -eq 0 ]
+  assert_out "$disk_dir/mnt/boot already mounted — adopted, not rebuilt"
+}
+
 @test "owns=true on a btrfs root creates the subvolume tree and mounts @ as /" {
   # btrfs-progs refuses a filesystem below ~114MB and the ESP takes 9MB of the drive, so 128M is the
   # smallest drive that holds an ESP plus a btrfs root. Every owned-mode drive here is that size.
@@ -664,7 +715,7 @@ EOF
     stub_lsblk "$disk_dir/$fs.img"
     recipe_file "$stubs/$fs.json" false "esp:boot:vfat:8M:/boot,root:nixos:$fs:rest:/"
     : >"$calls"
-    : >"$stubs/mounted_src" # the mount the previous iteration made must not be seen by this one
+    : >"$stubs/mounts" # the mounts the previous iteration made must not be seen by this one
 
     run terraform_recipe_run "$fs" "$stubs/$fs.json" --disk "$disk_dir/$fs.img"
     [ "$status" -eq 0 ]
@@ -761,6 +812,24 @@ EOF
   [ "$status" -eq 2 ]
   assert_out "root"
   assert_out "other"
+}
+
+# Writing a fresh gpt table does not erase the old table's filesystem superblocks: the bytes stay in
+# place. A partition this run created is therefore formatted even though blkid still sees the old one,
+# which is what mkfs -f is for.
+@test "owns=true --force formats the partitions it just made over the bytes the old table left" {
+  owned own blank
+  format_slice own 1 "$ESP_START" "$ESP_N" ext4 someone
+  adopt own 1 "$ESP_START" "$ESP_N"
+  format_slice own 2 "$LINUX_START" "$LINUX_N" ext4 someone2
+  adopt own 2 "$LINUX_START" "$LINUX_N"
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --force
+  [ "$status" -eq 0 ]
+  [ "$(type_of own 1)" = vfat ]
+  [ "$(label_of own 1)" = boot ]
+  [ "$(type_of own 2)" = ext4 ]
+  [ "$(label_of own 2)" = nixos ]
 }
 
 # owns=true reproduces the layout, so a table with an entry the recipe never declared is a drive that
