@@ -12,7 +12,7 @@ scope:
   - tests/pins.nix
   - tests/caches.nix
   - tests/warnings.nix
-  - tests/zram.nix
+  - tests/swap.nix
   - tests/loader.nix
   - tests/run.sh
   - lib/default.nix
