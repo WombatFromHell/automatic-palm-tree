@@ -29,9 +29,10 @@ force="${INSTALL_FORCE:-0}"
 # The ISO's /nix/store has no room and Nix refuses a store under a world-writable /tmp, so the
 # evals and the install build go to a store under /run (tmpfs, 755).
 scratch="${INSTALL_SCRATCH:-/run/flakeroot-scratch}"
-# INSTALL_PASSWORDS (user:password lines) and INSTALL_SYSTEM (a toplevel store path) are the
-# non-interactive path: passwords without a terminal, and an install of a closure built on the
-# machine that called the installer rather than one built inside it.
+# INSTALL_PASSWORDS (user:password lines), INSTALL_SYSTEM (a toplevel store path) and INSTALL_DRIVE
+# (the drive to deploy onto) are the non-interactive path: passwords without a terminal, an install
+# of a closure built on the machine that called the installer rather than one built inside it, and a
+# target drive for a guest whose root is tmpfs and so names no drive of its own.
 # Installer ISOs differ in what their nix.conf enables, and the flake commands here need both.
 export NIX_CONFIG="experimental-features = nix-command flakes"
 
@@ -152,6 +153,12 @@ store_mount() {
 # never guessed (ADR-b77ec913151f).
 target_disk() {
   local cand disks="" name type rm
+  # A tmpfs-rooted guest names no drive: no mount source, no formatted partition. The caller names
+  # it, and resolve's whole-disk check is what still refuses a partition or a file.
+  if [ -n "${INSTALL_DRIVE:-}" ]; then
+    device="$INSTALL_DRIVE"
+    return
+  fi
   cand=$(lsblk -n -o PKNAME "$root_device" 2>/dev/null | head -1 || true)
   if [ -n "$cand" ]; then
     device="/dev/$cand"

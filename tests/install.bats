@@ -365,6 +365,25 @@ run_install() {
   assert_no_call "./terraform.sh"
 }
 
+@test "INSTALL_DRIVE names the target when no mount fact can name one" {
+  # The VM guest's root is tmpfs, so neither the host's mount names nor blkid identify a drive.
+  # The tier passes the drive it made; the whole-disk check in resolve still runs.
+  printf '' >"$stubs/owned"
+  LSBLK_MISSING=1 INSTALL_DRIVE=/dev/vdb run run_install --dry-run --stage terraform methyl
+  [ "$status" -eq 0 ]
+  assert_out "shares /dev/vdb"
+  assert_out "[dry-run] ./terraform.sh --dry-run --recipe hosts/methyl/terraform.json --disk /dev/vdb --mount /mnt"
+}
+
+@test "INSTALL_DRIVE pointing at a partition is refused, not adopted" {
+  printf '' >"$stubs/owned"
+  printf 'part\n' >"$stubs/disk_type"
+  LSBLK_MISSING=1 INSTALL_DRIVE=/dev/vda1 run run_install --dry-run --stage terraform methyl
+  [ "$status" -eq 2 ]
+  assert_out "/dev/vda1 is not a whole disk"
+  assert_no_call "./terraform.sh"
+}
+
 @test "a drive presenting as the install ISO is not a candidate even when lsblk calls it a disk" {
   # The VM's ISO presents as /dev/sda: a dos table with iso9660 across the whole drive. It is media,
   # not a drive to install onto, and the only other disk here is the target.
