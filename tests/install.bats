@@ -13,12 +13,11 @@ setup() {
   printf '' >"$stubs/mounted_at"
   printf 'table\n' >"$stubs/table"
   printf '0\n' >"$stubs/dd_calls"
-  # One eval of the host config answers five facts: who owns the drive, what its mounts name, and
-  # whether it still declares a disko layout. The suite answers them from files, not by evaluating.
+  # One eval of the host config answers four facts: who owns the drive and what its mounts name.
+  # The suite answers them from files, not by evaluating.
   printf '/dev/disk/by-label/nixos\n' >"$stubs/root_device"
   printf 'ext4\n' >"$stubs/root_fs"
   printf '/dev/disk/by-label/boot\n' >"$stubs/esp_device"
-  printf '' >"$stubs/disko"
 
   stub nix <<EOF
 #!/usr/bin/env bash
@@ -32,7 +31,7 @@ while [ \$# -gt 0 ]; do
   esac
 done
 case "\$args" in
-  *ownsWholeDisk*)  printf '%s\n%s\n%s\n%s\n%s\n' "\$(cat "$stubs/owned")" "\$(cat "$stubs/root_device")" "\$(cat "$stubs/root_fs")" "\$(cat "$stubs/esp_device")" "\$(cat "$stubs/disko")" ;;
+  *ownsWholeDisk*)  printf '%s\n%s\n%s\n%s\n' "\$(cat "$stubs/owned")" "\$(cat "$stubs/root_device")" "\$(cat "$stubs/root_fs")" "\$(cat "$stubs/esp_device")" ;;
   *osUsernames*)    printf 'josh\n' ;;
   *adminUsernames*) printf '%s\n' "\${ADMIN-josh}" ;;
   *substituters*)   printf 'https://cache.example/x\n' ;;
@@ -254,16 +253,6 @@ run_install() {
   assert_call "fileSystems"
   assert_no_call "disko.devices.disk"
   assert_out "partition table unchanged"
-}
-
-# terraform.sh is the only thing install.sh lets touch a drive (ADR-b77ec913151f). A host declaring a
-# disko layout has no installer that runs it, so the layout would be silently skipped: refused.
-@test "a host that declares a disko layout is refused before anything runs" {
-  printf 'nvme0n1\n' >"$stubs/disko"
-  run run_install --dry-run --stage prepare methyl-nixos
-  [ "$status" -eq 2 ]
-  assert_out "declares a disko layout (nvme0n1)"
-  assert_no_call "./terraform.sh"
 }
 
 @test "an owned host with no recipe is refused: there is no other layout declaration" {

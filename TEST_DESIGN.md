@@ -30,7 +30,7 @@ flowchart TD
   R["tests/run.sh"] --> N["tests/nix-eval.sh<br/>transient systemd scope per capped step<br/>(MemoryMax / MemoryHigh / MemorySwapMax)<br/>peak= reported on stderr"]
   R --> LN["shipped shell lint<br/>shellcheck over the scripts writeShellApplication never sees:<br/>bootstrap.sh, update-all.sh, lib/updater.sh, lib/cache-check.sh,<br/>lib/style.sh, install.sh, terraform.sh, lib/confirm.sh, the pinentry + nasmount scripts"]
   R --> DV["nix develop resolves the updater and disk tools<br/>curl jq nix bats shellcheck shfmt<br/>+ sfdisk blkid mkfs.vfat mkfs.ext4 mcopy sgdisk"]
-  N --> U["tests/suite.nix<br/>nix-unit test* attributes in one process<br/>filesystems, pins, caches, disko, warnings, swap, loader<br/>+ two tripwires; a failing attribute prints its own diff<br/>skip when nix-unit is absent from the devShell"]
+  N --> U["tests/suite.nix<br/>nix-unit test* attributes in one process<br/>filesystems, pins, caches, warnings, swap, loader<br/>+ two tripwires; a failing attribute prints its own diff<br/>skip when nix-unit is absent from the devShell"]
   N --> G["eval suites, one process each<br/>tests/home.nix, mounts.nix, outputs.nix, wrap.nix<br/>via nix eval --impure --file"]
   N --> B["fixture builds — the build's exit status is the assertion<br/>appdir, brave-layout, shellwrap, yazi-install"]
   N --> C["configs.nix, one host per process<br/>TEST_HOST = methyl | methyl-nixos | propyl"]
@@ -70,13 +70,13 @@ ordinary user: no root, no real `/nix`, no real `curl`, no eval. It costs ~0MB, 
 bash rather than another scoped eval. `bats` comes from the installed Nix profile, so a missing `bats`
 is a `skip`, not a failure.
 
-`tests/install.bats` (42 tests) is the same shape for `install.sh`, which is staged destruction: a
+`tests/install.bats` (41 tests) is the same shape for `install.sh`, which is staged destruction: a
 NixOS install runs `prepare` → `terraform` → `deploy` → `reboot`. PATH stubs stand in for `lsblk`,
 `blkid`, `sfdisk`, `mount`, `nixos-install`, `terraform.sh` and `trivial-run`, so argv and exit codes
 are the assertion. It pins that `prepare` reads the host record and checksums the partition table
 before and after (a run that moved the table aborts), that the install ISO and the zram swap are
 never adopted even when `lsblk` calls them disks, that two candidate drives are refused rather than
-guessed, that a host declaring a disko layout or a recipe whose `owns` disagrees with
+guessed, that a recipe whose `owns` disagrees with
 `flakeHost.ownsWholeDisk` stops before anything runs, that `deploy` refuses before `terraform` and
 refuses a drive that no longer matches the recipe, that `deploy` refuses a tmpfs `/mnt` (a closure
 built into RAM is not an install), that low RAM is offered as zram rather than thrashed, that one
@@ -188,14 +188,12 @@ flowchart LR
   S --> BL["tests/brave-layout.nix<br/>fixture build over a synthetic rpm payload"]
   S --> YZ["tests/yazi-install.nix<br/>fixture build over the pinned yazi sources"]
   S --> SW["tests/shellwrap.nix<br/>fixture build of credsctl + sopsctl + xilo-wrapped, taken from<br/>the feature modules that ship them<br/>the build's exit status is the shellcheck, and the marker-substituted<br/>wrapper it produces is what tests/xilo.bats drives"]
-  S --> DK["tests/disko.nix<br/>bare eval with disko's own module stubbed out"]
-  S --> SU["tests/suite.nix<br/>nix-unit attrset merged from filesystems, pins, caches, disko,<br/>warnings, swap and loader, plus two tripwires that make an<br/>empty suite file impossible to pass vacuously"]
+  S --> SU["tests/suite.nix<br/>nix-unit attrset merged from filesystems, pins, caches,<br/>warnings, swap and loader, plus two tripwires that make an<br/>empty suite file impossible to pass vacuously"]
   SU --> L
   SU --> CA
   SU --> WA
   SU --> F
   SU --> PI
-  SU --> DK
   FX["tests/fixtures/<dir>/hosts/*.nix<br/>shapes no real host uses"] --> L
 ```
 
@@ -222,8 +220,8 @@ most three in flight (four heavy evals stacked is ~2.5GB, and the caps are per s
 The shell lint and the expander-parity check are jobs in that same window, and the two bats tiers run
 at the same time. Measured today on this box: the whole gate ~24s warm, **19 verdict lines** green —
 shell lint (11 files), the devShell tool check (one `nix develop` resolves every tool the gate needs),
-one `nix-unit` run of 180 attributes, 4 eval suites, 4 fixture builds, 3 host configs, the mocked
-rebuild, the stub bats tier (9 suites, 315 tests) as one parallel bats call, `terraform.bats`
+one `nix-unit` run of 189 attributes, 4 eval suites, 4 fixture builds, 3 host configs, the mocked
+rebuild, the stub bats tier (9 suites, 314 tests) as one parallel bats call, `terraform.bats`
 (63 tests) inside `nix develop` **and inside a scope**, and parity. Widest peaks: `tests/home.nix`
 ~1000MB (the standalone profile, which forces its Home
 Manager users plus the host's own home module and the raw `_package.nix` derivations it compares
@@ -295,7 +293,7 @@ flowchart TD
     C4["cache gate: flakeCache.ready everywhere;<br/>substituters/keys counts == enabled caches;<br/>the caches each host's features actually require (nix-community, kait2en,<br/>wombatfromhell only where niri-spicy is on)"]
     C5["kernel: which kernel each host boots, incl. the kait2en kernel<br/>the feature pins rather than boot.kernelPackages"]
     C6["nixGL disabled: packages null for josh, which is what makes lib.nixGL.wrapGpu<br/>identity; the GUI features hand their pinned pname+version to the program options<br/>(identity by name, not outPath — forcing outPath pulls Brave's whole dependency<br/>closure, ~470MB per host); the PATH-once half lives in wrap/home,<br/>because counting home.packages forces every package name"]
-    C7["drive parity (ADR-b77ec913151f, ADR-62773e12d275): recipe.owns == flakeHost.ownsWholeDisk;<br/>every mount the recipe names agrees on device and fsType; every other mount is a btrfs<br/>subvolume of the labelled root the recipe creates; no host declares a disko layout;<br/>systemd-boot with canTouchEfiVariables per host; /boot is vfat; /var/log neededForBoot;<br/>and the subvolume tree the generated hardware-configuration.nix declares is reproduced"]
+    C7["drive parity (ADR-b77ec913151f, ADR-62773e12d275): recipe.owns == flakeHost.ownsWholeDisk;<br/>every mount the recipe names agrees on device and fsType; every other mount is a btrfs<br/>subvolume of the labelled root the recipe creates; neither a disko feature nor a disko input survives;<br/>systemd-boot with canTouchEfiVariables per host; /boot is vfat; /var/log neededForBoot;<br/>and the subvolume tree the generated hardware-configuration.nix declares is reproduced"]
     C8["nix.package is upstream Nix, not Lix (a Lix evaluator costs ~450MB more per host config);<br/>wl-watcher execs store paths only, and installs what its script calls"]
   end
   subgraph home["home.nix — forces the standalone HM config"]
@@ -332,9 +330,6 @@ flowchart TD
     PN1["metadata-backed features discovered; templates use only<br/>the tokens both expanders know ({repo} {version} {arch})"]
     PN2["every pin expands to a resolved url for every pinned system; arches boundaries are<br/>carried by pin-meta.pinSystemSystems, so no second coverage check here"]
     PN3["features/<name>/update.sh is absent or a symlink to lib/updater.sh<br/>the key is quoted — .update.sh would walk update then sh"]
-  end
-  subgraph disko["disko.nix — bare eval, disko's own module stubbed out (6 attributes)"]
-    DK1["a gpt layout on a host whose flakeHost.ownsWholeDisk is false fails exactly one<br/>assertion, and the message names the fact that clears it; gpt with ownership passes;<br/>a btrfs layout needs no ownership; a host with no layout turns disko's enableConfig off,<br/>because disko writes fileSystems whenever it is on and would clobber fsLib's mounts"]
   end
   subgraph wrap["wrap.nix — nixGL around derived packages, peak ~716MB"]
     WR1["three fixture configs built by lib/builders.nix itself (support.fixtureHost + hmCfg,<br/>so a builder change breaks this suite): a NixOS side, a<br/>standalone side with the default wrapper, and a standalone side setting<br/>features.nixgl.wrapper = nvidiaPrime (hm-nixgl, hm-brave, hm-zed, hm-ghostty in all three).<br/>hm-nixgl sets packages only on the non-NixOS side; wrapGpu is identity there and returns<br/>a distinct derivation here, and delegates to Home Manager's own lib.nixGL.wrap; defaultWrapper<br/>follows the host's option (mesa on both default sides, nvidiaPrime when set) — the Nvidia<br/>wrapper itself cannot be forced here, because nixGL's Nvidia wrapper reads the host driver<br/>version and gets null. pname and version survive the wrap; programs.chromium's<br/>commandLineArgs branch fires on both sides and the overridden package keeps its<br/>pname/version, and wrapGpu stays identity on the overridden derivation on the NixOS side<br/>(the branch is an option value, so it is asserted as one rather than by forcing Home<br/>Manager's chromium override chain); each package reaches home.packages exactly once;<br/>brave's .drv wraps its bin entries only when commandLineArgs are set;<br/>the wrapped Ghostty still links the AppDir (`cp -rs`) and execs its launcher through<br/>nixGL's combined wrapper, so its /proc/self/exe AppDir resolution survives the wrap"]
@@ -427,13 +422,12 @@ the wrap is proven at eval by `tests/wrap.nix`. The other five (`hm-tmux`, `hm-z
 `nixos-dmemcg`, `nixos-korthos`, `nixos-lsfg`) unpack assets whose fixture would have to download
 them, so they stay input-side only.
 
-Deliberately skipped: per-feature coverage of all 41 modules. Feature modules are exercised
-through the hosts that enable them — 38 of 41 are enabled by at least one host, so they evaluate
+Deliberately skipped: per-feature coverage of all 40 modules. Feature modules are exercised
+through the hosts that enable them — 38 of 40 are enabled by at least one host, so they evaluate
 and their effects are asserted. Three have no host today: the zram tier of `nixos-swap` is off on
 every host and is covered by fixture hosts in `tests/swap.nix`; `hm-dcal` and
 `hm-ghostty` are listed nowhere and are covered by fixture hosts in `tests/home.nix` and
-`tests/wrap.nix`; `nixos-disko` is listed nowhere and is covered only by `tests/disko.nix`, whose
-guard is read back on a stubbed disko module. A feature no host asks for is not a shipping contract.
+`tests/wrap.nix`. A feature no host asks for is not a shipping contract.
 If one of them becomes load-bearing, cover it by enabling it on a fixture host, not by isolating the
 module.
 Kernel choice is the exception:

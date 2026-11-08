@@ -97,7 +97,7 @@ let
         wombatfromhell = true;
       };
       # The mount set the generated hardware-configuration.nix declares today, expressed as
-      # (mountpoint -> subvol), which is what the layout must reproduce from disko (ADR-eaca61b8).
+      # (mountpoint -> subvol), which is what the recipe terraform.sh reproduces must equal (ADR-eaca61b8).
       # `{}` means fsLib's mkMounts still owns the mounts.
       mounts = {
         "/" = "@";
@@ -147,10 +147,13 @@ let
         (!(lib.hasAttr "bravePtraceHint" (homeCfg cfg).home.activation)))
 
       # --- who owns the mounts, and what the firmware boot order is ------------
-      # terraform.sh owns every drive this flake deploys onto (ADR-b77ec913151f), so no host declares
-      # a disko layout: fsLib's mkMounts declares the mounts, and install.sh refuses a host that
-      # declares a layout it has no installer for.
-      (ck "${host}: no disko layout is declared" (((cfg.disko or {}).devices or {}) == {}))
+      # terraform.sh owns every drive this flake deploys onto (ADR-b77ec913151f), so the mounts come
+      # from the host's recipe through fsLib and there is no layout installer to declare. disko is gone
+      # outright -- feature, input and tests -- because its gpt fallback rewrites the boot metadata a
+      # Windows partition shares. A leftover input or feature is the thing this check refuses.
+      (ck "${host}: neither a disko feature nor a disko input survives"
+        (!builtins.pathExists ../features/nixos-disko
+          && !(lib.hasInfix "disko" (builtins.readFile ../flake.nix))))
       (ck "${host}: it has a root mount either way" (cfg.fileSystems."/" != null))
 
       # The recipe is the source of a host's partition mounts (ADR-62773e12d275): fileSystems is

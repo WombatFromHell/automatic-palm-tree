@@ -23,7 +23,7 @@ stage="all"
 dry=0
 force="${INSTALL_FORCE:-0}"
 # The ISO's /nix/store has no room and Nix refuses a store under a world-writable /tmp, so the
-# evals and the disko script go to a store under /run (tmpfs, 755).
+# evals and the install build go to a store under /run (tmpfs, 755).
 scratch="${INSTALL_SCRATCH:-/run/flakeroot-scratch}"
 # Installer ISOs differ in what their nix.conf enables, and the flake commands here need both.
 export NIX_CONFIG="experimental-features = nix-command flakes"
@@ -181,17 +181,17 @@ resolve() {
     # A fresh tmpfs root is 1777, which Nix refuses; the directory itself is 777 under the ISO umask.
     chmod 755 "$scratch"
   fi
-  # One eval, five facts: who may partition the drive, what the host's mounts name, and whether the
-  # host still declares a disko layout. Evaluating the config once is cheaper than three narrowed
-  # evals of it, and the ISO's /nix/store is an overlay whose upper half is a tiny tmpfs, so every
-  # eval and build below goes to its own store instead.
+  # One eval, four facts: who may partition the drive and what the host's mounts name. terraform.sh
+  # is the only installer this script runs (ADR-b77ec913151f), so there is no other layout declaration
+  # to read back. Evaluating the config once is cheaper than three narrowed evals of it, and the ISO's
+  # /nix/store is an overlay whose upper half is a tiny tmpfs, so every eval and build below goes to
+  # its own store instead.
   facts=$(scoped nix eval --store "$scratch" --impure --raw "$(attr)" \
     --apply 'c: builtins.concatStringsSep "\n" [
       (builtins.toString c.flakeHost.ownsWholeDisk)
       (c.fileSystems."/".device or "")
       (c.fileSystems."/".fsType or "")
       (c.fileSystems."/boot".device or "")
-      (builtins.concatStringsSep " " (builtins.attrNames (c.disko.devices or {})))
     ]') || exit 2
   owned=$(printf '%s\n' "$facts" | sed -n 1p)
   # `builtins.toString` of a bool is `1` for true and `""` for false, and the recipe's `owns` is
@@ -204,13 +204,6 @@ resolve() {
   root_device=$(printf '%s\n' "$facts" | sed -n 2p)
   root_fs=$(printf '%s\n' "$facts" | sed -n 3p)
   esp_device=$(printf '%s\n' "$facts" | sed -n 4p)
-  disko=$(printf '%s\n' "$facts" | sed -n 5p)
-  # terraform.sh is the only thing this script lets touch a drive (ADR-b77ec913151f), so a host
-  # declaring a disko layout has no installer to run it: that layout would be silently skipped.
-  if [ -n "$disko" ]; then
-    say "$host declares a disko layout ($disko): install.sh deploys through terraform.sh — declare hosts/$host/terraform.json instead"
-    exit 2
-  fi
   # The recipe is the layout declaration. Where the file exists it is what install.sh acts on, and
   # its owns must agree with the one fact that says who may partition the drive: a recipe claiming a
   # drive this host does not own is refused before any write. A host that owns its drive must have

@@ -16,7 +16,6 @@ let
     (import ./ank.nix)
     (import ./pins.nix)
     (import ./caches.nix)
-    (import ./disko.nix)
     (import ./warnings.nix)
     (import ./ptrace.nix)
     (import ./swap.nix)

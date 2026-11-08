@@ -8,7 +8,7 @@ tests/bootstrap.bats assert 19
 tests/build-harness.bats assert 6
 tests/cache-check.bats assert 13
 tests/creds.bats assert 14
-tests/install.bats assert 92
+tests/install.bats assert 90
 tests/njust.bats assert 122
 tests/nix-eval.bats assert 8
 tests/sopsctl.bats assert 79
@@ -22,7 +22,6 @@ tests/outputs.nix checks 11
 tests/wrap.nix checks 15
 tests/ank.nix attrs 5
 tests/caches.nix attrs 13
-tests/disko.nix attrs 6
 tests/filesystems.nix attrs 56
 tests/loader.nix attrs 52
 tests/oomd.nix attrs 14

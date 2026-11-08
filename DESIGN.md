@@ -46,7 +46,7 @@ lib/confirm.sh     # one confirm per destructive step, shared by install.sh and 
 update-all.sh      # feature updaters, then flake input bumps
 ```
 
-41 features: 14 home-only, 18 NixOS-only, 9 with both a `home.nix` and a `nixos.nix`;
+40 features: 14 home-only, 17 NixOS-only, 9 with both a `home.nix` and a `nixos.nix`;
 2 carry an `_overlays.nix` (`nixos-cachyos`, `nixos-niri`).
 
 ## Loader pipeline
@@ -222,9 +222,8 @@ packages there would pull foreign Mesa into the closure. The three callers (`hm-
 
 ## Input boundary
 
-The lock carries eight nixpkgs trees (ours ×2, plus beryl-utils, kait2en, niri-spicy,
-nix-cachyos-kernel, xilo, disko — disko's tree is never evaluated here, only its
-`nixosModules.disko` module is imported). None uses `follows`, and that is the boundary: forcing one to follow
+The lock carries seven nixpkgs trees (ours ×2, plus beryl-utils, kait2en, niri-spicy,
+nix-cachyos-kernel, xilo). None uses `follows`, and that is the boundary: forcing one to follow
 ours would evaluate it against a rev its CI never built, so every path it publishes from its own
 cache stops matching — the CachyOS and KaiT2en kernels would rebuild locally, on the host with
 the least RAM. The caches named in `modules/cache-registry.nix` are the same story: each is
