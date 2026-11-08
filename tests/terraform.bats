@@ -620,6 +620,59 @@ EOF
   [ "$(type_of own 2)" = btrfs ]
 }
 
+# Creating the tree is only half of it: every sibling of @ is a mount hosts/methyl-nixos/nixos.nix
+# declares, and staging has to mount it. deploy writes the closure into @nix; if @nix is only
+# created, the boot mount of an empty @nix over /nix hides that closure, stage 2's init is not in
+# /nix/store, and the host lands in emergency.target. Same for @home, where postdeploy writes the
+# ssh keys.
+@test "owns=true mounts every subvolume of the tree where the installed system mounts it" {
+  truncate -s 128M "$disk_dir/own.img"
+  stub_lsblk "$disk_dir/own.img"
+  recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
+  run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
+  [ "$status" -eq 0 ]
+  assert_call "^mount -o subvol=@nix,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/nix$"
+  assert_call "^mount -o subvol=@home,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/home$"
+  assert_call "^mount -o subvol=@log,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/var/log$"
+  assert_call "^mount -o subvol=@cache,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/var/cache$"
+  assert_call "^mount -o subvol=@swap,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/var/lib/swap$"
+  assert_call "^mount -o subvol=@snapshots,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/.snapshots$"
+  # @ is the filesystem root's own mount: it is mounted once, at $mount, and never again as a sibling.
+  assert_calls "^mount -o subvol=@,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt$" 1
+}
+
+# A rerun of the same recipe is the same staging mount set: a subvolume already mounted is adopted,
+# not mounted twice, so a second --stage terraform changes nothing.
+@test "a rerun adopts the subvolume mounts it already made" {
+  truncate -s 128M "$disk_dir/own.img"
+  stub_lsblk "$disk_dir/own.img"
+  recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
+  run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
+  [ "$status" -eq 0 ]
+  : >"$calls"
+  printf '1\n' >"$stubs/mounted"
+  MOUNTED_SRC="$disk_dir/own.img2" run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
+  [ "$status" -eq 0 ]
+  assert_out "$disk_dir/mnt/nix already mounted — adopted, not rebuilt"
+  assert_out "$disk_dir/mnt/home already mounted — adopted, not rebuilt"
+  assert_no_call "mount -o subvol=@nix"
+  assert_no_call "mount -o subvol=@home"
+}
+
+# A dry run writes nothing, and mounting is a write to this machine's mount table.
+@test "owns=true --dry-run on a btrfs root creates and mounts no tree" {
+  truncate -s 128M "$disk_dir/own.img"
+  stub_lsblk "$disk_dir/own.img"
+  recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
+  snapshot own
+  run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img" --dry-run
+  [ "$status" = 0 ]
+  assert_no_call "btrfs subvolume create"
+  assert_no_call "mount -o subvol=@"
+  assert_no_call "umount"
+  assert_unchanged own
+}
+
 # A second owned run is the same recipe on the same drive: the table it would write is already there,
 # so nothing is written and the tree that already exists is adopted rather than recreated.
 @test "a second owned run adopts the table it already wrote and creates nothing" {
@@ -812,6 +865,163 @@ EOF
   [ "$status" -eq 2 ]
   assert_out "root"
   assert_out "other"
+}
+
+# A UUID names one filesystem, so two partitions carrying the same label cannot make the root
+# ambiguous: the declared UUID picks the partition, where a label resolves to whichever one the scan
+# reached first.
+@test "a declared uuid resolves the partition even when another partition shares its label" {
+  owned lin pick
+  format_slice lin 2 "$LINUX_START" "$LINUX_N" ext4 nixos
+  format_slice lin 3 "$LINUX2_START" "$LINUX2_N" ext4 nixos
+  nodes lin
+  recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  recipe_uuid "$stubs/recipe.json" root "$(uuid_of lin 3)"
+  snapshot_regions lin "$LINUX_START" "$LINUX_N" "$LINUX2_START" "$LINUX2_N"
+
+  run terraform_recipe_run lin "$stubs/recipe.json"
+  [ "$status" -eq 0 ]
+  assert_call "^mount -o noatime $disk_dir/lin.img3 $disk_dir/mnt$"
+  assert_call "^mount .* $disk_dir/mnt$"
+  assert_no_call "mkfs"
+  assert_unchanged lin
+}
+
+# A UUID the drive does not carry is not a partition that moved: it is a recipe copied from another
+# drive, and taking the entry anyway would install onto somebody else's filesystem.
+@test "a uuid this drive does not carry refuses the run before anything is written" {
+  owned lin blank
+  format_slice lin 1 "$ESP_START" "$ESP_N" vfat boot
+  format_slice lin 2 "$LINUX_START" "$LINUX_N" ext4 nixos
+  nodes lin
+  recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  recipe_uuid "$stubs/recipe.json" root "e7b0e010-10bf-4984-b941-5c7c182d1b74"
+  snapshot lin
+
+  run terraform_recipe_run lin "$stubs/recipe.json"
+  [ "$status" -eq 2 ]
+  assert_out "e7b0e010-10bf-4984-b941-5c7c182d1b74"
+  assert_out "no partition on"
+  assert_out "mkfs is never given a UUID"
+  assert_no_call "mkfs"
+  assert_no_call "sfdisk --append"
+  assert_unchanged lin
+}
+
+# mkfs is never given a UUID, so a UUID can only describe a filesystem that already exists. Declaring
+# one on a partition this run is about to format is asking for a UUID mkfs will invent.
+@test "a uuid declared on a blank partition refuses before any format" {
+  owned blank blank
+  nodes blank
+  recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  recipe_uuid "$stubs/recipe.json" root "BBD9-580F"
+  snapshot blank
+
+  run terraform_recipe_run blank "$stubs/recipe.json"
+  [ "$status" -eq 2 ]
+  assert_out "mkfs is never given a UUID"
+  assert_out "terraform.json"
+  assert_no_call "mkfs"
+  assert_unchanged blank
+}
+
+# A uuid outside [A-Za-z0-9-] would reach a device path with a slash or a space in it, the same rule
+# lib/filesystems.nix enforces at eval.
+@test "a recipe uuid that is not a filesystem UUID refuses before any read of the drive" {
+  owned lin blank
+  nodes lin
+  recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  recipe_uuid "$stubs/recipe.json" root "../../boot"
+  snapshot lin
+
+  run terraform_recipe_run lin "$stubs/recipe.json"
+  [ "$status" -eq 2 ]
+  assert_out "not a filesystem UUID"
+  assert_unchanged lin
+}
+
+# The reproduction records nothing: folding a recipe onto the drive is a separate act, so a run that
+# failed leaves no recipe behind. install.sh's terraform stage calls --record after its verification.
+@test "a recipe run writes no recipe; --record folds the UUIDs onto the mounted root afterwards" {
+  image own blank
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --force
+  [ "$status" -eq 0 ]
+  [ ! -e "$disk_dir/mnt/terraform.json" ]
+  # The nodes the run formatted must not be re-cut from the image: --record reads those filesystems.
+  TF_NODES=0 run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --record
+  [ "$status" -eq 0 ]
+  jq -e --arg esp "$(uuid_of own 1)" --arg root "$(uuid_of own 2)" '(.partitions[] | select(.name == "esp") | .uuid) == $esp and (.partitions[] | select(.name == "root") | .uuid) == $root and .owns == true' "$disk_dir/mnt/terraform.json" >/dev/null
+  # The layout itself is preserved: a recorded recipe is the same recipe with UUIDs added.
+  jq -e '.partitions[] | select(.name == "root") | .size == "54M" and .mount == "/"' "$disk_dir/mnt/terraform.json" >/dev/null
+  assert_out "terraform.json"
+}
+
+# Nothing is recorded when the recipe already names every filesystem, so a folded repo re-runs clean.
+@test "--record writes nothing when the recipe already declares every uuid" {
+  owned lin blank
+  format_slice lin 1 "$ESP_START" "$ESP_N" vfat boot
+  format_slice lin 2 "$LINUX_START" "$LINUX_N" ext4 nixos
+  nodes lin
+  recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  recipe_uuid "$stubs/recipe.json" esp "$(uuid_of lin 1)"
+  recipe_uuid "$stubs/recipe.json" root "$(uuid_of lin 2)"
+  TF_NODES=0 run terraform_recipe_run lin "$stubs/recipe.json" --disk "$disk_dir/lin.img" --record
+  [ "$status" -eq 0 ]
+  [ ! -e "$disk_dir/mnt/terraform.json" ]
+}
+
+# --record writes a file, so a dry run has nothing to record.
+@test "--record under --dry-run refuses and writes nothing" {
+  owned own blank
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --record --dry-run
+  [ "$status" -eq 2 ]
+  assert_out "--dry-run writes nothing"
+  [ ! -e "$disk_dir/mnt/terraform.json" ]
+}
+
+@test "--record without a recipe refuses" {
+  owned own blank
+  run terraform_run own --record
+  [ "$status" -eq 2 ]
+  assert_out "--recipe is required"
+  [ ! -e "$disk_dir/mnt/terraform.json" ]
+}
+
+# --emit is the fold on an installed host, so the UUIDs have to be in what it prints.
+@test "--emit prints the uuid of every filesystem it found" {
+  owned lin blank
+  format_slice lin 1 "$ESP_START" "$ESP_N" vfat boot
+  format_slice lin 2 "$LINUX_START" "$LINUX_N" ext4 nixos
+  nodes lin
+  snapshot_regions lin "$LINUX_START" "$LINUX_N" "$ESP_START" "$ESP_N"
+
+  run emit_run --emit
+  [ "$status" -eq 0 ]
+  jq -e --arg esp "$(uuid_of lin 1)" --arg root "$(uuid_of lin 2)" '[.partitions[].uuid] == [$esp, $root]' \
+    "$stubs/emit.json" >/dev/null
+  assert_unchanged lin
+}
+
+# A recipe folded in from a recorded file describes those filesystems. Reformatting the partition gives
+# it a different UUID, and the recipe then names a filesystem the drive does not hold.
+@test "--verify refuses a uuid the drive no longer carries" {
+  owned lin blank
+  format_slice lin 1 "$ESP_START" "$ESP_N" vfat boot
+  format_slice lin 2 "$LINUX_START" "$LINUX_N" ext4 nixos
+  nodes lin
+  recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  recipe_uuid "$stubs/recipe.json" root "$(uuid_of lin 2)"
+
+  run terraform_recipe_run lin "$stubs/recipe.json" --verify
+  [ "$status" -eq 0 ]
+
+  format_slice lin 2 "$LINUX_START" "$LINUX_N" ext4 nixos
+  nodes lin
+  run terraform_recipe_run lin "$stubs/recipe.json" --verify
+  [ "$status" -eq 2 ]
+  assert_out "uuid"
 }
 
 # Writing a fresh gpt table does not erase the old table's filesystem superblocks: the bytes stay in

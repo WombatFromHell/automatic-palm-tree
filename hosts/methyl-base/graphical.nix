@@ -1,6 +1,5 @@
 _: {
   features = [
-    "hm-zed"
     "hm-brave"
     #
     "nixos-flatpak"

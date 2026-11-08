@@ -7,7 +7,8 @@
       "fs": "vfat",
       "size": "512M",
       "mount": "/boot",
-      "options": "fmask=0077,dmask=0077"
+      "options": "fmask=0077,dmask=0077",
+      "uuid": "77ED-D9E9"
     },
     {
       "name": "root",
@@ -15,7 +16,8 @@
       "fs": "btrfs",
       "size": "rest",
       "mount": "/",
-      "options": "noatime,compress=zstd"
+      "options": "noatime,compress=zstd",
+      "uuid": "010d848c-ded5-4ac1-9e25-e1429f48a1b6"
     }
   ]
 }

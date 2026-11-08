@@ -15,7 +15,7 @@ fd -g '*.{sh,bats}' -0 | xargs -0 -r shfmt -w -s -i 2
 # (SC2030, SC2031). Those three are false positives in bats, so only the bats pass drops them --
 # plain .sh keeps the full checks, and everything else bats raises is fixed in the file.
 fd -g '*.bats' -0 | xargs -0 -r shellcheck --exclude=SC2154,SC2030,SC2031
-fd -g '*.sh' -0 | xargs -0 -r shellcheck
+fd -g '*.sh' -0 | xargs -0 -r shellcheck -x
 
 # Markdown through oxfmt: it picks its own files and honours .gitignore, so no fd/xargs here, and
 # it needs no config file -- defaults are the house style. .ank/ is dropped by a positional exclude

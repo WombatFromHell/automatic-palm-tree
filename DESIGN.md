@@ -40,7 +40,7 @@ tests/             # eval-only suite (see TEST_DESIGN.md); nix-eval.sh caps each
                    #   bats tiers run against PATH stubs; terraform.bats + disk-fixture.bash drive
                    #   real mkfs/blkid/sgdisk on sparse loop files; deploy-loop.sh needs root
 bootstrap.sh       # day-zero switch: cache urls/keys via --option, then switch
-install.sh         # staged installer: prepare / terraform / deploy / reboot
+install.sh         # staged installer: prepare / terraform / deploy / postdeploy / reboot
 terraform.sh       # the only thing here that touches a drive (ADR-b77ec913151f)
 lib/confirm.sh     # one confirm per destructive step, shared by install.sh and terraform.sh
 update-all.sh      # feature updaters, then flake input bumps
@@ -116,6 +116,14 @@ and options and appends `subvol=@<name>`. Options therefore have two homes — t
 `terraform.sh` mounts the drive with, `fileSystems` is what NixOS mounts at boot — and fsLib keeps
 them one-way: `extraOptions` appends, `options` replaces the whole list. An override on a
 recipe-derived mount is the only way the two sides can disagree, and nothing in the gate catches it.
+
+Staging mounts the tree it creates (ADR-97fb20bfd175): owned mode mounts each sibling of `@` under the
+install root at the path the host mounts it at — `@nix` at `/nix`, `@home` at `/home`, `@log` at
+`/var/log`, `@cache` at `/var/cache`, `@swap` at `/var/lib/swap`, `@snapshots` at `/.snapshots` — with
+the root's options, and `install.sh --stage deploy` refuses before its prompt while any declared path
+is not live under the root. That guard is not cosmetic: `nixos-install` writes the closure into `@`
+when `/nix` is unmounted, and the boot mount of an empty `@nix` over `/nix` then hides it —
+`/nix/store` empty, stage 2's init missing, `emergency.target`.
 
 ## NixOS module composition (order matters)
 
@@ -395,7 +403,7 @@ flowchart LR
   E8["nix run .#apps.&lt;system&gt;.cache-check &lt;host&gt;"] --> CF["eval-only cache pre-flight (lib/cache-check.sh):<br/>which caches the host's enabled features require<br/>but do not substitute from"]
   E9["nix run .#apps.&lt;system&gt;.style"] --> ST["lib/style.sh: every .nix through alejandra + statix,<br/>every .sh/.bats through shfmt + shellcheck, markdown through oxfmt (.ank excluded)<br/>tools from the app's runtimeInputs, not the host profile"]
   E10["nix develop"] --> DEV["curl jq nix bats shellcheck shfmt nix-unit<br/>+ terraform.sh's disk tools (util-linux, gptfdisk,<br/>dosfstools, mtools, e2fsprogs, btrfs-progs, xfsprogs):<br/>where features/*/update.sh and terraform.bats run"]
-  E11["install.sh --stage prepare|terraform|deploy|reboot <host>"] --> INS["staged installer on the target drive:<br/>prepare read-only + partition-table checksum,<br/>terraform through terraform.sh, deploy nixos-install --root,<br/>one confirm per destructive step (--force is the testing override)"]
+  E11["install.sh --stage prepare|terraform|deploy|postdeploy|reboot <host>"] --> INS["staged installer on the target drive:<br/>prepare read-only + partition-table checksum,<br/>terraform through terraform.sh (--verify decides whether the stage asks),<br/>deploy nixos-install --root, postdeploy ssh keys + passwords,<br/>one confirm per stage (--force is the testing override)"]
   E12["terraform.sh --emit | --recipe <file> [--verify]"] --> DRV["reproduce hosts/<host>/terraform.json on its drive<br/>and re-read the drive before reporting success"]
 ```
 

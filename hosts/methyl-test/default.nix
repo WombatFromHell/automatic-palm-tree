@@ -1,10 +1,10 @@
 {hostLib, ...}:
 hostLib.mergeModules (
-  hostLib.profiles ../methyl-base/profiles ["methyl-ws"]
+  hostLib.profiles ../methyl-base/profiles ["methyl-minimal"]
   ++ [
     {
       ownsWholeDisk = true;
-      features = ["nixos-qemu"];
+      features = ["nixos-qemu" "nixos-btrfs"];
     }
   ]
 )

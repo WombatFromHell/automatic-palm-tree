@@ -240,6 +240,8 @@ seed_region() {
 }
 type_of() { blkid -o value -s TYPE "$disk_dir/$1.img$2" 2>/dev/null || true; }
 label_of() { blkid -o value -s LABEL "$disk_dir/$1.img$2" 2>/dev/null || true; }
+# The UUID a fixture filesystem carries, which is what a recipe may declare and what a run records.
+uuid_of() { blkid -o value -s UUID "$disk_dir/$1.img$2" 2>/dev/null || true; }
 
 # A vfat ESP holding the boot metadata another OS needs, written through mtools because the ESP is a
 # file here. mtools creates no directory a caller has not made, so every level goes in first.
@@ -314,6 +316,13 @@ recipe_file() {
   }' >"$file"
 }
 
+# recipe_uuid <file> <name> <uuid> — declare a filesystem UUID on one partition of a recipe, the way
+# a folded-in recipe carries them. Written with jq so the file stays real JSON.
+recipe_uuid() {
+  jq --arg name "$2" --arg uuid "$3" '(.partitions[] | select(.name == $name)) += {uuid: $uuid}' \
+    "$1" >"$1.new" && mv "$1.new" "$1"
+}
+
 # stub_lsblk <paths...> — the candidate set discovery enumerates. A fixture image stands in for a
 # /dev name: the reader accepts a path that exists, which is what lets discovery run on files.
 # With no paths it reports no disk at all, which is the default setup state. SIZE is included
@@ -341,7 +350,9 @@ EOF
 terraform_recipe_run() {
   local disk="$1" recipe="$2"
   shift 2
-  nodes "$disk"
+  # A read-only mode (--record) reads the filesystems a previous call in the same test formatted,
+  # so the nodes must be left as they are. Re-cutting them from the image wipes those filesystems.
+  if [ "${TF_NODES:-1}" = 1 ]; then nodes "$disk"; fi
   PATH="$stubs:$PATH" INSTALL_FORCE="${TF_FORCE:-1}" bash "$repo/terraform.sh" \
     --recipe "$recipe" --mount "$disk_dir/mnt" "$@"
 }

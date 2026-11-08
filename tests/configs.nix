@@ -31,7 +31,6 @@ let
   # The derivation being *unwrapped* is proved by the nixGL check below (packages null makes
   # lib.nixGL.wrapGpu identity) and by tests/wrap.nix's identity-on-a-NixOS-fixture check.
   rawBrave = s.rawFeaturePkgs.brave;
-  rawZed = s.rawFeaturePkgs.zed;
   homeCfg = cfg: cfg.home-manager.users.josh;
 
   # Gaming- and KDE-only signals, keyed by the hosts that own them. Presence is asserted on the
@@ -164,7 +163,14 @@ let
       (ck "${host}: every mount is the recipe's or a subvolume of its root"
         (let
           derived = fs.mountsFromRecipe recipe;
-          rootLabel = (lib.findFirst (p: p.mount == "/") null recipe.partitions or []).label;
+          root = lib.findFirst (p: p.mount == "/") null recipe.partitions or [];
+          # A subvolume mount has to name the same filesystem the recipe's root names, by the same
+          # name: a recipe that declares a UUID is a recipe whose mounts name one filesystem, where a
+          # label is unique only within one drive.
+          rootDevice =
+            if root != null && root.uuid or "" != ""
+            then "/dev/disk/by-uuid/${root.uuid}"
+            else "/dev/disk/by-label/${root.label or ""}";
           extra = lib.filterAttrs (m: f: !builtins.hasAttr m derived) cfg.fileSystems;
         in
           !builtins.pathExists ../hosts/${host}/terraform.json
@@ -180,7 +186,7 @@ let
             (f:
               f.fsType
               == "btrfs"
-              && f.device == "/dev/disk/by-label/${rootLabel}"
+              && f.device == rootDevice
               && lib.any (o: builtins.match "subvol=@.*" o != null) (f.options or []))
             (lib.attrValues extra))))
       (ck "${host}: systemd-boot is the loader, and EFI variables match the host"
@@ -205,9 +211,7 @@ let
       (ck "${host}: the GUI features hand their pinned packages to the program options"
         ((homeCfg cfg).programs.chromium.package.pname
           == rawBrave.pname
-          && (homeCfg cfg).programs.chromium.package.version == rawBrave.version
-          && (homeCfg cfg).programs.zed-editor.package.pname == rawZed.pname
-          && (homeCfg cfg).programs.zed-editor.package.version == rawZed.version))
+          && (homeCfg cfg).programs.chromium.package.version == rawBrave.version))
 
       (ck "${host}: wl-watcher execs store paths only, and installs what its script calls"
         (let
@@ -232,7 +236,8 @@ let
               # GPU family this host has, so the variant is asserted here.
               && (let
                 nvtop = lib.head (s.pkgNamed (homeCfg cfg).home.packages "nvtop");
-              in lib.all (i: !lib.hasPrefix "cuda" (s.pkgName i)) nvtop.buildInputs)))))
+              in
+                lib.all (i: !lib.hasPrefix "cuda" (s.pkgName i)) nvtop.buildInputs)))))
 
       # --- this host's own profile effects -------------------------------------
       (ck "${host}: its packages are installed" (lib.all (p: sysPkg cfg p) e.packages))

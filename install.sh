@@ -7,9 +7,13 @@
 #            partitions the host declares. Either way the target store lands on the disk.
 #   deploy     nixos-install --root <dir>: the closure builds into <dir>/nix/store and the boot
 #            loader is written (nixos-install runs switch-to-configuration boot itself)
-#   reboot     only after deploy
+#   postdeploy  writes into the installed tree only: ssh keys for the host's users, and a password
+#            for root and every wheel user. Nothing installs here.
+#   reboot     only after deploy and postdeploy
 #
-# Every destructive step is confirmed one at a time, never as a blanket yes. --force or
+# One prompt per stage, asked right before that stage writes: terraform asks only when the drive is
+# about to change, deploy always (an install is not read-only), postdeploy per password because only
+# a terminal can answer one. --force or
 # INSTALL_FORCE=1 is the testing override; --dry-run runs nothing. `destroy` and
 # --yes-wipe-all-disks are never passed: a partition another OS owns is never a target.
 set -euo pipefail
@@ -25,11 +29,14 @@ force="${INSTALL_FORCE:-0}"
 # The ISO's /nix/store has no room and Nix refuses a store under a world-writable /tmp, so the
 # evals and the install build go to a store under /run (tmpfs, 755).
 scratch="${INSTALL_SCRATCH:-/run/flakeroot-scratch}"
+# INSTALL_PASSWORDS (user:password lines) and INSTALL_SYSTEM (a toplevel store path) are the
+# non-interactive path: passwords without a terminal, and an install of a closure built on the
+# machine that called the installer rather than one built inside it.
 # Installer ISOs differ in what their nix.conf enables, and the flake commands here need both.
 export NIX_CONFIG="experimental-features = nix-command flakes"
 
 usage() {
-  printf 'usage: install.sh [--dry-run] [--force] [--root <dir>] [--scratch <dir>] [--stage prepare|terraform|deploy|reboot|all] <host>\n'
+  printf 'usage: install.sh [--dry-run] [--force] [--root <dir>] [--scratch <dir>] [--stage prepare|terraform|deploy|postdeploy|reboot|all[,<stage>...]] <host>\n'
 }
 
 while [ $# -gt 0 ]; do
@@ -67,13 +74,28 @@ if [ -z "$host" ]; then
   exit 2
 fi
 
-case "$stage" in
-prepare | terraform | deploy | reboot | all) ;;
-*)
-  printf 'install.sh: unknown stage %s\n' "$stage" >&2
+# `--stage` takes a comma list, so one call runs the stages in the order given: `prepare,terraform`
+# is the first two steps of `all`, and `all` is the whole sequence in its fixed order.
+IFS=, read -ra wanted <<<"$stage"
+stages=()
+for s in "${wanted[@]}"; do
+  case "$s" in
+  prepare | terraform | deploy | postdeploy | reboot) stages+=("$s") ;;
+  all) stages+=(prepare terraform deploy postdeploy reboot) ;;
+  '')
+    printf 'install.sh: --stage names stages, not blanks (prepare,terraform)\n' >&2
+    exit 2
+    ;;
+  *)
+    printf 'install.sh: unknown stage %s\n' "$s" >&2
+    exit 2
+    ;;
+  esac
+done
+if [ "${#stages[@]}" = 0 ]; then
+  printf 'install.sh: --stage names at least one stage\n' >&2
   exit 2
-  ;;
-esac
+fi
 
 # Same wrap bootstrap.sh uses: the build is what spills memory, so that is what gets capped.
 # Same wrap bootstrap.sh uses: the build is what spills memory, so that is what gets capped. No
@@ -106,10 +128,11 @@ admins() {
 # not a table change (ADR-b77ec913151f).
 table_checksum() { dd if="$device" bs=1M count=1 status=none | md5sum | cut -d' ' -f1; }
 
-# The precondition deploy needs: a store on the target disk, not in the ISO's RAM. terraform.sh
-# mounts the root subvolume at $root, so the store is a directory inside that filesystem -- findmnt
+# The precondition deploy needs: a store on the target disk, not in the ISO's RAM. Where the host
+# declares /nix as a mount, terraform.sh mounts @nix there and the store lands in that subvolume.
+# Where it declares no /nix mount, the store is a directory inside the root filesystem -- findmnt
 # answers for a mountpoint, never for a directory inside one, so both placements are checked. A tmpfs
-# source is refused.
+# source is refused: it would build the closure into RAM.
 store_mount() {
   local src
   src=$(findmnt -n -o SOURCE "$root/nix" 2>/dev/null || true)
@@ -181,17 +204,18 @@ resolve() {
     # A fresh tmpfs root is 1777, which Nix refuses; the directory itself is 777 under the ISO umask.
     chmod 755 "$scratch"
   fi
-  # One eval, four facts: who may partition the drive and what the host's mounts name. terraform.sh
-  # is the only installer this script runs (ADR-b77ec913151f), so there is no other layout declaration
-  # to read back. Evaluating the config once is cheaper than three narrowed evals of it, and the ISO's
-  # /nix/store is an overlay whose upper half is a tiny tmpfs, so every eval and build below goes to
-  # its own store instead.
+  # One eval, five facts: who may partition the drive, what the host's mounts name, and every path it
+  # mounts them at. terraform.sh is the only installer this script runs (ADR-b77ec913151f), so there
+  # is no other layout declaration to read back. Evaluating the config once is cheaper than three
+  # narrowed evals of it, and the ISO's /nix/store is an overlay whose upper half is a tiny tmpfs, so
+  # every eval and build below goes to its own store instead.
   facts=$(scoped nix eval --store "$scratch" --impure --raw "$(attr)" \
     --apply 'c: builtins.concatStringsSep "\n" [
       (builtins.toString c.flakeHost.ownsWholeDisk)
       (c.fileSystems."/".device or "")
       (c.fileSystems."/".fsType or "")
       (c.fileSystems."/boot".device or "")
+      (builtins.concatStringsSep " " (builtins.attrNames c.fileSystems))
     ]') || exit 2
   owned=$(printf '%s\n' "$facts" | sed -n 1p)
   # `builtins.toString` of a bool is `1` for true and `""` for false, and the recipe's `owns` is
@@ -204,6 +228,9 @@ resolve() {
   root_device=$(printf '%s\n' "$facts" | sed -n 2p)
   root_fs=$(printf '%s\n' "$facts" | sed -n 3p)
   esp_device=$(printf '%s\n' "$facts" | sed -n 4p)
+  # The paths the installed system mounts, space-separated. deploy compares them against what is live
+  # under $root; the root and the ESP are not compared there, because those have their own gates.
+  mount_paths=$(printf '%s\n' "$facts" | sed -n 5p)
   # The recipe is the layout declaration. Where the file exists it is what install.sh acts on, and
   # its owns must agree with the one fact that says who may partition the drive: a recipe claiming a
   # drive this host does not own is refused before any write. A host that owns its drive must have
@@ -277,14 +304,26 @@ prepare() {
 
 terraform() {
   resolve
-  # terraform.sh is the only thing that touches the drive, and it prompts for each destructive step
-  # itself (ADR-b77ec913151f): a fresh gpt table on a drive this host owns, a mkfs of a blank
-  # partition on a drive it shares. This stage adds no prompt of its own; --force is the only
-  # non-interactive override, and --dry-run runs nothing. A second run adopts what the drive already
-  # holds instead of rebuilding it.
+  # One prompt for the whole stage, asked only when the drive is about to change. The verdict comes
+  # from routines that write nothing: --verify reads the recipe against the drive, and with no recipe
+  # the declared mounts being live already says the same thing. The answer is carried to terraform.sh
+  # as --force (ADR-b77ec913151f: --force is the operator's answer to the destructive prompt), so the
+  # stage never asks twice and a drive that already matches is never asked about at all.
   tf=()
-  if [ "$dry" = 1 ]; then tf+=(--dry-run); fi
-  if [ "$force" = 1 ]; then tf+=(--force); fi
+  if [ "$dry" = 1 ]; then
+    tf+=(--dry-run)
+  else
+    changed=0
+    if [ -n "$recipe" ]; then
+      ./terraform.sh --verify --recipe "$recipe" --disk "$device" >/dev/null 2>&1 || changed=1
+    else
+      store_mount >/dev/null || changed=1
+    fi
+    if [ "$changed" = 1 ]; then
+      confirm "terraform will change $device: partitions and filesystems are laid out on it, so anything currently on them is gone"
+    fi
+    tf+=(--force)
+  fi
   failed=0
   if [ -n "$recipe" ]; then
     run ./terraform.sh "${tf[@]}" --recipe "$recipe" --disk "$device" --mount "$root" || failed=1
@@ -305,6 +344,17 @@ terraform() {
     say "terraform.sh reported a failure — the layout on $device is not what $recipe declares"
     exit 2
   }
+  # Folding the recipe onto the drive is the stage's last act, after the reproduction and both
+  # verification checks came back clean, so a run that failed leaves no recipe behind. A recipe that
+  # already carries the UUIDs names every filesystem already, so there is nothing to fold. deploy
+  # refuses until the host recipe carries them, and folding it into the repo is the operator's act.
+  if [ -n "$recipe" ] && ! grep -q '"uuid"' "$recipe_file"; then
+    run ./terraform.sh --record --recipe "$recipe" --disk "$device" --mount "$root" || {
+      say "terraform could not record the drive's UUIDs — deploy refuses until $recipe_file carries them"
+      exit 2
+    }
+    say "recorded recipe at $root/terraform.json: cp it to hosts/$host/terraform.json and run nix flake check"
+  fi
   what="the partitions $host declares"
   [ "$owned" = "true" ] && what="the layout $recipe declares"
   say "terraform ok: $root mounted from $what ($src)"
@@ -316,6 +366,15 @@ deploy() {
     say "deploy needs terraform first: nothing disk-backed is mounted at $root or $root/nix"
     exit 2
   }
+  # A recipe that declares no UUID names every filesystem by label, and a label is unique only within
+  # one drive — two partitions can answer to one name. terraform.sh records the UUIDs of the
+  # filesystems it made or adopted into $root/terraform.json, and folding that file into the recipe is
+  # what makes a mount name one filesystem. Asked before the verdict, so a recipe nobody folded never
+  # reaches the prompt.
+  if [ -n "$recipe" ] && ! grep -q '"uuid": *"[^"]*"' "$recipe"; then
+    say "deploy refused: $recipe declares no filesystem UUID — terraform.sh recorded the drive's UUIDs into $root/terraform.json; cp that over $recipe and re-run nix flake check"
+    exit 2
+  fi
   # The drive has to still match the recipe the layout was built from. --verify reads it and writes
   # nothing, so a drive that changed since terraform ran refuses the install rather than being
   # installed onto.
@@ -324,6 +383,24 @@ deploy() {
       say "deploy refused: $device no longer matches $recipe"
       exit 2
     }
+  fi
+  # The staging mount set has to be the mount set this host reads at boot (ADR-eaca61b85782 as
+  # amended by the parity rule): every subvolume the config mounts must be live under $root before
+  # nixos-install runs, or deploy writes into one filesystem and boot reads another. An empty @nix
+  # mounted over /nix is not cosmetic -- /nix/store ends up empty, stage 2's init is not in it, and
+  # the host lands in emergency.target. Asked before the prompt, so a tree that is not there never
+  # reaches an answer. shortcut: / and /boot are not checked here -- store_mount above answers for the
+  # root and terraform.sh mounts and verifies the ESP; upgrading means checking every declared path.
+  missing=""
+  for path in $mount_paths; do
+    case "$path" in
+    / | /boot) continue ;;
+    esac
+    findmnt -n -o SOURCE "$root$path" >/dev/null 2>&1 || missing="${missing:+$missing }$path"
+  done
+  if [ -n "$missing" ]; then
+    say "deploy refused: $missing is not mounted under $root — the tree terraform.sh laid down is not the tree $host mounts"
+    exit 2
   fi
   confirm "install $host onto $root: the closure builds into $root/nix/store and the boot loader is written"
   # nixos-install only trusts `auto?trusted=1`, which trusts caches the client already knows. The
@@ -335,10 +412,29 @@ deploy() {
   export NIX_CONFIG="experimental-features = nix-command flakes
 extra-substituters = $urls
 extra-trusted-public-keys = $keys"
-  run scoped nixos-install --flake ".#$host" --root "$root" --no-root-passwd
-  # Nothing sets a password (--no-root-passwd), so the installer's ssh keys are the only way into
-  # the new system. They belong to the users this host declares, not to whoever ran the ISO, and
-  # under sudo $HOME is root's, so the keys come from whoever invoked the installer.
+  # INSTALL_SYSTEM installs a closure built somewhere else. The VM tier builds on the host and
+  # hands the store path over, because a flake evaluation inside a 1GB guest is exactly the thing
+  # that overflows a RAM-constrained machine. Without it, deploy builds from the flake as always.
+  if [ -n "${INSTALL_SYSTEM:-}" ]; then
+    run scoped nixos-install --system "$INSTALL_SYSTEM" --root "$root" --no-root-passwd
+  else
+    run scoped nixos-install --flake ".#$host" --root "$root" --no-root-passwd
+  fi
+  say "deploy ok: $host installed on $root, boot loader written — run --stage postdeploy for ssh keys and passwords"
+}
+
+# The way into the freshly installed system, and nothing else: --no-root-passwd leaves every account
+# with no password, and the installer knows only the ISO operator's keys, not the keys of the users
+# this host declares. This stage writes inside $root only — files under $root/home and passwd entries
+# of the installed system — never the drive.
+postdeploy() {
+  resolve
+  store_mount >/dev/null || {
+    say "postdeploy needs the installed root mounted: run terraform first"
+    exit 2
+  }
+  # The keys belong to the users this host declares, not to whoever ran the ISO, and under sudo
+  # $HOME is root's, so they come from whoever invoked the installer.
   users=$(scoped nix eval --store "$scratch" --impure --raw "$(attr).flakeHost.osUsernames" \
     --apply 'xs: builtins.concatStringsSep " " xs') || exit 2
   key_src=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)/.ssh/authorized_keys
@@ -354,24 +450,49 @@ extra-trusted-public-keys = $keys"
   # The admins are whoever the host puts in wheel (flakeHost.adminUsernames, modules/defaults).
   admins=$(admins)
   if [ -z "$admins" ]; then
-    say "deploy found no wheel user in $host's config — the design needs at least one admin"
+    say "postdeploy found no wheel user in $host's config — the design needs at least one admin"
     exit 2
   fi
-  # nixos-install --no-root-passwd leaves root and every admin with nothing to log in with, and the
-  # freshly installed system has no /run/current-system yet, so passwd must come from its own store.
-  # The freshly installed tree has no /run/current-system yet, so the installer environment's own
+  # The freshly installed system has no /run/current-system yet, so the installer environment's own
   # nixos-enter is what gives a command inside it a working PATH.
   how="nixos-enter --root $root --"
-  # Only a real terminal can answer a password prompt; --force must never block on one.
-  for a in root $admins; do
-    if [ -t 0 ] && confirm "set a password for $a now (prompts twice, no current password needed)"; then
-      run nixos-enter --root "$root" -- passwd "$a"
-      say "password set for $a"
-    else
-      say "no password set for $a — run \`$how passwd $a\` before reboot, nothing sets a password"
-    fi
-  done
-  say "deploy ok: $host installed on $root, boot loader written — reboot once root and an admin have passwords"
+  # Passwords come from the environment when there is no terminal to answer a prompt — the VM tier,
+  # and any scripted run. Lines are user:password; only root or a wheel admin this host declares may
+  # be named, and the value travels on stdin only, because argv lands in the call log and stdout
+  # lands in the serial log the caller keeps.
+  if [ -n "${INSTALL_PASSWORDS:-}" ]; then
+    # Validate the whole batch before anything is written: a batch naming someone this host does not
+    # declare must leave the tree untouched, not leave it half-set.
+    pairs=()
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      user=${line%%:*}
+      known=0
+      for a in root $admins; do
+        [ "$user" = "$a" ] && known=1 && break
+      done
+      if [ "$known" != 1 ]; then
+        say "postdeploy refused: $user has a password in INSTALL_PASSWORDS but is not an admin of $host"
+        exit 2
+      fi
+      pairs+=("$line")
+    done <<<"$INSTALL_PASSWORDS"
+    for line in "${pairs[@]}"; do
+      printf '%s\n' "$line" | run nixos-enter --root "$root" -- chpasswd
+      say "password set for ${line%%:*}"
+    done
+  else
+    # Only a real terminal can answer a password prompt; --force must never block on one.
+    for a in root $admins; do
+      if [ -t 0 ] && confirm "set a password for $a now (prompts twice, no current password needed)"; then
+        run nixos-enter --root "$root" -- passwd "$a"
+        say "password set for $a"
+      else
+        say "no password set for $a — run \`$how passwd $a\` before reboot, nothing sets a password"
+      fi
+    done
+  fi
+  say "postdeploy ok: ssh keys installed, passwords set where a terminal could answer — reboot once root and an admin have passwords"
 }
 
 # A password exists when the installed system's shadow has a real hash for the account: field 2 is
@@ -402,15 +523,12 @@ reboot_stage() {
   run reboot
 }
 
-case "$stage" in
-prepare) prepare ;;
-terraform) terraform ;;
-deploy) deploy ;;
-reboot) reboot_stage ;;
-all)
-  prepare
-  terraform
-  deploy
-  reboot_stage
-  ;;
-esac
+for s in "${stages[@]}"; do
+  case "$s" in
+  prepare) prepare ;;
+  terraform) terraform ;;
+  deploy) deploy ;;
+  postdeploy) postdeploy ;;
+  reboot) reboot_stage ;;
+  esac
+done

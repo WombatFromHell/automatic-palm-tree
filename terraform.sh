@@ -28,6 +28,7 @@ esp_device=""
 recipe=""
 emit=""
 verify=""
+record=""
 owns=false
 dry=0
 force="${INSTALL_FORCE:-0}"
@@ -37,6 +38,7 @@ usage() {
   printf '       terraform.sh [--dry-run] [--force] --disk <drive> --mount <dir> --root-fs <type> --root-device <path> --esp-device <path>\n'
   printf '       terraform.sh --emit [--disk <drive>]   read-only: prints the recipe this drive describes\n'
   printf '       terraform.sh --recipe <file> --verify   read-only: does the drive match the recipe?\n'
+  printf '       terraform.sh --recipe <file> --record  write: fold the UUIDs of the partitions into <mount>/terraform.json\n'
 }
 
 while [ $# -gt 0 ]; do
@@ -45,6 +47,7 @@ while [ $# -gt 0 ]; do
   --dry-run) dry=1 ;;
   --force) force=1 ;;
   --verify) verify=1 ;;
+  --record) record=1 ;;
   --recipe)
     recipe="$2"
     shift
@@ -107,6 +110,10 @@ signature() { blkid -o value -s TYPE "$1" 2>/dev/null || true; }
 
 # The label a filesystem carries, which is what a recipe entry is checked against.
 label_of() { blkid -o value -s LABEL "$1" 2>/dev/null || true; }
+
+# The filesystem UUID, which is what a recipe may declare and what a run records. Unique across every
+# drive, where a label is unique only within one.
+uuid_of() { blkid -o value -s UUID "$1" 2>/dev/null || true; }
 
 # A partition with no type declared still needs a GPT type: a vfat partition is an ESP, anything
 # else is a Linux filesystem partition. The ESP GUID, not the FAT32 GUID — firmware scans partitions
@@ -349,16 +356,39 @@ esp_offers() {
 discovering=0
 
 resolve_entries() {
-  local line name label fs size type mnt node cand t sig taken=""
+  local line name label fs size type mnt uuid node cand t sig taken="" i=0
   resolved=()
   taken=" "
   for line in "${entry_lines[@]}"; do
     IFS="$sep" read -r name label fs size type mnt <<<"$line"
+    uuid="${uuids[$i]:-}"
+    i=$((i + 1))
     node=""
-    case "$name" in
-    "$esp_name") node=$(declared_node "$esp_device") ;;
-    "$root_name") node=$(declared_node "$root_device") ;;
-    esac
+    # A declared UUID is the narrowest name available: it identifies one filesystem, where a label is
+    # unique only within one drive. It is answered against this drive's partitions only —
+    # /dev/disk/by-uuid is global, and a match on another drive is another host's install.
+    if [ -n "$uuid" ]; then
+      while read -r cand _t; do
+        [ -n "$cand" ] || continue
+        case "$taken" in *" $cand "*) continue ;; esac
+        [ "$(uuid_of "$cand")" = "$uuid" ] || continue
+        [ "$(signature "$cand")" = "$fs" ] || continue
+        holds_size "$cand" "$size" ||
+          refuse "recipe entry $name: $cand carries uuid $uuid and $(human_size "$(($(sect_of "$cand") * 512))"), which is less than the $size the recipe asks for: resize is never attempted"
+        node="$cand"
+        break
+      done <<<"$parts"
+      # mkfs is never given a UUID, so a declared UUID can only describe a filesystem that already
+      # exists. Asking for one on a partition this run would format is asking for a UUID mkfs invents.
+      [ -n "$node" ] || [ "$discovering" = 1 ] ||
+        refuse "recipe entry $name declares uuid $uuid, which no partition on $disk carries: mkfs is never given a UUID, so a UUID names a filesystem that already exists — a run records one into $mount/terraform.json"
+    fi
+    if [ -z "$uuid" ]; then
+      case "$name" in
+      "$esp_name") node=$(declared_node "$esp_device") ;;
+      "$root_name") node=$(declared_node "$root_device") ;;
+      esac
+    fi
     while read -r cand t; do
       [ -n "$cand" ] || continue
       if [ -n "$node" ]; then continue; fi
@@ -521,7 +551,7 @@ if [ -n "$emit" ]; then
       best_name="$name"
       best_bytes="$bytes"
     fi
-    kept+=("$name$sep$label$sep$fs$sep$(human_size "$bytes")$sep$mount$sep$(mount_opts "$fs")")
+    kept+=("$name$sep$label$sep$fs$sep$(human_size "$bytes")$sep$mount$sep$(mount_opts "$fs")$sep$(uuid_of "$node")")
   done <<<"$rows"
 
   if [ "${#kept[@]}" = 0 ]; then
@@ -533,7 +563,7 @@ if [ -n "$emit" ]; then
     owns: false,
     partitions: ($rows / "\n" | map(select(. != "")) | map(
       . as $r | ($r / $sep) |
-      {name: .[0], label: .[1], fs: .[2], size: .[3], mount: (if .[0] == $root and .[4] == "" then "/" else .[4] end), options: .[5]}
+      {name: .[0], label: .[1], fs: .[2], size: .[3], mount: (if .[0] == $root and .[4] == "" then "/" else .[4] end), options: .[5], uuid: .[6]}
       | with_entries(select(.value != ""))))
   }'
 
@@ -579,6 +609,15 @@ if [ -n "$recipe" ]; then
   mismatched=$(jq -r '[.partitions[] | select(.fs != "xfs") | select((.options // "") | test("logbsize=|inode64")) | "\(.name): \(.options)"] | join("; ")' "$recipe" 2>/dev/null || true)
   [ -z "$mismatched" ] || refuse "the recipe mounts a non-xfs partition with xfs options — $mismatched"
   root_opts=$(jq -r '.partitions[] | select(.mount == "/") | (.options // "null")' "$recipe" 2>/dev/null || true)
+  # A UUID becomes part of a device name, so a slash or a space is refused here — the same rule
+  # lib/filesystems.nix enforces at eval. The UUIDs sit beside the recipe's partition order rather
+  # than in the entry row, so the plan loops that read that row do not change shape.
+  bad_uuid=$(jq -r '[.partitions[] | select((.uuid // "") != "") | select(.uuid | test("^[A-Za-z0-9][A-Za-z0-9-]*$") | not) | "\(.name): \(.uuid)"] | join("; ")' "$recipe" 2>/dev/null || true)
+  [ -z "$bad_uuid" ] || refuse "recipe declares a uuid that is not a filesystem UUID — $bad_uuid"
+  uuid_lines=$(jq -r '.partitions[] | .uuid // ""' "$recipe" 2>/dev/null) ||
+    refuse "cannot read recipe $recipe"
+  uuids=()
+  while IFS= read -r uuid; do uuids+=("$uuid"); done <<<"$uuid_lines"
   entries=$(jq -r '.partitions[] | "\(.name)\u001f\(.label // "")\u001f\(.fs)\u001f\(.size // "")\u001f\(.type // "")\u001f\(.mount // "")"' "$recipe" 2>/dev/null) ||
     refuse "cannot read recipe $recipe"
   [ -n "$entries" ] || refuse "recipe $recipe declares no partitions"
@@ -694,7 +733,7 @@ fi
 # drive that does not match the recipe.
 verify_recipe() {
   [ -n "$recipe" ] || refuse "--verify reads a recipe: --recipe is required"
-  local i=0 name label fs size type mnt node sig got want sect end declared count held
+  local i=0 name label fs size type mnt uuid node sig got want sect end declared count held
   declared=$(printf '%s\n' "$entries" | grep -c '.' || true)
   count=$(printf '%s\n' "$parts" | grep -c '.' || true)
   # Partitions past the recipe are somebody else's layout, whether we are planning or verifying.
@@ -708,6 +747,7 @@ verify_recipe() {
   fi
   while IFS="$sep" read -r name label fs size type mnt; do
     [ -n "$name" ] || continue
+    uuid="${uuids[$i]:-}"
     if [ "$owns" = true ]; then
       node=$(printf '%s\n' "$table" | jq -r ".partitiontable.partitions[$i].node")
     else
@@ -716,6 +756,7 @@ verify_recipe() {
       while read -r candidate _type; do
         [ -n "$candidate" ] || continue
         [ "$(signature "$candidate")" = "$fs" ] || continue
+        if [ -n "$uuid" ] && [ "$(uuid_of "$candidate")" != "$uuid" ]; then continue; fi
         if [ -z "$label" ] || [ "$(label_of "$candidate")" = "$label" ]; then
           node="$candidate"
           break
@@ -728,13 +769,19 @@ verify_recipe() {
         refuse "recipe entry $name: $disk has $fs labelled${held}, which is not the label the recipe declares"
     fi
     [ -n "$node" ] && [ "$node" != null ] ||
-      refuse "recipe entry $name: no partition on $disk holds $fs${label:+ labelled $label}"
+      refuse "recipe entry $name: no partition on $disk holds $fs${label:+ labelled $label}${uuid:+ carrying uuid $uuid}"
 
     sig=$(signature "$node")
     [ "$sig" = "$fs" ] || refuse "recipe entry $name: $node holds ${sig:-nothing}, not $fs"
     got=$(label_of "$node")
     if [ -n "$label" ] && [ "$got" != "$label" ]; then
       refuse "recipe entry $name: $node is labelled ${got:-nothing}, the recipe says $label"
+    fi
+    # A recipe folded in from a recorded file describes these filesystems. Reformatting gives the
+    # partition a different UUID, so the recipe then names a filesystem the drive does not hold.
+    got=$(uuid_of "$node")
+    if [ -n "$uuid" ] && [ "$got" != "$uuid" ]; then
+      refuse "recipe entry $name: $node carries uuid ${got:-nothing}, the recipe says $uuid"
     fi
 
     end=$(printf '%s\n' "$table" | jq -r --arg node "$node" '.partitiontable.partitions[] | select(.node == $node) | .start + .size')
@@ -762,18 +809,53 @@ verify_recipe() {
   done <<<"$entries"
 }
 
+# record_recipe — the UUIDs of the filesystems the drive carries, folded into the recipe and written
+# onto the drive it is installing. The recipe it writes is the recipe it read, with a uuid added per
+# partition: a label is unique only within one drive, so the recipe that names one filesystem is the
+# one worth keeping. It lands on the target root filesystem, which survives reboot, and becomes
+# /terraform.json on the installed host.
+#
+# install.sh's terraform stage calls it as `--record`, after its own post-reproduction verification:
+# folding is not part of reproducing the layout, and a run that failed must not leave a recipe behind.
+# Nothing is written when the recipe already declares every UUID, so a folded repo re-runs clean.
+record_recipe() {
+  local n node now out=() missing=0 uuid_json
+  for n in "${!entry_lines[@]}"; do
+    [ -n "${uuids[$n]:-}" ] || missing=1
+  done
+  [ "$missing" = 1 ] || return 0
+  # Re-read the drive rather than reuse a table from earlier in the run, so a partition this run
+  # appended is included in whichever mode ran.
+  now=$(sfdisk --json "$disk" 2>/dev/null) || refuse "cannot re-read the partition table on $disk to record its UUIDs"
+  parts=$(printf '%s\n' "$now" | jq -r '(.partitiontable.partitions // [])[] | "\(.node) \(.type)"')
+  resolve_entries
+  for n in "${!entry_lines[@]}"; do
+    node="${resolved[$n]:-}"
+    out+=("$(uuid_of "$node")")
+  done
+  uuid_json=$(printf '%s\n' "${out[@]}" | jq -R -s -c 'split("\n")[:-1]')
+  jq --argjson uuids "$uuid_json" '
+    .partitions |= (. as $p | [range($p | length)] | map(. as $i | $p[$i] + (if ($uuids[$i] // "") != "" then {uuid: $uuids[$i]} else {} end)))
+  ' "$recipe" >"$mount/terraform.json" ||
+    refuse "cannot write the recorded recipe to $mount/terraform.json"
+  printf 'terraform.sh: recorded the filesystem UUIDs this drive carries into %s — that recipe names one filesystem, where a label is unique only within one drive\n' "$mount/terraform.json" >&2
+}
+
 # owned_run — reproduce a whole drive (ADR-b77ec913151f owned mode): one fresh GPT laid out to the
 # recipe's sizes, then the filesystems the recipe names, then the staging mount. The table write and
 # every mkfs sit behind a confirm of their own; --force is the only non-interactive answer.
-# create_subvolumes <dir> — the btrfs subvolume tree the host's fileSystems mounts (ADR-eaca61b8):
-# @ is what NixOS mounts at /, @nix is where deploy puts the store, @swap is created but never
-# mounted. The names come from the layout parity the ADR fixes, not from the recipe: a recipe declares
-# partitions and filesystems, and this is the content of one of them. Each one is asked for with
-# `btrfs subvolume show` first, so a tree that already exists is adopted rather than recreated.
+# subvolume_tree — the btrfs subvolume tree the host's fileSystems mounts (ADR-eaca61b8), each as
+# <subvolume>:<where it is mounted>. The names come from the layout parity that ADR fixes, not from
+# the recipe: a recipe declares partitions and filesystems, and this is the content of one of them.
+subvolume_tree="@:/ @home:/home @nix:/nix @log:/var/log @cache:/var/cache @snapshots:/.snapshots @swap:/var/lib/swap"
+
+# create_subvolumes <dir> — lay that tree down under a mount of the filesystem's own root. Each one
+# is asked for with `btrfs subvolume show` first, so a tree that already exists is adopted rather
+# than recreated.
 create_subvolumes() {
   local sub
-  for sub in @ @home @nix @log @cache @snapshots @swap; do
-    run btrfs subvolume show "$1/$sub" >/dev/null 2>&1 || run btrfs subvolume create "$1/$sub"
+  for sub in $subvolume_tree; do
+    run btrfs subvolume show "$1/${sub%%:*}" >/dev/null 2>&1 || run btrfs subvolume create "$1/${sub%%:*}"
   done
 }
 
@@ -899,6 +981,17 @@ owned_run() {
     create_subvolumes "$mount"
     run umount "$mount"
     run mount -o "subvol=@${opts:+,$opts}" "$root_node" "$mount"
+    # Creating the tree is only half of staging. Every sibling of @ is a mount the host's config
+    # declares, and an unmounted one is a boot failure rather than a cosmetic gap: deploy writes
+    # the closure into @nix and the ssh keys into @home, and the boot mount of an empty @nix over
+    # /nix hides them, so stage 2's init is not in /nix/store and systemd lands in
+    # emergency.target. @ itself is already live at $mount, so only its siblings are mounted here,
+    # each with the root's options. mount_extra brings the mkdir, the adopt-if-mounted guard and
+    # --dry-run for free.
+    for sub in $subvolume_tree; do
+      if [ "${sub%%:*}" = @ ]; then continue; fi
+      mount_extra "$root_node" "$mount${sub#*:}" btrfs "subvol=${sub%%:*}${opts:+,$opts}"
+    done
     mounted_now=1
   fi
 
@@ -943,6 +1036,16 @@ verify_mount() {
 if [ -n "$verify" ]; then
   verify_recipe
   printf 'terraform: recipe satisfied on %s\n' "$disk"
+  exit 0
+fi
+
+# --record folds the drive's UUIDs into the recipe. It writes one file and changes no partition, and
+# install.sh's terraform stage calls it only after the reproduction and its verification have both
+# come back clean — a failed run leaves no recipe behind.
+if [ -n "$record" ]; then
+  [ -n "$recipe" ] || refuse "--record folds a recipe onto the drive it installed: --recipe is required"
+  [ "$dry" = 0 ] || refuse "--record writes $mount/terraform.json; --dry-run writes nothing"
+  record_recipe
   exit 0
 fi
 

@@ -104,7 +104,9 @@ in {
       else
         {
           device =
-            if uuid != "" then "/dev/disk/by-uuid/${uuid}" else "/dev/disk/by-label/${p.label}";
+            if uuid != ""
+            then "/dev/disk/by-uuid/${uuid}"
+            else "/dev/disk/by-label/${p.label}";
           fsType = p.fs;
         }
         // optionalAttrs (options != []) {inherit options;};

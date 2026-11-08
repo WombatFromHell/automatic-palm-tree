@@ -450,17 +450,18 @@ in {
   # A declared UUID wins over the label: it names one filesystem, where a label is unique only
   # within one drive. The label stays in the recipe, because mkfs still writes it.
   testRecipeUuidWinsOverLabel = {
-    expr = (fs.mountsFromRecipe {
-      partitions = [
-        {
-          name = "root";
-          label = "nixos";
-          uuid = "e7b0e010-10bf-4984-b941-5c7c182d1b74";
-          fs = "btrfs";
-          mount = "/";
-        }
-      ];
-    })."/".device;
+    expr =
+      (fs.mountsFromRecipe {
+        partitions = [
+          {
+            name = "root";
+            label = "nixos";
+            uuid = "e7b0e010-10bf-4984-b941-5c7c182d1b74";
+            fs = "btrfs";
+            mount = "/";
+          }
+        ];
+      })."/".device;
     expected = "/dev/disk/by-uuid/e7b0e010-10bf-4984-b941-5c7c182d1b74";
   };
   # A UUID becomes a path component, so anything that would split it or escape the directory is
@@ -506,17 +507,18 @@ in {
   # `uuid: ""` is the recipe saying "no UUID declared", which is what a recipe before its first run
   # looks like. The label is the device then.
   testRecipeEmptyUuidFallsBackToLabel = {
-    expr = (fs.mountsFromRecipe {
-      partitions = [
-        {
-          name = "root";
-          label = "nixos";
-          uuid = "";
-          fs = "ext4";
-          mount = "/";
-        }
-      ];
-    })."/".device;
+    expr =
+      (fs.mountsFromRecipe {
+        partitions = [
+          {
+            name = "root";
+            label = "nixos";
+            uuid = "";
+            fs = "ext4";
+            mount = "/";
+          }
+        ];
+      })."/".device;
     expected = "/dev/disk/by-label/nixos";
   };
 
