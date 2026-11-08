@@ -5,7 +5,7 @@ slug: deploy-methyl-onto-the-iso-vm-through-prepare-te
 title: deploy methyl onto the ISO VM through prepare, terraform and deploy
 created: 2026-11-06T15:42:22Z
 author: josh@methyl-bazzite
-status: open
+status: in_progress
 scope:
   - install.sh
   - terraform.sh
@@ -17,7 +17,7 @@ done_criteria: |
 criteria_by: creator
 verify: [gate]
 schema: 4
-version: 2
+version: 3
 ---
 
 Execution checklist: .pi/PLAN-methyl-vm-deploy.md, phases 1-6. The VM stands in for methyl, which is
