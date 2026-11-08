@@ -15,7 +15,7 @@ tests/sopsctl.bats assert 79
 tests/terraform.bats assert 200
 tests/updater.bats assert 13
 tests/xilo.bats assert 31
-tests/configs.nix checks 25
+tests/configs.nix checks 26
 tests/home.nix checks 21
 tests/mounts.nix checks 8
 tests/outputs.nix checks 11
@@ -31,6 +31,6 @@ tests/pins.nix attrs 7
 tests/ptrace.nix attrs 5
 tests/suite.nix attrs 4
 tests/warnings.nix attrs 13
-tests/zram.nix attrs 4
+tests/swap.nix attrs 19
 tests/floors.bats assert 6
 tests/ci.bats assert 4

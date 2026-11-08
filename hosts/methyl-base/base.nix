@@ -13,8 +13,9 @@ _: {
     "nixos-print"
     #
     "nixos-automounts"
-    # "nixos-zram"
-    "nixos-zswap"
+    # One tier per host: nixos-swap ships both, and the zram tier needs
+    # features.zswap.enable = false beside it (ADR-56394370887f).
+    "nixos-swap"
     "nixos-oom"
   ];
 }

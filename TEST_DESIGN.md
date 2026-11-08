@@ -30,7 +30,7 @@ flowchart TD
   R["tests/run.sh"] --> N["tests/nix-eval.sh<br/>transient systemd scope per capped step<br/>(MemoryMax / MemoryHigh / MemorySwapMax)<br/>peak= reported on stderr"]
   R --> LN["shipped shell lint<br/>shellcheck over the scripts writeShellApplication never sees:<br/>bootstrap.sh, update-all.sh, lib/updater.sh, lib/cache-check.sh,<br/>lib/style.sh, install.sh, terraform.sh, lib/confirm.sh, the pinentry + nasmount scripts"]
   R --> DV["nix develop resolves the updater and disk tools<br/>curl jq nix bats shellcheck shfmt<br/>+ sfdisk blkid mkfs.vfat mkfs.ext4 mcopy sgdisk"]
-  N --> U["tests/suite.nix<br/>nix-unit test* attributes in one process<br/>filesystems, pins, caches, disko, warnings, zram, loader<br/>+ two tripwires; a failing attribute prints its own diff<br/>skip when nix-unit is absent from the devShell"]
+  N --> U["tests/suite.nix<br/>nix-unit test* attributes in one process<br/>filesystems, pins, caches, disko, warnings, swap, loader<br/>+ two tripwires; a failing attribute prints its own diff<br/>skip when nix-unit is absent from the devShell"]
   N --> G["eval suites, one process each<br/>tests/home.nix, mounts.nix, outputs.nix, wrap.nix<br/>via nix eval --impure --file"]
   N --> B["fixture builds — the build's exit status is the assertion<br/>appdir, brave-layout, shellwrap, yazi-install"]
   N --> C["configs.nix, one host per process<br/>TEST_HOST = methyl | methyl-nixos | propyl"]
@@ -189,7 +189,7 @@ flowchart LR
   S --> YZ["tests/yazi-install.nix<br/>fixture build over the pinned yazi sources"]
   S --> SW["tests/shellwrap.nix<br/>fixture build of credsctl + sopsctl + xilo-wrapped, taken from<br/>the feature modules that ship them<br/>the build's exit status is the shellcheck, and the marker-substituted<br/>wrapper it produces is what tests/xilo.bats drives"]
   S --> DK["tests/disko.nix<br/>bare eval with disko's own module stubbed out"]
-  S --> SU["tests/suite.nix<br/>nix-unit attrset merged from filesystems, pins, caches, disko,<br/>warnings, zram and loader, plus two tripwires that make an<br/>empty suite file impossible to pass vacuously"]
+  S --> SU["tests/suite.nix<br/>nix-unit attrset merged from filesystems, pins, caches, disko,<br/>warnings, swap and loader, plus two tripwires that make an<br/>empty suite file impossible to pass vacuously"]
   SU --> L
   SU --> CA
   SU --> WA
@@ -291,7 +291,7 @@ flowchart TD
   subgraph configs["configs.nix — forces every NixOS config, one host per process"]
     C1["per-host facts: hostName, timezone, user shell"]
     C2["universal wiring: tailscale, podman, firefox, printing, wheel"]
-    C3["gating: gaming stack only on methyl; gnome/qemu/btrfs only on methyl-nixos;<br/>kait2en+fprintd only on propyl; korthos methyl-only; dms everywhere;<br/>absence read from namespace/systemd-unit/option, never by scanning the package list;<br/>the positive side of every absence signal is asserted too, so absence is not vacuous"]
+    C3["gating: gaming stack only on methyl; gnome/qemu/btrfs only on methyl-nixos;<br/>kait2en+fprintd only on propyl; korthos methyl-only; dms everywhere;<br/>absence read from namespace/systemd-unit/option, never by scanning the package list;<br/>the positive side of every absence signal is asserted too, so absence is not vacuous;<br/>the swap tier is zswap (zram off) and the tier's tuning arrived, on all three (ADR-56394370887f)"]
     C4["cache gate: flakeCache.ready everywhere;<br/>substituters/keys counts == enabled caches;<br/>the caches each host's features actually require (nix-community, kait2en,<br/>wombatfromhell only where niri-spicy is on)"]
     C5["kernel: which kernel each host boots, incl. the kait2en kernel<br/>the feature pins rather than boot.kernelPackages"]
     C6["nixGL disabled: packages null for josh, which is what makes lib.nixGL.wrapGpu<br/>identity; the GUI features hand their pinned pname+version to the program options<br/>(identity by name, not outPath — forcing outPath pulls Brave's whole dependency<br/>closure, ~470MB per host); the PATH-once half lives in wrap/home,<br/>because counting home.packages forces every package name"]
@@ -354,8 +354,8 @@ flowchart TD
   subgraph warnings["warnings.nix — bare module eval (13 attributes)"]
     W1["modules/warnings-gate.nix: assertion true with no warnings,<br/>false with one, and its message carries every warning verbatim"]
   end
-  subgraph zram["zram.nix — fixture host enabling nixos-zram (4 attributes)"]
-    Z1["the zram setup unit is defined, the generator package is installed,<br/>the settings file lands in environment.etc, and the compression<br/>algorithm is zstd — no real host enables this feature today"]
+  subgraph swap["swap.nix — fixture hosts on ext4, btrfs and XFS (19 attributes)"]
+    Z1["the zram tier: generator settings, the template unit, zstd, and zswap off on<br/>the kernel command line; the shared sysctl/sysfs block arriving on both tiers and<br/>the tier-only knobs; a tier override beating the defaults; the swapfile options<br/>reaching boot.zswap; swapDevices and the prepare unit on the zswap tier only;<br/>the subvolume default following the filesystem the swapfile sits on; zswap on by<br/>default; and the tier gate read back from the assertion list — false with both tiers<br/>on, absent with one"]
   end
 ```
 
@@ -428,9 +428,9 @@ the wrap is proven at eval by `tests/wrap.nix`. The other five (`hm-tmux`, `hm-z
 them, so they stay input-side only.
 
 Deliberately skipped: per-feature coverage of all 41 modules. Feature modules are exercised
-through the hosts that enable them — 37 of 41 are enabled by at least one host, so they evaluate
-and their effects are asserted. Four have no host today: `nixos-zram` is commented out in
-`hosts/methyl-base/base.nix` and is covered by a fixture host in `tests/zram.nix`; `hm-dcal` and
+through the hosts that enable them — 38 of 41 are enabled by at least one host, so they evaluate
+and their effects are asserted. Three have no host today: the zram tier of `nixos-swap` is off on
+every host and is covered by fixture hosts in `tests/swap.nix`; `hm-dcal` and
 `hm-ghostty` are listed nowhere and are covered by fixture hosts in `tests/home.nix` and
 `tests/wrap.nix`; `nixos-disko` is listed nowhere and is covered only by `tests/disko.nix`, whose
 guard is read back on a stubbed disko module. A feature no host asks for is not a shipping contract.

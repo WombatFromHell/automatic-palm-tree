@@ -20,7 +20,8 @@ let
   raw = s.rawFeaturePkgs;
   rawPkgs = lib.attrValues raw;
 
-  # Two features no real host enables (nixos-zram's counterpart here: hm-dcal and hm-ghostty).
+  # Two features no real host enables (hm-dcal and hm-ghostty). The zram tier of nixos-swap has
+  # no host either and is covered by fixture hosts in tests/swap.nix.
   # A fixture host asks for them through the same builder, so the effect is what gets checked.
   # hm-nixgl is part of the ask: ghostty's GPU wrapper is a no-op without it, exactly as on NixOS.
   # dcal is resolved the way features/hm-dcal/home.nix resolves it.

@@ -26,9 +26,9 @@ fi
 
 count() {
   case "$1" in
-    assert) grep -c 'assert_' "$2" ;;
-    checks) grep -c 'ck "' "$2" ;;
-    attrs) grep -cE '^[[:space:]]*test[A-Za-z0-9_]*[[:space:]]*=' "$2" ;;
+  assert) grep -c 'assert_' "$2" ;;
+  checks) grep -c 'ck "' "$2" ;;
+  attrs) grep -cE '^[[:space:]]*test[A-Za-z0-9_]*[[:space:]]*=' "$2" ;;
   esac
 }
 
@@ -43,19 +43,19 @@ while read -r path kind floor _; do
     continue
   fi
   case "$kind" in
-    assert | checks | attrs) ;;
-    *)
-      echo "FAIL $path [unknown kind $kind]"
-      fail=1
-      continue
-      ;;
+  assert | checks | attrs) ;;
+  *)
+    echo "FAIL $path [unknown kind $kind]"
+    fail=1
+    continue
+    ;;
   esac
   case "$floor" in
-    '' | *[!0-9]*)
-      echo "FAIL $path [unreadable floor '$floor']"
-      fail=1
-      continue
-      ;;
+  '' | *[!0-9]*)
+    echo "FAIL $path [unreadable floor '$floor']"
+    fail=1
+    continue
+    ;;
   esac
   got=$(count "$kind" "$tests_dir/${path##*/}")
   covered="$covered${path##*/} "
@@ -73,13 +73,17 @@ done <"$ledger"
 for f in "$tests_dir"/*.bats "$tests_dir"/*.nix; do
   [ -e "$f" ] || continue
   case "$f" in
-    *.bats) claim=$(grep -c 'assert_' "$f") ;;
-    *)
-      claim=$(( $(grep -c 'ck "' "$f") + $(grep -cE '^[[:space:]]*test[A-Za-z0-9_]*[[:space:]]*=' "$f") ))
-      ;;
+  *.bats) claim=$(grep -c 'assert_' "$f") ;;
+  *)
+    claim=$(($(grep -c 'ck "' "$f") + $(grep -cE '^[[:space:]]*test[A-Za-z0-9_]*[[:space:]]*=' "$f")))
+    ;;
   esac
   [ "$claim" -gt 0 ] || continue
-  case "$covered" in *" ${f##*/} "*) ;; *) echo "FAIL tests/${f##*/} [unfloored]"; fail=1 ;; esac
+  case "$covered" in *" ${f##*/} "*) ;; *)
+    echo "FAIL tests/${f##*/} [unfloored]"
+    fail=1
+    ;;
+  esac
 done
 
 exit "$fail"

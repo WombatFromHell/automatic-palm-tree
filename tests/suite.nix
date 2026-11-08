@@ -19,7 +19,7 @@ let
     (import ./disko.nix)
     (import ./warnings.nix)
     (import ./ptrace.nix)
-    (import ./zram.nix)
+    (import ./swap.nix)
     (import ./oomd.nix)
     (import ./loader.nix)
   ];

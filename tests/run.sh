@@ -113,9 +113,9 @@ bats_verdict() {
 # the suites, so it runs as a job inside the wave window rather than after every verdict.
 parity() {
   local par=0 pins
+  local parout
   # The single quotes are deliberate: `${f}` and the `./` paths must reach Nix unexpanded.
   # shellcheck disable=SC2016
-  local parout
   parout=$(TEST_SCOPE_NAME=parity tests/nix-eval.sh "$mem" -- nix eval --impure --raw --expr '
     let lib = (builtins.getFlake (toString ./.)).inputs.nixpkgs.lib;
         pinMeta = import ./lib/pin-meta.nix {inherit lib;};
@@ -235,6 +235,8 @@ throttle() {
 # and the terraform tier -- and the probe and the lookup only re-resolved paths this call already
 # produced. nix-unit is printed but not required: absent locally is a skip, absent in CI is a FAIL.
 devtools=$(mktemp "${TMPDIR:-/tmp}/gate-tools.XXXXXX")
+# The single quotes below are deliberate: `$t` must reach the inner bash unexpanded.
+# shellcheck disable=SC2016
 gate "nix develop resolves the updater, disk and parallel tools" devshell nix develop --command \
   env DEVTOOLS_OUT="$devtools" bash -c 'rc=0
     for t in curl jq nix bats parallel shellcheck shfmt sfdisk blkid mkfs.vfat mkfs.ext4 mcopy sgdisk nix-unit; do
@@ -319,7 +321,10 @@ for i in "${!wave_jobs[@]}"; do
 done
 # parity is cheap (31MB) and shares nothing with the suites, so it joins the wave rather than
 # taking the last serial stretch of the script.
-( parity >"$wave/parity" 2>&1; printf '%s' "$?" >"$wave/parity.rc" ) &
+(
+  parity >"$wave/parity" 2>&1
+  printf '%s' "$?" >"$wave/parity.rc"
+) &
 wait
 collect "shipped shell lint" "$wave/lint"
 for i in "${!wave_jobs[@]}"; do

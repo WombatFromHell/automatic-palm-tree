@@ -229,6 +229,14 @@ let
       (ck "${host}: its packages are installed" (lib.all (p: sysPkg cfg p) e.packages))
       (ck "${host}: feature namespaces exist on their owning hosts only"
         (lib.all (f: hasNs cfg f == lib.elem host featureOwners.${f}) (lib.attrNames featureOwners)))
+      # The namespace exists on every host now that one module declares both tiers, so the
+      # backend claim is the enable gate itself -- and the tuning that tier owns (ADR-56394370887f)
+      # has to arrive with it.
+      (ck "${host}: its swap tier is zswap, and the tier's tuning arrived"
+        (cfg.features.zswap.enable
+          && !cfg.features.zram.enable
+          && cfg.boot.kernel.sysctl."vm.swappiness" == 180
+          && cfg.systemd.tmpfiles.settings."10-swap" ? "/sys/kernel/mm/lru_gen/enabled"))
       (ck "${host}: gaming systemd units exist on their owning hosts only"
         (lib.all (u: hasService cfg u == lib.elem host unitOwners.${u}) (lib.attrNames unitOwners)))
       (ck "${host}: gaming and KDE options are on for their owning hosts only"

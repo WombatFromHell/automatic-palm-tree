@@ -13,4 +13,9 @@ in {
   ];
 
   fileSystems = mounts;
+
+  features.zswap.swapfile = {
+    path = "/var/lib/swap/swapfile";
+    sizeMiB = 16384;
+  };
 }
