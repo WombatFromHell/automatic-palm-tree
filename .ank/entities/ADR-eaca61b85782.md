@@ -5,7 +5,7 @@ slug: disko-owns-mounts-and-only-a-vm-host-may-own-a-d
 title: Disko owns mounts, and only a host that owns its whole disk may partition it
 created: 2026-11-05T20:29:59Z
 author: josh@methyl-bazzite
-status: accepted
+status: superseded
 scope:
   - flake.nix
   - lib/default.nix
@@ -22,7 +22,7 @@ verified:
   - by: josh@methyl-bazzite
     at: 2026-11-06T03:30:01Z
 schema: 4
-version: 5
+version: 6
 ---
 
 Disko's gpt type runs `sgdisk --clear` when `blkid` reports nothing for the whole disk, and for each partition it names it tries `sgdisk --new` first and, on failure, falls back to `--partition-guid`, `--change-name` and `--typecode` on whatever already sits at that index. On a disk shared with Windows that fallback rewrites the GUID, name and type code of the Windows partition — the data survives, the boot metadata Windows depends on does not. So drive ownership is the thing worth gating.

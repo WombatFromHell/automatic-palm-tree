@@ -5,7 +5,7 @@ slug: the-staging-mount-set-is-the-mount-set-the-host
 title: The staging mount set is the mount set the host declares
 created: 2026-11-08T16:21:01Z
 author: josh@methyl-bazzite
-status: proposed
+status: accepted
 scope:
   - terraform.sh
   - install.sh
@@ -19,8 +19,13 @@ enforced_by:
   - terraform.sh#owned_run
   - install.sh#deploy
 amends: [ADR-eaca61b85782]
+ratified: 2547c1170146
+anchor: d9f02c6c51fed3697043b229f3b96cf94e5a1a67
+verified:
+  - by: josh@methyl-bazzite
+    at: 2026-11-08T20:42:46Z
 schema: 4
-version: 1
+version: 2
 ---
 
 ADR-eaca61b85782 fixed the *names* of the btrfs tree (layout parity) but never said the tree is mounted, and its "@swap created but unmounted" line already contradicts the host configs, which mount /var/lib/swap from @swap. The gap is not cosmetic.
