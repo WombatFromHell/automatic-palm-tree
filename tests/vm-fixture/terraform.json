@@ -1,0 +1,23 @@
+{
+  "owns": true,
+  "partitions": [
+    {
+      "name": "esp",
+      "label": "vmfixture-esp",
+      "fs": "vfat",
+      "size": "512M",
+      "mount": "/boot",
+      "options": "fmask=0077,dmask=0077",
+      "uuid": "77ED-A1B2"
+    },
+    {
+      "name": "root",
+      "label": "vmfixture-root",
+      "fs": "btrfs",
+      "size": "rest",
+      "mount": "/",
+      "options": "noatime,compress=zstd",
+      "uuid": "5f2a9c31-2d4e-4b7a-9e11-0c3f8d6b5a14"
+    }
+  ]
+}

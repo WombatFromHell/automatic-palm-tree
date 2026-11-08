@@ -54,6 +54,12 @@ An eval suite's verdict is `nix eval`'s exit status: a failing check throws with
 named, and `run.sh` prints the tail of the output on `FAIL`. Only the shell lint and the bootstrap
 grep invariant run outside a scope, because neither touches Nix.
 
+Guide rule: `tests/run.sh` runs the lightweight tests only — eval, stubs, mocked rebuild — and VM
+tests live in their own gate, `tests/vm-run.sh`. The two never share a run, because the gate has to
+work on any machine while the VM tier needs `/dev/kvm`, SELinux permissive, and a gigabyte for
+minutes. `run.sh` rejects a `vm-*.bats` suite in its own list, so the split cannot be broken by
+adding a suite to it; `tests/ci.bats` asserts that refusal.
+
 Style is outside the gate: `nix run .#apps.<system>.style` (lib/style.sh: every `.nix` through
 alejandra + statix, every `.sh`/`.bats` through shfmt + shellcheck, markdown through oxfmt with
 `.ank/` excluded by a positional pattern — the corpus is content-addressed, so formatting it would
@@ -70,20 +76,29 @@ ordinary user: no root, no real `/nix`, no real `curl`, no eval. It costs ~0MB, 
 bash rather than another scoped eval. `bats` comes from the installed Nix profile, so a missing `bats`
 is a `skip`, not a failure.
 
-`tests/install.bats` (41 tests) is the same shape for `install.sh`, which is staged destruction: a
-NixOS install runs `prepare` → `terraform` → `deploy` → `reboot`. PATH stubs stand in for `lsblk`,
+`tests/install.bats` (58 tests) is the same shape for `install.sh`, which is staged destruction: a
+NixOS install runs `prepare` → `terraform` → `deploy` → `postdeploy` → `reboot`. PATH stubs stand in
+for `lsblk`,
 `blkid`, `sfdisk`, `mount`, `nixos-install`, `terraform.sh` and `trivial-run`, so argv and exit codes
 are the assertion. It pins that `prepare` reads the host record and checksums the partition table
 before and after (a run that moved the table aborts), that the install ISO and the zram swap are
 never adopted even when `lsblk` calls them disks, that two candidate drives are refused rather than
 guessed, that a recipe whose `owns` disagrees with
-`flakeHost.ownsWholeDisk` stops before anything runs, that `deploy` refuses before `terraform` and
+`flakeHost.ownsWholeDisk` stops before anything runs, that the `terraform` stage asks exactly once
+and only when `--verify` says the drive is about to change (a drive that already matches the recipe
+is never asked about, and the yes it does need is carried to `terraform.sh` as `--force`), that
+`deploy` refuses before `terraform` and
 refuses a drive that no longer matches the recipe, that `deploy` refuses a tmpfs `/mnt` (a closure
-built into RAM is not an install), that low RAM is offered as zram rather than thrashed, that one
-destructive step asks for one yes, and that `all` refuses the reboot while the installed system has
-no password. Nothing here takes root, formats, or installs.
+built into RAM is not an install), that `deploy` refuses while any mount the host declares is not live
+under the root (an empty `@nix` mounted over `/nix` hides the closure `nixos-install` wrote into `@`),
+that `deploy` writes neither a key file nor a password, that
+`postdeploy` owns those two writes and refuses while nothing disk-backed is mounted, that low RAM is
+offered as zram rather than thrashed, and that `all` refuses the reboot while the installed system has
+no password. `--stage` takes a comma list, so `prepare,terraform` is one call running those two in
+the order given, and a list with an unknown or blank entry is refused before any stage runs. Nothing
+here takes root, formats, or installs.
 
-`tests/terraform.bats` (63 tests) is the byte-level half, and it is not stub-driven. The fixtures in
+`tests/terraform.bats` (80 tests) is the byte-level half, and it is not stub-driven. The fixtures in
 `tests/disk-fixture.bash` are sparse images with a real GPT, sized to the smallest device each
 filesystem accepts (ext4 6MB, btrfs ~114MB, xfs ~300MB — each `mkfs` refuses below its own floor),
 and built once per file: `sgdisk` costs about a second per call, and the three drives whose tests
@@ -102,7 +117,12 @@ write lands on the call log rather than being tolerated. The suite runs `bats --
 which is what the sparse copies cut. Geometry is constants both files name: ESP
 at 2048..18431, MSR and NTFS only on the Windows shapes, Linux root at 26624..59391, a second Linux
 filesystem on the same drive so a run that picks by filesystem type alone can be shown picking the
-wrong one, and a root filling the drive so a recipe declaring `rest` has nothing left to take. A
+wrong one, and a root filling the drive so a recipe declaring `rest` has nothing left to take. The
+btrfs `--root` fixture is three times that floor, because it needs inodes: mkfs.btrfs sizes its free
+space table from the device, so a 20MB image holds about 26 of them and a subvolume tree of seven
+costs a thousand. The root mount is then read back through `mount -o subvol=@` on a stub that records
+argv and answers from the mount table, never by parsing the mount options, because `subvol=` is an
+option the stub would have to interpret. A
 shape that carries a gap keeps its exact size, because the gap is asserted byte for byte. The
 ESP carries the ESP GUID (`C12A7328…`), not the FAT32 GUID, because firmware scans by the ESP GUID —
 UEFI 2.7 §12.3 — which is what the VM's own ESP carries.
@@ -112,7 +132,11 @@ is refused and nothing is formatted; a Windows disk with no Linux partition is r
 byte-identical; a Windows disk adopts the ESP and formats only the blank Linux partition; a shared
 run plans the partition it would append and writes nothing; a recipe that mounts a non-btrfs
 partition with btrfs options, or names a device by UUID when `mkfs` would invent one, refuses before
-any write; a second run adopts what the first made and issues no `mount` or `mkfs`; `--verify` reads
+any write; a second run adopts what the first made and issues no `mount` or `mkfs`; the btrfs root is
+mounted with `subvol=@`, and every sibling of `@` the host mounts — `@nix` at `/nix`, `@home` at
+`/home`, `@log`, `@cache`, `@swap`, `@snapshots` — is mounted too, so the store `nixos-install` writes
+lands in the subvolume boot reads (ADR-97fb20bfd175); an empty drive gets the tree and the root mount,
+a drive where the tree already exists adopts it and mounts nothing; `--verify` reads
 the drive against the recipe and refuses, in owns mode, a table holding entries the recipe did not
 declare; and `--emit` round-trips — the recipe it prints, run against the same drive, adopts and
 writes nothing.
@@ -218,14 +242,15 @@ Splitting is not cosmetic: forcing three host configs in one eval peaks at ~2.1G
 wave: the four fixture builds go first, inside their own subshell, and the heavy eval lane keeps at
 most three in flight (four heavy evals stacked is ~2.5GB, and the caps are per scope, not global).
 The shell lint and the expander-parity check are jobs in that same window, and the two bats tiers run
-at the same time. Measured today on this box: the whole gate ~24s warm, **19 verdict lines** green —
+at the same time. Measured today on this box: the whole gate ~38s warm, **19 verdict lines** green —
 shell lint (11 files), the devShell tool check (one `nix develop` resolves every tool the gate needs),
-one `nix-unit` run of 189 attributes, 4 eval suites, 4 fixture builds, 3 host configs, the mocked
-rebuild, the stub bats tier (9 suites, 314 tests) as one parallel bats call, `terraform.bats`
-(63 tests) inside `nix develop` **and inside a scope**, and parity. Widest peaks: `tests/home.nix`
+one `nix-unit` run of 193 attributes, 4 eval suites, 4 fixture builds, 3 host configs, the mocked
+rebuild, the stub bats tier (12 suites, 331 tests) as one parallel bats call, `terraform.bats`
+(80 tests) inside `nix develop` **and inside a scope**, and parity. Widest peaks: `tests/home.nix`
 ~1000MB (the standalone profile, which forces its Home
 Manager users plus the host's own home module and the raw `_package.nix` derivations it compares
-wrapped output against), `terraform.bats` ~815MB at 16 jobs, host configs 669–747MB (propyl /
+wrapped output against), `terraform.bats` ~1390MB at 16 jobs — a real btrfs filesystem with a
+subvolume tree costs more than every ext4 image in the suite combined, host configs 669–747MB (propyl /
 methyl-nixos / methyl), `wrap` ~725MB
 (derivation-text checks read drvAttrs, so no .drv is realized), `tests/suite.nix` ~705MB for the whole
 value tier where the same assertions split across six processes cost ~551MB measured earlier,
@@ -395,6 +420,26 @@ session, both on methyl: forcing `system.build.toplevel` alone costs ~1.8GB and 
 and the toplevel contains every mount unit fsLib generates, so a bad mount option fails the build and
 not only the suite — while `flake.checks` costs ~41MB, because each check is a pre-derived path that
 never re-evaluates a host config.
+
+## The VM tier, outside the gate
+
+`tests/vm-lib.bash` holds the harness; `tests/vm-run.sh` is the gate that runs the VM suites, and it
+is separate from `tests/run.sh` by the guide rule above: the gate runs on any machine, while this tier
+needs `/dev/kvm`, SELinux permissive, and minutes per run. The gate fails loudly when a precondition
+is missing rather than skipping, because a VM tier that silently skips proves nothing.
+
+What it proves that no stub can: a blank drive partitioned and formatted by `terraform.sh`, a closure
+installed by `nixos-install`, passwords written by `postdeploy`, and a serial console that answers a
+login with them. What it still cannot prove: firmware boot order and real firmware behaviour — a
+qemu ESP is not a machine's ESP.
+
+Three properties hold every run, and each is asserted rather than assumed: memory is capped by a
+transient systemd scope (`MemoryMax`, `MemorySwapMax=0`, because `systemd-kill`'s `MemoryMax=` is a
+no-op), guest state is fresh per run (blank drive written anew, root on tmpfs, no persisted image),
+and the log lands on the host that called the runner. Secrets reach the guest through the 9p share,
+not systemd credentials — measured on this guest kernel, `fw_cfg` delivers nothing — and they are
+never typed into argv or echoed to the console, so the log the host keeps carries the login but not
+the password.
 
 ## What we do not cover
 

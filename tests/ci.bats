@@ -16,3 +16,13 @@ load helpers
   assert_out "skip bats suites [bats not installed]"
   assert_out "skip tests/suite.nix [nix-unit not in the devShell]"
 }
+
+# The VM tier boots a guest on this machine, so it must never join the eval gate: a suite listed in
+# run.sh would boot a VM inside a gate whose whole point is that it only evaluates.
+@test "a VM tier suite cannot join the eval gate" {
+  local gated="$BATS_TMPDIR/run-with-vm-tier.sh"
+  sed 's|tests/nix-eval.bats)|tests/nix-eval.bats tests/vm-check.bats)|' "$repo/tests/run.sh" >"$gated"
+  run env CI=1 PATH="$stubs:/usr/bin:/bin" bash "$gated"
+  assert_out "FAIL tests/vm-check.bats [the VM tier runs separately, not in this gate]"
+  rm -f "$gated"
+}

@@ -8,11 +8,11 @@ tests/bootstrap.bats assert 19
 tests/build-harness.bats assert 6
 tests/cache-check.bats assert 13
 tests/creds.bats assert 14
-tests/install.bats assert 107
+tests/install.bats assert 152
 tests/njust.bats assert 122
 tests/nix-eval.bats assert 8
 tests/sopsctl.bats assert 79
-tests/terraform.bats assert 204
+tests/terraform.bats assert 240
 tests/updater.bats assert 13
 tests/xilo.bats assert 31
 tests/configs.nix checks 26
@@ -32,4 +32,6 @@ tests/suite.nix attrs 4
 tests/warnings.nix attrs 13
 tests/swap.nix attrs 19
 tests/floors.bats assert 6
-tests/ci.bats assert 4
+tests/ci.bats assert 5
+tests/vm-fixture.nix checks 8
+tests/vm-check.bats assert 1

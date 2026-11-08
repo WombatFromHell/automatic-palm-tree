@@ -5,4 +5,8 @@ docs
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
 
+# Fixture passwords for the VM tier: read by the runner, injected through fw_cfg. Committing the
+# file would put credentials in git history.
+/tests/vm-spike-secrets.env
+
 .ank/index.db*

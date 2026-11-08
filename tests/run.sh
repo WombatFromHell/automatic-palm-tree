@@ -137,7 +137,11 @@ parity() {
   split_peak "$parout"
   pins="$body"
   while IFS=: read -r feature sys ver want; do
-    [ -n "$feature" ] || continue
+    # A pin line always carries a URL in the fourth field. nix's stderr is captured here so the peak
+    # line survives, which means a transient fetch warning (`waiting for another Nix process to
+    # finish fetching input 'path:...') can arrive as a line -- without this it would be sourced as
+    # `features/<warning>/update.sh` and compared as an empty URL.
+    [ -n "$feature" ] && [ -n "$want" ] || continue
     got=$(
       # Every features/*/update.sh is a symlink to lib/updater.sh (pinned by tests/pins.nix), which
       # is shellchecked on its own. The path is a variable, so the directive tells shellcheck to
@@ -290,6 +294,9 @@ wave_jobs=(
   "mounts|tests/mounts.nix|nix eval --impure --file tests/mounts.nix"
   "outputs|tests/outputs.nix|nix eval --impure --file tests/outputs.nix"
   "wrap|tests/wrap.nix|nix eval --impure --file tests/wrap.nix"
+  # The VM fixture host, asserted against the subvolume tree terraform.sh creates. Eval only: the
+  # VM tier that boots it is tests/vm-e2e.bats, which tests/run.sh does not run.
+  "vm-fixture|tests/vm-fixture.nix|nix eval --impure --file tests/vm-fixture.nix"
   "appdir|tests/appdir.nix [fixture build]|nix build --no-link --quiet -f tests/appdir.nix"
   "brave-layout|tests/brave-layout.nix [deb fixture build]|nix build --no-link --quiet -f tests/brave-layout.nix"
   "shellwrap|tests/shellwrap.nix [wrapper build + shellcheck]|nix build --no-link --quiet -f tests/shellwrap.nix"
@@ -362,6 +369,17 @@ chmod +x "$mock/sudo" "$mock/nixos-rebuild"
 scoped=$(PATH="$mock:$PATH" TEST_SCOPE_NAME=bootstrap-scoped tests/nix-eval.sh 600 -- bash bootstrap.sh methyl 2>&1)
 unscoped=$(PATH="$mock:$PATH" TEST_SCOPE_NAME=bootstrap-fallback tests/nix-eval.sh 600 -- env XDG_RUNTIME_DIR="$mock/no-bus" bash bootstrap.sh methyl 2>&1)
 rm -rf "$mock"
+
+# The VM tier's memory sampler has to report a peak even when nothing matches its pattern yet: pgrep
+# exits 1 before qemu exists, and pipefail made that a failed assignment, which under `set -e` killed
+# the sampler and left the run log with no peak_guest_mb line at all. Cheap check: 2s, no VM, no
+# eval — the VM tier itself (tests/vm-check.bats) is not in this gate.
+if ! vm_peak=$(bash -euo pipefail -c 'p=zzz-not-running-$RANDOM; source ./tests/vm-lib.bash; vm_free_peak 2 "$p"' 2>&1) ||
+  ! grep -q '^peak_guest_mb=0$' <<<"$vm_peak"; then
+  echo "FAIL vm_free_peak reports no peak when nothing matches its pattern"
+  echo "$vm_peak"
+  fail=1
+fi
 # The rebuild's own argv (--install-bootloader, the cache options) is asserted in
 # tests/bootstrap.bats; what only the gate can see is the scope: the stub reports its cgroup, which
 # names the scope unit when the wrap happened and does not when there is no user bus.
@@ -401,35 +419,49 @@ fi
 # The two bats tiers touch nothing in common — every suite and every fixture gets its own temp dir —
 # so they overlap instead of running back to back: 8s + 22s -> ~22s, concurrent peak ~850MB. Each
 # keeps its own scope, and the verdicts are still printed one per line, stub tier first.
+# Guide rule (TEST_DESIGN.md): this gate is eval-and-stub only — nothing in it boots a VM. The VM
+# tier needs /dev/kvm, SELinux permissive and a systemd memory scope, and it costs minutes plus a
+# gigabyte, so it runs separately with `bats tests/vm-check.bats`. A vm-*.bats suite added to the
+# list below would boot a guest inside a gate whose point is that it only evaluates.
+stub_suites=(tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats
+  tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats
+  tests/floors.bats tests/ci.bats tests/nix-eval.bats)
+for suite in "${stub_suites[@]}"; do
+  case "$suite" in
+  *vm-*.bats)
+    echo "FAIL $suite [the VM tier runs separately, not in this gate]"
+    fail=1
+    ;;
+  esac
+done
+
 tiers=$(mktemp -d "${TMPDIR:-/tmp}/bats-tiers.XXXXXX")
 if ! command -v bats >/dev/null 2>&1; then
   missing "bats suites" "bats not installed"
   missing "tests/terraform.bats" "bats not installed"
 else
   (
-    suites=(tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats
-      tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats
-      tests/floors.bats tests/ci.bats tests/nix-eval.bats)
     # One bats call with the files in parallel (--no-parallelize-within-files): each suite still runs
     # its tests sequentially inside its own worker, so shared stub state inside a suite survives.
     # `parallel` is borrowed from the devShell onto PATH rather than swapping shells, because
     # creds.bats and sopsctl.bats run the host's real sops/age/systemd-creds. Without it the tier
-    # runs sequentially. Measured 35s -> 8s over 291 tests; a failure still names its file.
+    # runs sequentially. Measured 35s -> 8s over 331 tests; a failure still names its file.
     jobs=()
     parallel_path=$(devpath parallel)
     if [ -n "$parallel_path" ]; then
       PATH="$(dirname "$parallel_path"):$PATH"
       jobs=(--jobs 8 --no-parallelize-within-files)
     fi
-    bats "${jobs[@]}" "${suites[@]}" >"$tiers/stub" 2>&1
+    bats "${jobs[@]}" "${stub_suites[@]}" >"$tiers/stub" 2>&1
     printf '%s' "$?" >"$tiers/stub.rc"
   ) &
   # terraform.bats is not stub-driven: it runs real mkfs, blkid, mtools and sgdisk on sparse files,
   # so it runs in the devShell, which is the environment that carries those tools
   # (ADR-b77ec913151f). Running it plainly would skip it on any machine without them, which is where
-  # the proof matters. 16 jobs: the fixture copies are sparse now, so the peak is ~841MB with no
+  # the proof matters. 16 jobs: the fixture copies are sparse now, so the peak is ~1.39GB with no
   # swap -- dense copies at 16 jobs put ~637MB of tmpfs into swap, the only way this tier ever
-  # touches the SSD. Measured 46s -> 17s, 58/58 green.
+  # touches the SSD. The btrfs fixture is the widest thing in the suite: a real filesystem plus a
+  # subvolume tree. Measured 46s -> 17s, 80/80 green.
   byte=run
   if ! command -v nix >/dev/null 2>&1; then
     byte=skip
