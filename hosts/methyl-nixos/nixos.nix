@@ -18,7 +18,7 @@ in {
     niri.niriSpicy.enable = true;
   };
 
-  # The btrfs subvolume tree stays host-side (ADR-eaca61b85782): terraform.sh creates it by the names
+  # The btrfs subvolume tree stays host-side (ADR-887173ed9424): terraform.sh creates it by the names
   # that ADR fixes, not from the recipe, which declares partitions and filesystems rather than the
   # content of one of them. Those mounts are subvolumes of the labelled root the recipe names, so
   # they take its device, fsType and options. A recipe entry naming one of these paths would be

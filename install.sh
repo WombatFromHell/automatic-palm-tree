@@ -384,8 +384,7 @@ deploy() {
       exit 2
     }
   fi
-  # The staging mount set has to be the mount set this host reads at boot (ADR-eaca61b85782 as
-  # amended by the parity rule): every subvolume the config mounts must be live under $root before
+  # The staging mount set has to be the mount set this host reads at boot (ADR-97fb20bfd175): every subvolume the config mounts must be live under $root before
   # nixos-install runs, or deploy writes into one filesystem and boot reads another. An empty @nix
   # mounted over /nix is not cosmetic -- /nix/store ends up empty, stage 2's init is not in it, and
   # the host lands in emergency.target. Asked before the prompt, so a tree that is not there never

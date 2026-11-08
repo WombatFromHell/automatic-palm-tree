@@ -110,7 +110,7 @@ resolved by signature, not a flag.
 
 The config reads the same file at eval: `fsLib.mountsFromRecipe` turns each mounted entry into a
 `fileSystems` item, so a mount can never name a device the run will not create
-(ADR-62773e12d275). The btrfs subvolume tree stays host-side (ADR-eaca61b85782): the host derives it
+(ADR-62773e12d275). The btrfs subvolume tree stays host-side (ADR-887173ed9424): the host derives it
 from the recipe's root entry with `mkMounts mounts."/"`, which inherits that entry's device, fsType
 and options and appends `subvol=@<name>`. Options therefore have two homes — the recipe is what
 `terraform.sh` mounts the drive with, `fileSystems` is what NixOS mounts at boot — and fsLib keeps
