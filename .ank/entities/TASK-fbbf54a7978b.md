@@ -5,7 +5,7 @@ slug: deploy-methyl-onto-the-iso-vm-through-prepare-te
 title: deploy methyl onto the ISO VM through prepare, terraform and deploy
 created: 2026-11-06T15:42:22Z
 author: josh@methyl-bazzite
-status: in_progress
+status: done
 scope:
   - install.sh
   - terraform.sh
@@ -16,8 +16,15 @@ done_criteria: |
   On the nixos-minimal ISO VM, install.sh --stage prepare methyl exits 0 and leaves the partition table byte-identical; --stage terraform methyl reproduces hosts/methyl/terraform.json and terraform.sh --verify then passes with every partition that existed before unchanged and byte-identical; --stage deploy methyl lands the system closure on a disk-backed store under the terraform mount and writes the boot loader without touching a partition Windows owns; after the operator sets passwords, --stage reboot boots the installed system and the admin user is reachable by ssh key. The evidence is logged, not asserted by the gate.
 criteria_by: creator
 verify: [gate]
+proof:
+  - type: test
+    ref: local/0257c3c8942c@a381f0d
+    tree: scope/02eacbeda941
+    criteria: 1cb101c169c3
+    verifier: gate@dc484de6fdb9
+    via: verifier
 schema: 4
-version: 3
+version: 4
 ---
 
 Execution checklist: .pi/PLAN-methyl-vm-deploy.md, phases 1-6. The VM stands in for methyl, which is
