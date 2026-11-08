@@ -210,6 +210,29 @@ owned() {
   stub_lsblk "$disk_dir/$1.img"
 }
 
+# image <name> [shape] [foreign-esp-dir] — a scenario's drive in one call: its own copy of the shape,
+# listed as a discovery candidate, the boot metadata another OS left in the ESP plus recognizable bytes
+# in the partitions that OS owns (when a dir is given), the nodes sfdisk would name, and a snapshot of
+# every partition region the drive reports. Regions come off the drive, so a scenario pins the
+# geometry sfdisk gave instead of hand-cut slices, and assert_unchanged names the region that moves.
+# A scenario that must prove the GPT header too calls snapshot <name> beside this: appending rewrites
+# the header, so regions alone stay comparable across an append. Seeding happens before the snapshot,
+# because seed_region writes the image itself.
+image() {
+  local name="$1" shape="${2:-$1}" foreign="${3:-}" node start size
+  owned "$name" "$shape"
+  if [ -n "$foreign" ]; then
+    esp_foreign "$name" "$foreign"
+    while read -r node start size; do
+      [ "$node" = "$disk_dir/$name.img1" ] || seed_region "$name" "$start" "$size" W
+    done < <(partitions "$name")
+  fi
+  nodes "$name"
+  while read -r start size; do
+    snapshot_regions "$name" "$start" "$size"
+  done < <(partitions "$name" | awk '{print $2, $3}')
+}
+
 # seed_region <disk> <start> <count> <byte> — recognizable bytes in a partition another OS owns, so a
 # checksum that moves means the region was actually written rather than that it happens to be zeros.
 seed_region() {

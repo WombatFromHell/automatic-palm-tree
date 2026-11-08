@@ -160,11 +160,8 @@ teardown() {
 }
 
 @test "a Windows disk with no Linux partition is refused and left byte-identical" {
-  disk win
-  esp_foreign win Microsoft/BOOT
-  seed_region win "$MSR_START" "$MSR_N" M
-  seed_region win "$NTFS_START" "$NTFS_N" W
-  snapshot win "$ESP_START" "$ESP_N" "$MSR_START" "$MSR_N" "$NTFS_START" "$NTFS_N"
+  image win win Microsoft/BOOT
+  snapshot win
   run terraform_run win
   [ "$status" -eq 2 ]
   assert_out "holds ext4"
@@ -174,11 +171,8 @@ teardown() {
 }
 
 @test "a Windows disk adopts the ESP and formats only the blank Linux partition" {
-  disk winblank
-  esp_foreign winblank Microsoft/BOOT
-  seed_region winblank "$MSR_START" "$MSR_N" M
-  seed_region winblank "$NTFS_START" "$NTFS_N" W
-  snapshot winblank "$ESP_START" "$ESP_N" "$MSR_START" "$MSR_N" "$NTFS_START" "$NTFS_N"
+  image winblank winblank Microsoft/BOOT
+  snapshot winblank
 
   run terraform_run winblank
   [ "$status" -eq 0 ]
@@ -369,12 +363,8 @@ EOF
 }
 
 @test "discovery refuses a drive whose table holds none of the recipe's fingerprints" {
-  owned win
-  esp_foreign win Microsoft/BOOT
-  seed_region win "$MSR_START" "$MSR_N" M
-  seed_region win "$NTFS_START" "$NTFS_N" W
+  image win win Microsoft/BOOT
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
-  snapshot win "$NTFS_START" "$NTFS_N"
   run terraform_recipe_run win "$stubs/recipe.json"
   [ "$status" -eq 2 ]
   assert_out "no drive matches"
@@ -736,12 +726,9 @@ EOF
 # A blank partition the entry does not fit is somebody else's space to leave alone: the entry goes
 # into the free gap instead, and the partition that was too small keeps its bytes.
 @test "a blank partition too small for an entry is left alone and the entry is appended into free space" {
-  owned gap winblank
-  seed_region gap "$WIN_LINUX_START" "$((WIN_LINUX_END - WIN_LINUX_START + 1))" 'W'
+  image gap winblank
   recipe_file "$stubs/gap.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:20M:/"
-  nodes gap
   before=$(entries_json gap)
-  snapshot_regions gap "$WIN_LINUX_START" "$((WIN_LINUX_END - WIN_LINUX_START + 1))"
 
   run terraform_recipe_run gap "$stubs/gap.json"
   [ "$status" -eq 0 ]
@@ -904,11 +891,7 @@ assert_no_json() {
 }
 
 @test "--emit leaves out partitions it cannot reproduce and names why" {
-  owned winblank
-  esp_foreign winblank Microsoft/BOOT
-  seed_region winblank "$MSR_START" "$MSR_N" M
-  seed_region winblank "$NTFS_START" "$NTFS_N" W
-  nodes winblank
+  image winblank winblank Microsoft/BOOT
   snapshot winblank
 
   run emit_run --emit
@@ -929,11 +912,7 @@ assert_no_json() {
 }
 
 @test "the emitted recipe plus the root partition the operator declares runs on a Windows drive" {
-  owned winblank
-  esp_foreign winblank Microsoft/BOOT
-  seed_region winblank "$MSR_START" "$MSR_N" M
-  seed_region winblank "$NTFS_START" "$NTFS_N" W
-  nodes winblank
+  image winblank winblank Microsoft/BOOT
   run emit_run --emit
   [ "$status" -eq 0 ]
   assert_json '.partitions | length == 1'
@@ -944,7 +923,7 @@ assert_no_json() {
   # names, so the partition is whatever Windows left and an entry that adopts it asks for nothing.
   jq '.partitions += [{name: "root", label: "nixos", fs: "ext4", mount: "/"}]' "$stubs/emit.json" >"$stubs/declared.json"
 
-  snapshot winblank "$ESP_START" "$ESP_N" "$MSR_START" "$MSR_N" "$NTFS_START" "$NTFS_N"
+  snapshot winblank
   run terraform_recipe_run winblank "$stubs/declared.json"
   [ "$status" -eq 0 ]
   assert_out "esp: adopt"
@@ -1023,13 +1002,9 @@ assert_no_json() {
 # ---- slice R6: appending into free space (ADR-c2cd97401185) ----
 
 @test "a recipe entry no partition describes is appended into free space, existing entries untouched" {
-  owned grow win
-  seed_region grow "$MSR_START" "$MSR_N" M
-  seed_region grow "$NTFS_START" "$NTFS_N" W
-  nodes grow
+  image grow win
   recipe_file "$disk_dir/grow.json" false "esp:boot:vfat:8M:/boot,nixos:nixos:ext4:16M:/"
   before=$(entries_json grow)
-  snapshot_regions grow "$MSR_START" "$MSR_N" "$NTFS_START" "$NTFS_N"
 
   run terraform_recipe_run grow "$disk_dir/grow.json"
   [ "$status" -eq 0 ]
