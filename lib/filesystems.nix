@@ -28,6 +28,11 @@
     concatLists
     ;
 
+  # A UUID becomes one path component of the device, so a slash would escape /dev/disk/by-uuid and a
+  # space would reach mount as two arguments. mkfs prints hex with optional dashes (BBD9-580F, or a
+  # btrfs UUID with dashes), which is what this admits.
+  uuidShape = "[A-Za-z0-9][A-Za-z0-9-]*";
+
   merge = defaults: entry: let
     all = defaults // entry;
     extras = (defaults.extraOptions or []) ++ (entry.extraOptions or []);
@@ -72,6 +77,11 @@ in {
   # is the fsType, and its comma list is the option list — `""` means the kernel's defaults, so an
   # empty option list is dropped the way mkMounts drops it.
   #
+  # A partition may declare `uuid`, the filesystem UUID the drive carries. When it does, that names
+  # the device instead of the label: a label is unique only within one drive, so a second drive or
+  # another install writing the same label answers the same name, while a UUID names one filesystem.
+  # The label stays declared either way, because mkfs writes it and terraform.sh checks against it.
+  #
   # A partition with no `mount` is skipped: terraform.sh creates it and NixOS never mounts it.
   # Everything else that loses a mount quietly is refused. An entry with a mount and no label has
   # no device to name (`--emit` omits the label when the filesystem carries none), and two entries
@@ -83,14 +93,18 @@ in {
     doubled = filter (m: builtins.length (filter (p: p.mount == m) wanted) > 1) (unique points);
     entry = p: let
       options = filter (o: o != "") (splitString "," (p.options or ""));
+      uuid = p.uuid or "";
     in
-      if p.label or "" == ""
+      if uuid != "" && builtins.match uuidShape uuid == null
+      then throw "terraform recipe: partition ${p.name or p.mount} declares \"${uuid}\", which is not a filesystem UUID"
+      else if uuid == "" && p.label or "" == ""
       then throw "terraform recipe: partition ${p.name or p.mount} mounts ${p.mount} and has no label, so no device to name"
       else if p.fs or "" == ""
       then throw "terraform recipe: partition ${p.name or p.mount} mounts ${p.mount} and has no filesystem"
       else
         {
-          device = "/dev/disk/by-label/${p.label}";
+          device =
+            if uuid != "" then "/dev/disk/by-uuid/${uuid}" else "/dev/disk/by-label/${p.label}";
           fsType = p.fs;
         }
         // optionalAttrs (options != []) {inherit options;};
