@@ -5,7 +5,7 @@ slug: test-fixtures-are-plain-factories-in-the-files-t
 title: Test fixtures are plain factories in the files that own them, and the gate counts assertions
 created: 2026-11-07T21:50:06Z
 author: josh@methyl-bazzite
-status: proposed
+status: accepted
 scope:
   - tests/helpers.bash
   - tests/disk-fixture.bash
@@ -16,8 +16,17 @@ scope:
   - tests/run.sh
 constraint: |
   A shared test fixture is a plain function in tests/helpers.bash, tests/disk-fixture.bash or tests/support.nix, never a registry, a config file or a framework, and it ships only when it removes three or more call sites; a function added to tests/support.nix forces nothing at definition time and must not raise any suite's measured scope peak; fixture content costing more than about 50ms per test is built once in a bats setup_file and copied per test; a fixture never imports repo modules, never names the script under test, never branches on being a fixture, and never asserts an implementation string, so a derivation's buildCommand is read only to prove what a build produced; adding a scenario costs one factory call plus one assertion; every gate verdict line reports its assertion count and a count below the floor in tests/suite-ledger.txt fails the gate rather than printing ok.
+enforced_by:
+  - tests/floors.sh#count
+  - tests/disk-fixture.bash#fixture_setup_file
+  - tests/support.nix#fixtureHost
+  - tests/helpers.bash#stub
+ratified: 9f25be289b33
+verified:
+  - by: josh@methyl-bazzite
+    at: 2026-11-08T01:19:46Z
 schema: 4
-version: 1
+version: 3
 ---
 The suite is duplicated in two places, and both are measured, not guessed.
 
