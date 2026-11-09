@@ -131,7 +131,16 @@ done
 case "\$*" in
 *owns*)
   if [ -n "\$file" ]; then /usr/bin/grep -o '"owns": *[a-z]*' "\$file" | sed 's/.*: *//'; else printf 'false\n'; fi ;;
-*) printf '/dev/vda1 C12A7EA9-344C-4175-A575-202976385741\n/dev/vda2 0FC63DAF-8483-4772-8E79-3D69D8457574\n' ;;
+# A query with no file is terraform.sh reading the partition table, which this suite answers from a
+# fixture. A query with a file is asked of real jq: the recipe fixtures are real JSON, and a canned
+# answer there would hide a query that does not match the file (ADR-e14303caba55's per-entry UUID
+# gate is exactly such a query).
+*)
+  if [ -n "\$file" ]; then
+    /usr/bin/jq "\$@"
+  else
+    printf '/dev/vda1 C12A7EA9-344C-4175-A575-202976385741\n/dev/vda2 0FC63DAF-8483-4772-8E79-3D69D8457574\n'
+  fi ;;
 esac
 EOF
 
@@ -505,6 +514,31 @@ run_install() {
   assert_no_call "./terraform.sh --verify"
 }
 
+# The gate is per entry, not "any uuid present": a recipe carrying an identity on one partition and
+# none on another still names the second one by label, and a label is unique only within one drive.
+@test "deploy refuses a recipe whose mount declares no UUID, naming that entry" {
+  printf '' >"$stubs/owned"
+  printf '1\n' >"$stubs/mounted"
+  dir=$(recipe_repo methyl '{"owns": false, "partitions": [{"name":"esp","uuid":"77ED-D9E9","fs":"vfat","size":"8M","mount":"/boot"},{"name":"root","fs":"ext4","size":"rest","mount":"/"}]}')
+  INSTALL_FORCE=1 run run_install_in "$dir" --stage deploy methyl
+  [ "$status" -eq 2 ]
+  assert_out "root"
+  assert_out "UUID"
+  assert_no_call "nixos-install"
+}
+
+# One declared UUID used to be enough to skip recording for the whole recipe, so the entry that
+# lacked one never got an identity and deploy accepted the file anyway.
+@test "a recipe carrying a UUID on one entry is still recorded for the entry that lacks one" {
+  printf '' >"$stubs/owned"
+  printf '1\n' >"$stubs/mounted"
+  dir=$(recipe_repo methyl '{"owns": false, "partitions": [{"name":"esp","uuid":"77ED-D9E9","fs":"vfat","size":"8M","mount":"/boot"},{"name":"root","fs":"ext4","size":"rest","mount":"/"}]}')
+  INSTALL_FORCE=1 run run_install_in "$dir" --stage terraform methyl
+  [ "$status" -eq 0 ]
+  assert_call "--record"
+  assert_out "recorded the filesystem identities"
+}
+
 # Folded in, deploy runs: the recipe names one filesystem, and the verdict still decides whether the
 # drive needs changing.
 @test "deploy runs from a recipe whose mounts carry UUIDs" {
@@ -712,7 +746,9 @@ uuid_recipe() {
 run_install_in() { # <repo dir> [install.sh args]
   local dir="$1"
   shift
-  INSTALL_SCRATCH="$stubs/scratch" PATH="$stubs:$PATH" bash "$dir/install.sh" "$@"
+  # Run from the fixture repo, so the recipe the suite wrote is the file install.sh reads — a
+  # relative path here would otherwise resolve against this working tree's own hosts/.
+  (cd "$dir" && INSTALL_SCRATCH="$stubs/scratch" PATH="$stubs:$PATH" bash "./install.sh" "$@")
 }
 
 @test "a shared host with a recipe is terraformed from the recipe, not from its mounts" {
@@ -858,6 +894,20 @@ run_install_in() { # <repo dir> [install.sh args]
   assert_no_call "^chown"
   assert_no_call "^nixos-enter"
   assert_out "run --stage postdeploy"
+}
+
+# An osUser the config declares but the installed system has no account for would be chowned by an
+# empty uid:gid string. The account list is checked before any key is written.
+@test "postdeploy refuses a declared user the installed system has no account for" {
+  printf '1\n' >"$stubs/mounted"
+  mkdir -p "$stubs/home/.ssh"
+  printf 'ssh-ed25519 AAAAtest josh@laptop\n' >"$stubs/home/.ssh/authorized_keys"
+  printf 'root:x:0:0::/root:/run/current-system/sw/bin/bash\n' >"$stubs/root/mnt/etc/passwd"
+  dir=$(recipe_repo methyl-nixos "$(owned_recipe)")
+  INSTALL_FORCE=1 run run_install_in "$dir" --stage postdeploy methyl-nixos
+  [ "$status" -eq 2 ]
+  assert_out "josh"
+  assert_no_call "^chown"
 }
 
 @test "postdeploy hands the installer's ssh keys to the users the host declares" {

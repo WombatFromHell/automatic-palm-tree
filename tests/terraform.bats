@@ -433,6 +433,18 @@ EOF
   [ "$(type_of blank 1)" = "" ]
 }
 
+# A size a human writes as `1.5G` is a recipe error and has to read like one. Stripping the suffix
+# leaves `1.5`, which bash arithmetic rejects, so the reader gets `arithmetic syntax error` instead
+# of the recipe contract.
+@test "a fractional size is refused as a recipe size, not as an arithmetic error" {
+  owned blank
+  recipe_file "$stubs/fractional.json" false "esp:boot:vfat:1.5G:/boot,root:nixos:ext4:rest:/"
+  run terraform_recipe_run blank "$stubs/fractional.json" --dry-run
+  [ "$status" -eq 2 ]
+  assert_out "recipe size '1.5G' is not bytes, K, M, G or rest"
+  assert_no_out "arithmetic"
+}
+
 # R2 — free-space maths. A declared size that no existing partition covers has to fit the
 # 1MiB-aligned gaps the table leaves, and that has to be settled before a single write. On this
 # fixture the gaps are 8M (between ESP and root) and 34M (after root); the last 1MiB of the drive is

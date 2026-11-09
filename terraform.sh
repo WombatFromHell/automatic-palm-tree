@@ -321,15 +321,20 @@ find_root() {
 # Recipe sizes are what --emit prints (exact whole units) or what a human writes: bytes, or K/M/G.
 # `rest` is not a number, so it is returned as the word and the caller decides what it means.
 size_bytes() {
-  local s="$1"
+  local s="$1" n mult
   case "$s" in
-  rest) printf 'rest\n' ;;
-  *K) printf '%s\n' $((${s%K} * 1024)) ;;
-  *M) printf '%s\n' $((${s%M} * 1024 * 1024)) ;;
-  *G) printf '%s\n' $((${s%G} * 1024 * 1024 * 1024)) ;;
-  '' | *[!0-9]*) refuse "recipe size '$s' is not bytes, K, M, G or rest" ;;
-  *) printf '%s\n' "$s" ;;
+  rest) printf 'rest\n' && return ;;
   esac
+  case "$s" in
+  *K) n="${s%K}" mult=1024 ;;
+  *M) n="${s%M}" mult=$((1024 * 1024)) ;;
+  *G) n="${s%G}" mult=$((1024 * 1024 * 1024)) ;;
+  *) n="$s" mult=1 ;;
+  esac
+  # The number has to be whole before it is multiplied: `1.5G` reaching arithmetic is a syntax error,
+  # not the recipe error this contract promises.
+  case "$n" in '' | *[!0-9]*) refuse "recipe size '$s' is not bytes, K, M, G or rest" ;; esac
+  printf '%s\n' $((n * mult))
 }
 
 # A recipe may give a partition type as a GUID or as the 4-character typecode sfdisk also accepts.

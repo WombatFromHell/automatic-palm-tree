@@ -309,13 +309,23 @@ prepare() {
   say "prepare ok: partition table unchanged ($after)"
 }
 
+# The mounted entries that declare no filesystem identity. A label is unique only within one drive,
+# so a mount with no UUID names whichever partition carries that label. Every one of them has to be
+# recorded before anything installs (ADR-e14303caba55), which is why the check is per entry and not
+# "any uuid in the file".
+uuid_gap() {
+  jq -r '[.partitions[] | select(.mount != null and .uuid == null) | .name] | join(" ")' "$1" 2>/dev/null || true
+}
+
 terraform() {
   resolve
   # One prompt for the whole stage, asked only when the drive is about to change. The verdict comes
   # from routines that write nothing: --verify reads the recipe against the drive, and with no recipe
   # the declared mounts being live already says the same thing. The answer is carried to terraform.sh
   # as --force (ADR-b77ec913151f: --force is the operator's answer to the destructive prompt), so the
-  # stage never asks twice and a drive that already matches is never asked about at all.
+  # stage never asks twice and a drive that already matches is never asked about at all. Carrying
+  # --force on a drive that needed no answer is safe: terraform.sh's format_blank never overwrites a
+  # filesystem it did not make or adopt, so --force downgrades a warning, never a write.
   tf=()
   if [ "$dry" = 1 ]; then
     tf+=(--dry-run)
@@ -353,9 +363,10 @@ terraform() {
   }
   # Recording the filesystem identities is the stage's last act, after the reproduction and both
   # verification checks came back clean, so a run that failed leaves the recipe untouched. A recipe
-  # that already carries them names every filesystem already, so there is nothing to record. deploy
-  # refuses until the host recipe carries them; committing the recorded file is the operator's act.
-  if [ -n "$recipe" ] && ! grep -q '"uuid"' "$recipe_file"; then
+  # whose every mount carries an identity already names every filesystem, so there is nothing to
+  # record. deploy refuses until the host recipe carries them; committing the recorded file is the
+  # operator's act.
+  if [ -n "$recipe" ] && [ -n "$(uuid_gap "$recipe_file")" ]; then
     run ./terraform.sh --record --recipe "$recipe" --disk "$device" --mount "$root" || {
       say "terraform could not record the filesystem identities — deploy refuses until $recipe_file carries them"
       exit 2
@@ -378,9 +389,12 @@ deploy() {
   # the filesystems it made or adopted into the recipe itself, so a mount names one filesystem, and the
   # config the flake derives from that recipe mounts exactly the layout the drive was built from.
   # Asked before the prompt, so a recipe nobody recorded never reaches it.
-  if [ -n "$recipe" ] && ! grep -q '"uuid": *"[^"]*"' "$recipe"; then
-    say "deploy refused: $recipe declares no filesystem UUID — run the terraform stage, which records them into $recipe, then commit it and re-run nix flake check"
-    exit 2
+  if [ -n "$recipe" ]; then
+    gap=$(uuid_gap "$recipe")
+    if [ -n "$gap" ]; then
+      say "deploy refused: $recipe declares no filesystem UUID for $gap — run the terraform stage, which records them into $recipe, then commit it and re-run nix flake check"
+      exit 2
+    fi
   fi
   # The drive has to still match the recipe the layout was built from. --verify reads it and writes
   # nothing, so a drive that changed since terraform ran refuses the install rather than being
@@ -445,11 +459,24 @@ postdeploy() {
     --apply 'xs: builtins.concatStringsSep " " xs') || exit 2
   key_src=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)/.ssh/authorized_keys
   if [ -s "$key_src" ]; then
+    # Every declared user has to be an account the installed system actually has: an absent account
+    # answers with an empty uid:gid, which reaches chown as a missing operand. The whole list is
+    # checked before any key is written, so a bad name leaves the tree untouched.
+    owners=()
     for u in $users; do
+      owner=$(grep "^$u:" "$root/etc/passwd" | cut -d: -f3,4 || true)
+      if [ -z "$owner" ]; then
+        say "postdeploy refused: $u is declared by $host but has no account in $root/etc/passwd"
+        exit 2
+      fi
+      owners+=("$u:$owner")
+    done
+    for entry in "${owners[@]}"; do
+      u="${entry%%:*}"
       install -D -m 600 "$key_src" "$root/home/$u/.ssh/authorized_keys"
-      # The ISO has no account for the installed user, so ownership is taken from the installed
-      # system's own passwd as uid:gid.
-      chown -R "$(grep "^$u:" "$root/etc/passwd" | cut -d: -f3,4)" "$root/home/$u/.ssh"
+      # Ownership is taken from the installed system's own passwd, because the ISO has no account
+      # for the installed user.
+      chown -R "${entry#*:}" "$root/home/$u/.ssh"
     done
     say "ssh keys from $key_src installed for: $users"
   fi
