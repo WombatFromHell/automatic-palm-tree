@@ -152,7 +152,10 @@ setup() {
   [ "${VM_PUSH:-0}" = 1 ] || skip "VM_PUSH unset — this builds, copies and then boots twice"
 
   run bash "$repo/tests/vm-shell.sh" --push methyl-test --boot --script "$repo/tests/vm-shell-push-probe.sh"
-  { [ "$status" -eq 0 ] || { printf '%s\n' "$output" >&2; false; }; }
+  { [ "$status" -eq 0 ] || {
+    printf '%s\n' "$output" >&2
+    false
+  }; }
 
   local log
   log=$(grep -o '^log=.*' <<<"$output" | cut -d= -f2)
