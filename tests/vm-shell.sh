@@ -288,10 +288,10 @@ fi
 
 if [ -n "$script" ]; then
   printf 'bash /repo/%s\n' "${script#"$repo/"}" >&9
-  # The probe folds the drive's uuids into the repo copy in the share, and the closure installed onto
-  # the drive has to be the one rebuilt from that recipe — its fstab names the uuids this drive
-  # carries, or the drive's boot times out on /dev/disk/by-uuid. Rebuild here and push it back; the
-  # probe waits on rebuilt-system, so this runs while the guest is still up.
+  # The terraform stage records the identities it formatted into the repo copy in the share, and the
+  # closure installed onto the drive has to be the one rebuilt from that recipe — its fstab names the
+  # uuids this drive carries, or the drive's boot times out on /dev/disk/by-uuid. Rebuild here and
+  # push it back; the probe waits on rebuilt-system, so this runs while the guest is still up.
   if [ -n "$boot_drive" ]; then
     (
       for _ in $(seq 120); do

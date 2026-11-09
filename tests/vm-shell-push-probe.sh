@@ -46,7 +46,7 @@ mkdir -p /nix/.rw-store/scratch
 chmod 755 /nix/.rw-store/scratch
 cd /repo || fail "cannot enter the repo share"
 # The closure installed is the one whose fstab names THIS drive's uuids, so it is rebuilt from the
-# folded recipe rather than the checked-in one (see step 8). Before the fold it is the host's.
+# recipe the terraform stage recorded into (see step 8). Before that record it is the host's recipe.
 install_system="$path"
 stage() {
   INSTALL_SYSTEM="$install_system" INSTALL_DRIVE=/dev/vdb bash install.sh --force \

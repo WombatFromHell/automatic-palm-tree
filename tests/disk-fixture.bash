@@ -323,7 +323,7 @@ recipe_file() {
 }
 
 # recipe_uuid <file> <name> <uuid> — declare a filesystem UUID on one partition of a recipe, the way
-# a folded-in recipe carries them. Written with jq so the file stays real JSON.
+# a recorded recipe carries them. Written with jq so the file stays real JSON.
 recipe_uuid() {
   jq --arg name "$2" --arg uuid "$3" '(.partitions[] | select(.name == $name)) += {uuid: $uuid}' \
     "$1" >"$1.new" && mv "$1.new" "$1"

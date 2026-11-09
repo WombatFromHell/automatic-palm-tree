@@ -116,9 +116,8 @@ setup() {
     'SHELL OK: writable store layered on the read-only store image' \
     'SHELL OK: closure handed over' \
     'SHELL OK: closure registered' \
-    'SHELL OK: recorded recipe' \
-    'SHELL OK: deploy refused the uuid-free recipe' \
-    'SHELL OK: folded into the share and deployed' \
+    'SHELL OK: mounted uuids resolve' \
+    'SHELL OK: recorded into the share and deployed' \
     'SHELL OK: installed on the drive' 'SHELL DONE'; do
     grep -q "$marker" "$log"
   done
@@ -163,7 +162,7 @@ setup() {
   grep -q '^disk_boot=.*empty0.qcow2 append=.*root=fstab' "$log"
   grep -q '^disk_boot=.*append=.*init=/nix/store/' "$log"
   grep -q '^rebuild=' "$log"
-  grep -q 'SHELL OK: folded into the share, rebuilt, and deployed' "$log"
+  grep -q 'SHELL OK: recorded into the share, rebuilt, and deployed' "$log"
   grep -q 'BOOT OK: installed generation reached its login prompt' "$log"
 
   # A drive that fails to mount its own uuids drops to emergency mode, which prints no login prompt:

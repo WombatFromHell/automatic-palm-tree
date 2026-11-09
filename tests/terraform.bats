@@ -1077,7 +1077,7 @@ EOF
   assert_out "[dry-run] mkfs.xfs -f -L nixos -m uuid=deadbeef-cafe-4bee-8cae-f00dfeedbeef"
 }
 
-# --emit is the fold on an installed host, so the UUIDs have to be in what it prints.
+# --emit is what a host reads back off its own drive, so the UUIDs have to be in what it prints.
 @test "--emit prints the uuid of every filesystem it found" {
   owned lin blank
   format_slice lin 1 "$ESP_START" "$ESP_N" vfat boot
@@ -1092,7 +1092,7 @@ EOF
   assert_unchanged lin
 }
 
-# A recipe folded in from a recorded file describes those filesystems. Reformatting the partition gives
+# A recipe carrying recorded UUIDs describes those filesystems. Reformatting the partition gives
 # it a different UUID, and the recipe then names a filesystem the drive does not hold.
 @test "--verify refuses a uuid the drive no longer carries" {
   owned lin blank
