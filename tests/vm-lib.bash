@@ -75,6 +75,15 @@ vm_boot() {
 
 vm_serial_open() { exec 9>"$1"; }
 
+# End a boot by its scope, not by pattern: a guest that has nothing to power it off would otherwise
+# run out the timeout backstop, and pgrep for qemu kills every VM on this host, including another
+# test's. The `.scope` suffix is required — systemd reads a bare name as `.service` and kills nothing
+# — and `-s KILL` rather than `--kill-mode=kill`, which this host's systemctl (systemd 262) rejects.
+# A silently swallowed kill is what made a boot run on for 200s after its proof was in.
+vm_kill_scope() {
+	systemctl --user kill -s KILL "$1.scope" 2>/dev/null
+}
+
 # Guest RAM as the host sees it, sampled while the VM is alive: the guest's own /proc is inside a
 # memory namespace and reports its own limit. The scope's cgroup is found from the qemu process —
 # sampling user.slice instead reports every megabyte that user happens to be running, which reads
@@ -106,26 +115,30 @@ vm_free_peak() {
 }
 
 # Boot an installed drive: qemu direct kernel boot from a kernel and initrd copied out of the
-# installed closure, the deployed drive as /dev/vdb, and a blank drive in front of it so /dev/vda
-# still exists — the installed config's mount sources name /dev/vdb1, and a drive that shows up as
-# /dev/vda1 would not mount. No firmware: this pinned nixpkgs has no plain OVMF, so the boot loader
-# entries on the ESP are not what boots here (see .pi/PLAN-vm-push.md D7).
+# installed closure. No firmware: this pinned nixpkgs has no plain OVMF, so the boot loader entries
+# on the ESP are not what boots here (see .pi/PLAN-vm-push.md D7). No extra drive either: the
+# installed fstab names partitions by UUID, so the device name the drive lands on says nothing.
 vm_boot_disk() {
-	local kernel=$1 initrd=$2 append=$3 drive=$4 log=$5 timeout=${6:-300} qemu=${7:-} fifo=${8:-}
+	local kernel=$1 initrd=$2 append=$3 drive=$4 log=$5 timeout=${6:-300} qemu=${7:-}
 	local ceiling=${VM_BOOT_CEILING:-2000M}
-	local blank
-	blank=$(dirname "$drive")/boot-blank.qcow2
-	"$(dirname "${qemu%/bin/*}")/bin/qemu-img" create -f qcow2 "$blank" 512M >/dev/null
+	# Strip the suffix with parameter expansion: $((2000M)) is an arithmetic error, and a function
+	# that dies here leaves the caller waiting on a boot that never started.
 	vm_scope "vm-disk-boot-$$" "$ceiling" bash -c \
-		"timeout $timeout $qemu -machine accel=kvm -cpu max -m $((ceiling%M - 400)) -drive file=$blank,format=qcow2,id=drive1,if=none,index=1 -device virtio-blk-pci,drive=drive1 -drive file=$drive,format=qcow2,id=drive2,if=none,index=2 -device virtio-blk-pci,drive=drive2 -kernel $kernel -initrd $initrd -append '$append console=tty0 console=ttyS0,115200n8' -nographic${fifo:+ < $fifo}" \
+		"timeout $timeout $qemu -machine accel=kvm -cpu max -m $((${ceiling%M} - 400)) -drive file=$drive,format=qcow2,id=drive1,if=none,index=1 -device virtio-blk-pci,bootindex=1,drive=drive1 -kernel $kernel -initrd $initrd -append '$append console=tty0 console=ttyS0,115200n8' -nographic" \
 		2>&1 | tee -a "$log"
 }
 
 # Wait until a pattern shows up in the serial log the host is already capturing.
 vm_wait_for() {
-	local file=$1 pattern=$2 timeout=${3:-60} waited=0
+	local file=$1 pattern=$2 timeout=${3:-60} since=${4:-0} waited=0
+	# `since` is a byte offset: a second boot in the same log must be judged on what it wrote, not on
+	# text an earlier boot left behind.
 	while [ "$waited" -lt "$timeout" ]; do
-		grep -q -- "$pattern" "$file" && return 0
+		if [ "$since" -gt 0 ]; then
+			tail -c +"$((since + 1))" "$file" | grep -q -- "$pattern" && return 0
+		else
+			grep -q -- "$pattern" "$file" && return 0
+		fi
 		sleep 1
 		waited=$((waited + 1))
 	done

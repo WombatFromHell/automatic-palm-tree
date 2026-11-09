@@ -33,7 +33,10 @@ while [ $# -gt 0 ]; do
     }
     shift 2
     ;;
-  --boot) boot_drive=1; shift ;;
+  --boot)
+    boot_drive=1
+    shift
+    ;;
   --script)
     script=${2:-}
     [ -n "$script" ] && [ -f "$script" ] || {
@@ -44,9 +47,11 @@ while [ $# -gt 0 ]; do
     # whole file makes the guest echo every line back: lines land in a login getty that swallows
     # them, and the probe's own source text lands in the log beside its output.
     case "$script" in
-      "$repo"/*) ;;
-      *) printf 'vm-shell.sh: --script must be a file in the repo - the guest reads it from /repo\n' >&2
-         exit 2 ;;
+    "$repo"/*) ;;
+    *)
+      printf 'vm-shell.sh: --script must be a file in the repo - the guest reads it from /repo\n' >&2
+      exit 2
+      ;;
     esac
     shift 2
     ;;
@@ -148,7 +153,10 @@ port=""
 # its ssh port on every interface is a person's choice, not the harness's default.
 bind=${VM_SHELL_BIND:-127.0.0.1}
 for candidate in 2222 2223 2224 2225 2226 2227; do
-  [ -z "$(ss -ltnH "sport = :$candidate" 2>/dev/null)" ] && { port=$candidate; break; }
+  [ -z "$(ss -ltnH "sport = :$candidate" 2>/dev/null)" ] && {
+    port=$candidate
+    break
+  }
 done
 if [ -z "$port" ]; then
   printf 'vm-shell.sh: no free port to forward ssh on\n' >&2
@@ -183,7 +191,12 @@ override="$run/override.nix"
     if [ -n "$boot_drive" ]; then
       # The probe copies kernel/initrd out of the installed drive here; /mnt is the install
       # target, so a share under it would be shadowed by the mount.
-      printf '  virtualisation.sharedDirectories.deploy = { source = "$TMPDIR/deploy-out"; target = "/deploy-out"; };\n'
+      # The literal must stay literal: Nix passes it to the VM runner, whose shell expands $TMPDIR
+      # against the run directory it boots in (vm_boot sets TMPDIR=$run_dir USE_TMPDIR=1), so the
+      # guest's /deploy-out lands in exactly $run/tmp/deploy-out, which is where the host reads it.
+      # shellcheck disable=SC2016
+      printf '  virtualisation.sharedDirectories.deploy = { source = "$TMPDIR/deploy-out"; target = "/deploy-out"; };
+'
     fi
   fi
   printf '}\n'
@@ -227,7 +240,10 @@ ssh_nix_opts="$ssh_opts"
 ssh_result=""
 if vm_wait_for "$log" "Welcome to NixOS" 60; then
   if $ssh_base -o ConnectTimeout=5 vm@127.0.0.1 'echo SSH_OK' >"$run/ssh.out" 2>&1 ||
-     { sleep 2; $ssh_base -o ConnectTimeout=5 vm@127.0.0.1 'echo SSH_OK' >>"$run/ssh.out" 2>&1; }; then
+    {
+      sleep 2
+      $ssh_base -o ConnectTimeout=5 vm@127.0.0.1 'echo SSH_OK' >>"$run/ssh.out" 2>&1
+    }; then
     ssh_result=ok
   fi
 fi
@@ -246,7 +262,7 @@ else
   if [ -n "$push_host" ]; then
     printf 'vm-shell.sh: --push needs the forwarded ssh port to answer\n' >&2
     printf 'log=%s\n' "$log"
-    pgrep -f 'qemu-s[y]stem-x86_64' | xargs -r kill
+    vm_kill_scope "vm-boot-$$"
     exit 1
   fi
 fi
@@ -265,13 +281,39 @@ if [ -n "$push_host" ] && [ "$ssh_result" = ok ]; then
   if [ "$rc" -ne 0 ]; then
     printf 'vm-shell.sh: the closure did not reach the guest store (see %s)\n' "$log" >&2
     printf 'log=%s\n' "$log"
-    pgrep -f 'qemu-s[y]stem-x86_64' | xargs -r kill
+    vm_kill_scope "vm-boot-$$"
     exit 1
   fi
 fi
 
 if [ -n "$script" ]; then
   printf 'bash /repo/%s\n' "${script#"$repo/"}" >&9
+  # The probe folds the drive's uuids into the repo copy in the share, and the closure installed onto
+  # the drive has to be the one rebuilt from that recipe — its fstab names the uuids this drive
+  # carries, or the drive's boot times out on /dev/disk/by-uuid. Rebuild here and push it back; the
+  # probe waits on rebuilt-system, so this runs while the guest is still up.
+  if [ -n "$boot_drive" ]; then
+    (
+      for _ in $(seq 120); do
+        [ -e "$run/tmp/deploy-out/rebuild-request" ] && break
+        sleep 1
+      done
+      [ -e "$run/tmp/deploy-out/rebuild-request" ] || exit 0
+      rebuilt=$(vm_scope "vm-rebuild-$$" 1200M bash -c \
+        "cd $run/tmp/xchg && nix build --no-link --print-out-paths .#nixosConfigurations.$push_host.config.system.build.toplevel" 2>>"$log") || {
+        printf 'rebuild failed\n' >"$run/tmp/deploy-out/rebuild-failed"
+        exit 0
+      }
+      NIX_SSHOPTS="$ssh_nix_opts" nix copy --no-check-sigs --to "ssh://vm@127.0.0.1:$port" "$rebuilt" \
+        >>"$log" 2>&1 || {
+        printf 'push of the rebuilt closure failed\n' >"$run/tmp/deploy-out/rebuild-failed"
+        exit 0
+      }
+      printf '%s\n' "$rebuilt" >"$run/tmp/deploy-out/rebuilt-system.new"
+      mv "$run/tmp/deploy-out/rebuilt-system.new" "$run/tmp/deploy-out/rebuilt-system"
+      printf 'rebuild=%s\n' "$rebuilt" >>"$log"
+    ) &
+  fi
   exec 9>&-
   # A probe that reports a failure exits its shell, so the getty respawns and the console goes idle
   # — that idle is what a failing run looks like from the outside. Ending here, on the guest's own
@@ -279,7 +321,7 @@ if [ -n "$script" ]; then
   # fail() exits there is no shell, so it would be read as a username at the login prompt.
   if vm_wait_for "$log" "SHELL DONE\|SHELL FAIL" "$boot_timeout"; then
     if grep -aq 'SHELL FAIL' "$log"; then
-      pgrep -f 'qemu-s[y]stem-x86_64' | xargs -r kill
+      vm_kill_scope "vm-boot-$$"
       wait "$boot" || true
       printf 'probe failed\n' >>"$log"
       printf 'log=%s\n' "$log"
@@ -298,7 +340,10 @@ wait "$boot" || printf 'boot ended by timeout\n' >>"$log"
 # system, and the second qemu boots the kernel and initrd the probe copied out of it (D7).
 if [ -n "$boot_drive" ]; then
   qemu=$(grep -ao '/nix/store/[^ ]*-qemu[^ ]*/bin/qemu-system-x86_64' "$run"/guest/bin/run-*-vm | head -1)
-  [ -n "$qemu" ] || { printf 'vm-shell.sh: the built VM script names no qemu binary\n' >&2; exit 1; }
+  [ -n "$qemu" ] || {
+    printf 'vm-shell.sh: the built VM script names no qemu binary\n' >&2
+    exit 1
+  }
   out="$run/tmp/deploy-out"
   for f in kernel initrd append.txt; do
     if [ ! -s "$out/$f" ]; then
@@ -308,34 +353,32 @@ if [ -n "$boot_drive" ]; then
   done
   printf 'disk_boot=%s append=%s\n' "$run/tmp/empty0.qcow2" "$(cat "$out/append.txt")" >>"$log"
 
-  serial2="$run/tmp/boot-serial"
-  mkfifo "$serial2"
-  vm_serial_open "$serial2"
+  # Multi-user is proven by the installed system's own login prompt, not by a systemd line: plymouth
+  # swallows "Reached target Multi-User System" on this console, and serial-getty — the prompt — only
+  # starts once multi-user is reached. A drive that fails to mount its uuids drops to emergency mode
+  # instead, which prints no login prompt, so this marker separates the two. The offset is recorded
+  # here because the deploy guest wrote its own prompt into the same log earlier.
+  boot_start=$(wc -c <"$log")
   vm_boot_disk "$out/kernel" "$out/initrd" "$(cat "$out/append.txt")" "$run/tmp/empty0.qcow2" "$log" \
-    "${VM_BOOT_TIMEOUT:-300}" "$qemu" "$serial2" &
+    "${VM_BOOT_TIMEOUT:-300}" "$qemu" &
   disk=$!
-  peak_disk=$(vm_free_peak "${VM_BOOT_TIMEOUT:-300}" qemu | tee -a "$log") &
+  # Sampled in its own background job, so the pid lands in this shell: assigning $(...) inside a
+  # backgrounded pipeline leaves peak_disk empty here, and the wait below waits for nothing.
+  vm_free_peak "${VM_BOOT_TIMEOUT:-300}" qemu | tee -a "$log" &
+  peak_disk=$!
 
-  creds=$(head -1 "$vm_repo/tests/vm-spike-secrets.env")
-  vm_wait_for "$log" 'Welcome to NixOS' "${VM_BOOT_TIMEOUT:-300}" || {
-    printf 'installed drive never reached its welcome banner\n' >>"$log"
-    pgrep -f 'qemu-s[y]stem-x86_64' | xargs -r kill
+  vm_wait_for "$log" 'login:' "${VM_BOOT_TIMEOUT:-300}" "$boot_start" || {
+    printf 'installed drive never reached a login prompt\n' >>"$log"
+    vm_kill_scope "vm-disk-boot-$$"
     printf 'log=%s\n' "$log"
     exit 1
   }
-  printf 'BOOT OK: installed generation reached its welcome banner\n' >>"$log"
-  if ! vm_serial_login "$log" "${creds%%:*}" "${creds#*:}" "${VM_BOOT_TIMEOUT:-300}" \
-    "BOOT OK: logged in on the installed drive" ''; then
-    printf 'installed drive reached no login prompt, or the login failed\n' >>"$log"
-    pgrep -f 'qemu-s[y]stem-x86_64' | xargs -r kill
-    printf 'log=%s\n' "$log"
-    exit 1
-  fi
-  # fd 9 is the console of this second qemu, reopened by vm_serial_open after the first run closed it.
-  # shellcheck disable=SC2031,SC2030
-  exec 9>&-
+  printf 'BOOT OK: installed generation reached its login prompt\n' >>"$log"
+  # The proof is in, and nothing can power this boot off: root is locked until postdeploy sets a
+  # password, so the scope is ended here rather than letting VM_BOOT_TIMEOUT run out.
+  vm_kill_scope "vm-disk-boot-$$"
   wait "$peak_disk"
-  wait "$disk" || printf 'disk boot ended by timeout\n' >>"$log"
+  wait "$disk" || true
 fi
 
 printf 'log=%s\n' "$log"

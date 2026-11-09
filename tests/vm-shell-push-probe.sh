@@ -39,37 +39,102 @@ ok "closure handed over: $(basename "$path")"
 nix path-info "$path" >/dev/null || fail "closure is not registered in the guest store — the host's ssh push failed"
 ok "closure registered: $(nix path-info --recursive "$path" | wc -l) paths on $src"
 
-# 5. The real deploy path, against the drive the runner left blank. install.sh builds into its own
-#    scratch store, so that store goes on the disk too: a tmpfs scratch inside a 1GB guest is the
-#    thing that overflows RAM.
+# 5. The real deploy path, in two calls, because the UUID gate sits between them. install.sh builds
+#    into its own scratch store, so that store goes on the disk too: a tmpfs scratch inside a 1GB
+#    guest is the thing that overflows RAM.
 mkdir -p /nix/.rw-store/scratch
 chmod 755 /nix/.rw-store/scratch
 cd /repo || fail "cannot enter the repo share"
-INSTALL_SYSTEM="$path" INSTALL_DRIVE=/dev/vdb bash install.sh --force --scratch /nix/.rw-store/scratch \
-  --stage prepare,terraform,deploy methyl-test || fail "install stages failed"
+# The closure installed is the one whose fstab names THIS drive's uuids, so it is rebuilt from the
+# folded recipe rather than the checked-in one (see step 8). Before the fold it is the host's.
+install_system="$path"
+stage() {
+  INSTALL_SYSTEM="$install_system" INSTALL_DRIVE=/dev/vdb bash install.sh --force \
+    --scratch /nix/.rw-store/scratch --stage "$1" methyl-test
+}
+stage prepare,terraform || fail "install stages failed"
 
-# 6. What the stages must have left on the drive: a table, an ESP with boot entries, and the closure.
-[ -n "$(lsblk -no PARTTABLENAME /dev/vdb)" ] || fail "the drive carries no partition table after terraform"
+# 6. The record: the UUIDs the drive actually carries, written next to the install root. A UUID names
+#    a filesystem that already exists, so every mounted partition's uuid must resolve on this drive.
+record=/mnt/terraform.json
+[ -f "$record" ] || fail "terraform stage left no recorded recipe at $record"
+mounted=$(jq -r '[.partitions[] | select(.mount != null)] | length' "$record")
+# udev makes /dev/disk/by-uuid links asynchronously after mkfs, and this is the path fstab-by-uuid
+# will use at boot, so settle the queue rather than trusting the link to be there already.
+udevadm settle --timeout=15 || fail "udev never settled after the filesystems were created"
+missing=0
+for u in $(jq -r '.partitions[] | select(.mount != null) | .uuid // "none"' "$record"); do
+  [ "$u" = none ] || [ -e "/dev/disk/by-uuid/$u" ] || missing=$((missing + 1))
+done
+[ "$missing" = 0 ] || fail "$missing mounted partitions have no uuid path on the drive"
+[ "$mounted" -gt 0 ] || fail "the recorded recipe mounts nothing"
+ok "recorded recipe: $mounted mounted partitions, every uuid resolves under /dev/disk/by-uuid"
+
+# 7. Deploy refuses before nixos-install while the recipe names labels only. This costs nothing: the
+#    gate is a read, and it fires before any write.
+out=$(stage deploy 2>&1) && fail "deploy accepted a recipe that declares no UUID"
+case "$out" in
+*declares\ no\ filesystem\ UUID*)
+  ok "deploy refused the uuid-free recipe"
+  ;;
+*)
+  fail "deploy failed for a different reason: $(printf '%s\n' "$out" | tail -3)"
+  ;;
+esac
+
+# 8. The fold, into the share this run installed from. The repo file on this host is untouched: these
+#    uuids name a scratch drive, not methyl-test's real one.
+cp "$record" /repo/hosts/methyl-test/terraform.json || fail "could not fold the recorded recipe"
+
+# The closure built on this host names methyl-test's real drive in its fstab; the scratch drive here
+# carries the uuids just recorded. A boot that mounts by uuid cannot resolve those, so the host
+# rebuilds the closure from the folded recipe in the share and pushes it back before deploy runs.
+if [ -d /deploy-out ]; then
+  touch /deploy-out/rebuild-request
+  for _ in $(seq 90); do
+    [ -s /deploy-out/rebuilt-system ] && break
+    [ -s /deploy-out/rebuild-failed ] && fail "host rebuild: $(cat /deploy-out/rebuild-failed)"
+    sleep 1
+  done
+  [ -s /deploy-out/rebuilt-system ] || fail "no rebuilt closure within 90s"
+  install_system=$(cat /deploy-out/rebuilt-system)
+  nix path-info "$install_system" >/dev/null || fail "rebuilt closure is not in the guest store"
+fi
+stage deploy || fail "deploy refused after the fold"
+ok "folded into the share, rebuilt, and deployed: $(jq -r '[.partitions[] | .uuid] | join(" ")' /repo/hosts/methyl-test/terraform.json)"
+
+# 9. What the stages must have left on the drive: a table, an ESP with boot entries, and the closure.
+# 9. What the stages must have left on the drive: partitions, an ESP with boot entries, and the
+#    closure. The table is proven by the partitions themselves — this guest's lsblk has no
+#    PARTTABLENAME column, so asking for it reads as "no table" on a drive that has one.
+[ -b /dev/vdb1 ] && [ -b /dev/vdb2 ] ||
+  fail "the drive has no partitions after terraform: $(lsblk -o NAME /dev/vdb | tr '\n' ' ')"
 entries=$(find /mnt/boot/loader/entries -maxdepth 1 -type f 2>/dev/null | wc -l)
 [ "$entries" -gt 0 ] || fail "no systemd-boot entries on the ESP"
 [ "$(find /mnt/nix/store -maxdepth 1 -type d 2>/dev/null | wc -l)" -gt 100 ] ||
   fail "the closure is not on the drive: $(find /mnt/nix/store -maxdepth 1 2>/dev/null | wc -l) entries"
 ok "installed on the drive: $entries boot entries, $(find /mnt/nix/store -maxdepth 1 -type d | wc -l) store paths"
 
-# 7. The boot files for --boot. The host cannot read a file out of a qcow2 without root, so the
+# 10. The boot files for --boot. The host cannot read a file out of a qcow2 without root, so the
 #    installed kernel and initrd are copied out through the writable share. The installed config's
 #    kernel parameters carry the init path but no root device — the ESP entries that would normally
 #    supply it are not what boots here — and regInfo names a closure-info path that is not in the
 #    installed store, so it is dropped.
+# 10. The boot files for --boot, from the closure that was installed: the running VM's initrd carries
+#     the payload's fstab (label nix-store, /dev/vdc, the 9p shares), and booting that against the
+#     drive times out on devices the drive does not have. stage-1 names the closure with init=<path>
+#     on the kernel command line (initrd-find-nixos-closure-start reads init=, not regInfo=), and the
+#     closure's own kernel-params file names no init, so it is added here; root=fstab stays, because
+#     the installed fstab is what names this drive's uuids.
 if [ -d /deploy-out ]; then
-  cp "$path/kernel" /deploy-out/kernel || fail "no kernel in the installed closure"
-  initrd=$(find /nix/store -maxdepth 2 -name initrd -type f 2>/dev/null | head -1)
-  [ -n "$initrd" ] || fail "no initrd among the installed store paths"
-  cp "$initrd" /deploy-out/initrd || fail "could not copy the initrd out"
-  root=$(findmnt -n -o SOURCE /mnt)
-  sed 's/ *regInfo=[^ ]*//' "$path/kernel-params" >"/deploy-out/append.txt"
-  printf ' root=%s\n' "$root" >>"/deploy-out/append.txt"
-  ok "boot files copied out: kernel, $(basename "$initrd"), root=$root"
+  cp "$install_system/kernel" /deploy-out/kernel || fail "no kernel in the installed closure"
+  cp "$install_system/initrd" /deploy-out/initrd || fail "no initrd in the installed closure"
+  append=$(sed -e 's/[[:space:]]*regInfo=[^[:space:]]*//' -e '/^[[:space:]]*$/d' \
+    "$install_system/kernel-params" | tr '\n' ' ')
+  [ -n "$append" ] || fail "the installed closure names no kernel parameters"
+  printf '%s init=%s/init\n' "$append" "$install_system" >"/deploy-out/append.txt"
+  grep -q 'init=' "/deploy-out/append.txt" || fail "the boot append names no init"
+  ok "boot files copied out: kernel, initrd, $(grep -o 'root=[^ ]*' "/deploy-out/append.txt")"
 fi
 
 # poweroff, not exit: a shell that merely exits gets its getty respawned, and qemu then sits idle on

@@ -430,9 +430,12 @@ needs `/dev/kvm`, SELinux permissive, and minutes per run. The gate fails loudly
 is missing rather than skipping, because a VM tier that silently skips proves nothing.
 
 What it proves that no stub can: a blank drive partitioned and formatted by `terraform.sh`, a closure
-installed by `nixos-install`, passwords written by `postdeploy`, and a serial console that answers a
-login with them. What it still cannot prove: firmware boot order and real firmware behaviour — a
-qemu ESP is not a machine's ESP.
+installed by `nixos-install`, and that drive booting its own installed generation as far as its login
+prompt. What
+it still cannot prove: firmware boot order and real firmware behaviour — a qemu ESP is not a machine's
+ESP — and the password `postdeploy` writes. `deploy` runs `nixos-install --no-root-passwd` and the
+fixture carries no build-time password on purpose, so root stays locked on the installed drive until
+postdeploy runs, and no VM run does that yet.
 
 Three properties hold every run, and each is asserted rather than assumed: memory is capped by a
 transient systemd scope (`MemoryMax`, `MemorySwapMax=0`, because `systemd-kill`'s `MemoryMax=` is a
@@ -487,14 +490,30 @@ the deploy guest re-runs the same tmpfs config with the same kernel and initrd, 
 what boots. The probe copies the installed `kernel`, `initrd` and boot parameters out through a
 writable share, because a host cannot read a file out of a qcow2 without root (`qemu-nbd` needs
 `CAP_NET_ADMIN` and module loading), and this pinned nixpkgs ships no plain `OVMF` (only
-`OVMF-cloud-hypervisor` and `OVMF-xen`) while this host has no firmware file either. The runner boots
-qemu with `-kernel`/`-initrd` from those files and `root=` set to the partition the probe saw as its
-root, the deployed qcow2 as `/dev/vdb` behind a blank drive — the installed config's mount sources
-name `/dev/vdb1`, and a drive that appears as `/dev/vda1` would not mount. The proof is the guest's
-own welcome banner, a live `login:` at the tail of the log, and a shell prompt after the login typed
-from the secret file; `login(1)` never echoes the password, so the log holds the login and not the
-secret. Direct kernel boot proves the installed generation boots; it does not prove the ESP's entries
-are what a machine would pick, which is the caveat named above.
+`OVMF-cloud-hypervisor` and `OVMF-xen`) while this host has no firmware file either. They come from the
+closure that was _installed_: the running guest's own initrd carries the payload's fstab (label
+`nix-store`, `/dev/vdc`, the 9p shares), and booting that against the drive times out on devices the
+drive does not have.
+
+That closure is also the one whose fstab names this drive. The recipe checked into `hosts/` carries
+methyl-test's real UUIDs, and the scratch drive here gets fresh ones, so the probe folds the drive's
+UUIDs into the repo copy in the share, the runner rebuilds the toplevel from that folded recipe and
+pushes it back over the same ssh store, and only then does `deploy` run. The boot keeps the installed
+parameters' `root=fstab` rather than naming a device, because the fstab is what resolves the UUIDs;
+mounts land wherever qemu numbers the drive. The append also has to name `init=<installed closure>`:
+this nixpkgs' stage-1 finds the closure it is booting by reading `init=` off the kernel command line
+(`initrd-find-nixos-closure-start`), and the closure's own `kernel-params` file names no `init` — a
+boot without it mounts the drive, then fails `Find NixOS closure` and drops to emergency mode.
+
+The proof is the installed system's own `login:` prompt, with no emergency mode in front of it:
+plymouth swallows systemd's `Reached target Multi-User System` line on this console, and
+`serial-getty` — the prompt — starts only once multi-user is reached, while a drive that fails to
+mount its own UUIDs drops to emergency mode and prints no prompt at all. The runner waits on the
+bytes this boot wrote, not on the whole log, because the deploy guest put its own prompt in that log
+minutes earlier. A password is not typed here, and could not be: root is locked until postdeploy sets
+it, so a failed login would say nothing about the boot. Direct kernel boot proves the installed
+generation boots; it does not prove the ESP's entries are what a machine would pick, which is the
+caveat named above.
 
 ## What we do not cover
 

@@ -116,6 +116,9 @@ setup() {
     'SHELL OK: writable store layered on the read-only store image' \
     'SHELL OK: closure handed over' \
     'SHELL OK: closure registered' \
+    'SHELL OK: recorded recipe' \
+    'SHELL OK: deploy refused the uuid-free recipe' \
+    'SHELL OK: folded into the share and deployed' \
     'SHELL OK: installed on the drive' 'SHELL DONE'; do
     grep -q "$marker" "$log"
   done
@@ -129,10 +132,15 @@ setup() {
   # recipe drops them — mkfs is never given a UUID.
   grep -q '^push_recipe=.* uuids=stripped' "$log"
 
-  # The point of the store disk: gigabytes of registration must cost disk, not the guest's RAM.
-  local peak
+  # The point of the store disk: gigabytes of registration must cost disk, not the guest's RAM. The
+  # bound is the cap this run printed, not a hand-copied number — a memcg can overshoot its
+  # memory.max by a few MB of kernel accounting before reclaim fires (measured here: 1304 against a
+  # 1300M cap), so the slack is headroom for that overshoot, not room for a tmpfs store: a tmpfs
+  # would cost gigabytes, which is what this assertion is there to catch.
+  local cap peak
+  cap=$(grep -o 'MemoryMax=[0-9]*M' "$log" | head -1 | cut -d= -f2 | tr -d M)
   peak=$(grep -o 'peak_guest_mb=[0-9]*' "$log" | cut -d= -f2)
-  [ "$peak" -le 1300 ]
+  [ "$peak" -le "$((cap + 64))" ]
 
   # Nothing carries over: the store image and the pushed closure die with the run dir.
   [ "$(find "$run_root" -maxdepth 1 -name 'vm-shell-*' -type d | wc -l)" -eq "$before" ]
@@ -141,7 +149,7 @@ setup() {
 # The installed drive boots. A reboot inside the deploy guest would re-run the tmpfs config, so the
 # drive is booted by a second qemu from the kernel and initrd the probe copied out of it (D7), and the
 # proof is a login prompt answered by the installed system's own password.
-@test "--push HOST --boot boots the installed drive to a login prompt" {
+@test "--push HOST --boot boots the installed drive to its login prompt" {
   [ "${VM_PUSH:-0}" = 1 ] || skip "VM_PUSH unset — this builds, copies and then boots twice"
 
   run bash "$repo/tests/vm-shell.sh" --push methyl-test --boot --script "$repo/tests/vm-shell-push-probe.sh"
@@ -150,15 +158,22 @@ setup() {
   local log
   log=$(grep -o '^log=.*' <<<"$output" | cut -d= -f2)
   [ -f "$log" ]
-  grep -q '^disk_boot=.*empty0.qcow2 append=.*root=/dev/vdb' "$log"
-  grep -q 'BOOT OK: installed generation reached its welcome banner' "$log"
-  grep -q 'BOOT OK: logged in on the installed drive' "$log"
+  # The boot files come from the installed closure. root=fstab makes systemd read this drive's uuids
+  # out of its own fstab; init=<path> is what stage-1 reads to find the closure it is booting.
+  grep -q '^disk_boot=.*empty0.qcow2 append=.*root=fstab' "$log"
+  grep -q '^disk_boot=.*append=.*init=/nix/store/' "$log"
+  grep -q '^rebuild=' "$log"
+  grep -q 'SHELL OK: folded into the share, rebuilt, and deployed' "$log"
+  grep -q 'BOOT OK: installed generation reached its login prompt' "$log"
 
-  # The login is the installed system's own, so a wrong password would say so in the log.
-  run grep -q 'Login incorrect' "$log"
+  # A drive that fails to mount its own uuids drops to emergency mode, which prints no login prompt:
+  # that is the defect this test exists to catch, so emergency must not appear in the drive's region.
+  run grep -q 'Reached target Emergency Mode' "$log"
   [ "$status" -ne 0 ]
-  run grep -q 'toortest' "$log"
-  [ "$status" -ne 0 ]
+
+  # The prompt is the installed system's own, and it only starts after multi-user is reached. The
+  # password is never typed here: deploy leaves root locked until postdeploy sets one.
+  grep -q 'methyl-test login:' "$log"
 
   # Both boots stayed inside their caps: 1300M for the deploy guest, VM_BOOT_CEILING for the drive.
   [ "$(grep -c 'peak_guest_mb=' "$log")" -eq 2 ]
