@@ -11,6 +11,11 @@
   watcherPkg = pkgs.flakePackages.beryl-utils.${pkgs.stdenv.hostPlatform.system}.default;
   gamemodePkg = pkgs.flakePackages.beryl-gamemode.${pkgs.stdenv.hostPlatform.system}.gamemode;
 
+  # nvtop is built per GPU family, so which family wl_watcher.py's GPU filter reads is the host's
+  # call. The names come from the package set filtered to derivations -- `recurseForDerivations` sits
+  # in that attrset too, and a host cannot install it.
+  nvtopVariants = lib.attrNames (lib.filterAttrs (_: v: lib.isDerivation v) pkgs.nvtopPackages);
+
   # Mirrors upstream assets/units/wl-watcher/wl-watcher-uwsm.service: uwsm's
   # wayland-session@.target declares BindsTo/Before/PropagatesStopTo
   # =graphical-session.target, so following the per-compositor session target is
@@ -39,13 +44,19 @@
 in {
   options.features.niri.wl-watcher = {
     enable = lib.mkEnableOption "VRR/Fullscreen Wayland watcher (beryl-utils wl-watcher)";
+    nvtopVariant = lib.mkOption {
+      type = lib.types.enum nvtopVariants;
+      # `full` builds every GPU family and its inputs carry CUDA (`cuda-merged`), which fails the
+      # install build on the AMD machine this house runs on, so the default is that family.
+      default = "amd";
+      description = "Which GPU family of `pkgs.nvtopPackages` the watcher's `nvtop` comes from (${lib.concatStringsSep ", " nvtopVariants}).";
+    };
   };
 
   config = lib.mkIf cfg.enable {
-    # `procps` and `nvtop` are what wl_watcher.py calls by bare name; see the note above.
-    # The amd variant, not `full`: `full` builds every GPU family and its inputs carry CUDA
-    # (`cuda-merged`), which fails the install build on a machine with an AMD GPU.
-    home.packages = [watcherPkg gamemodePkg pkgs.procps pkgs.nvtopPackages.amd];
+    # `procps` and `nvtop` are what wl_watcher.py calls by bare name; see the note above. The nvtop
+    # variant is the host's, defaulting to the family its install build can carry (see the option).
+    home.packages = [watcherPkg gamemodePkg pkgs.procps pkgs.nvtopPackages.${cfg.nvtopVariant}];
 
     systemd.user.services.wl-watcher = {
       Unit = {

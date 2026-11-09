@@ -18,6 +18,7 @@ let
     (import ./caches.nix)
     (import ./warnings.nix)
     (import ./ptrace.nix)
+    (import ./niri-watcher.nix)
     (import ./swap.nix)
     (import ./oomd.nix)
     (import ./loader.nix)

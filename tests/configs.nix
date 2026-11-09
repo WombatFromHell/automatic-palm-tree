@@ -235,9 +235,12 @@ let
               # (`cuda-merged`) and the install build dies on it. The watcher only needs the
               # GPU family this host has, so the variant is asserted here.
               && (let
+                variant = (homeCfg cfg).features.niri.wl-watcher.nvtopVariant;
                 nvtop = lib.head (s.pkgNamed (homeCfg cfg).home.packages "nvtop");
               in
-                lib.all (i: !lib.hasPrefix "cuda" (s.pkgName i)) nvtop.buildInputs)))))
+                # The package installed is the variant the option names, whatever the host set.
+                nvtop.outPath == s.pkgs.nvtopPackages.${variant}.outPath
+                && lib.all (i: !lib.hasPrefix "cuda" (s.pkgName i)) nvtop.buildInputs)))))
 
       # --- this host's own profile effects -------------------------------------
       (ck "${host}: its packages are installed" (lib.all (p: sysPkg cfg p) e.packages))

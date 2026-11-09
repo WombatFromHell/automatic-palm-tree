@@ -28,6 +28,7 @@ tests/oomd.nix attrs 14
 tests/package-flags.nix attrs 1
 tests/pins.nix attrs 7
 tests/ptrace.nix attrs 5
+tests/niri-watcher.nix attrs 4
 tests/suite.nix attrs 4
 tests/warnings.nix attrs 13
 tests/swap.nix attrs 19
