@@ -312,9 +312,10 @@ prepare() {
 # The mounted entries that declare no filesystem identity. A label is unique only within one drive,
 # so a mount with no UUID names whichever partition carries that label. Every one of them has to be
 # recorded before anything installs (ADR-e14303caba55), which is why the check is per entry and not
-# "any uuid in the file".
+# "any uuid in the file". An empty uuid declares nothing — the same reading lib/filesystems.nix and
+# terraform.sh use — and a partition with no mount is never mounted, so it owes no identity.
 uuid_gap() {
-  jq -r '[.partitions[] | select(.mount != null and .uuid == null) | .name] | join(" ")' "$1" 2>/dev/null || true
+  jq -r '[.partitions[] | select(.mount != null and .mount != "" and (.uuid // "") == "") | .name] | join(" ")' "$1" 2>/dev/null || true
 }
 
 terraform() {

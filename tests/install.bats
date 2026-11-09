@@ -539,6 +539,26 @@ run_install() {
   assert_out "recorded the filesystem identities"
 }
 
+# `uuid: ""` is the recipe saying "no identity declared" — lib/filesystems.nix and terraform.sh both
+# read an empty string that way, and a blank uuid names nothing — so deploy has to refuse it and the
+# terraform stage has to record it. A partition NixOS never mounts owes no identity: refusing one
+# would block an install that mounts nothing by its label.
+@test "an entry declaring an empty UUID is no identity; an unmounted entry owes none" {
+  printf '' >"$stubs/owned"
+  printf '1\n' >"$stubs/mounted"
+
+  dir=$(recipe_repo methyl '{"owns": false, "partitions": [{"name":"esp","uuid":"77ED-D9E9","fs":"vfat","size":"8M","mount":"/boot"},{"name":"root","uuid":"","fs":"ext4","size":"rest","mount":"/"}]}')
+  INSTALL_FORCE=1 run run_install_in "$dir" --stage deploy methyl
+  [ "$status" -eq 2 ]
+  assert_out "root"
+  assert_no_call "nixos-install"
+
+  dir=$(recipe_repo methyl '{"owns": false, "partitions": [{"name":"esp","uuid":"77ED-D9E9","fs":"vfat","size":"8M","mount":"/boot"},{"name":"root","uuid":"010d848c-ded5-4ac1-9e25-e1429f48a1b6","fs":"ext4","size":"rest","mount":"/"},{"name":"data","fs":"ext4","size":"8M","mount":""}]}')
+  INSTALL_FORCE=1 run run_install_in "$dir" --stage deploy methyl
+  [ "$status" -eq 0 ]
+  assert_call "nixos-install"
+}
+
 # Folded in, deploy runs: the recipe names one filesystem, and the verdict still decides whether the
 # drive needs changing.
 @test "deploy runs from a recipe whose mounts carry UUIDs" {
