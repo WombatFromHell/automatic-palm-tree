@@ -351,16 +351,16 @@ terraform() {
     say "terraform.sh reported a failure — the layout on $device is not what $recipe declares"
     exit 2
   }
-  # Folding the recipe onto the drive is the stage's last act, after the reproduction and both
-  # verification checks came back clean, so a run that failed leaves no recipe behind. A recipe that
-  # already carries the UUIDs names every filesystem already, so there is nothing to fold. deploy
-  # refuses until the host recipe carries them, and folding it into the repo is the operator's act.
+  # Recording the filesystem identities is the stage's last act, after the reproduction and both
+  # verification checks came back clean, so a run that failed leaves the recipe untouched. A recipe
+  # that already carries them names every filesystem already, so there is nothing to record. deploy
+  # refuses until the host recipe carries them; committing the recorded file is the operator's act.
   if [ -n "$recipe" ] && ! grep -q '"uuid"' "$recipe_file"; then
     run ./terraform.sh --record --recipe "$recipe" --disk "$device" --mount "$root" || {
-      say "terraform could not record the drive's UUIDs — deploy refuses until $recipe_file carries them"
+      say "terraform could not record the filesystem identities — deploy refuses until $recipe_file carries them"
       exit 2
     }
-    say "recorded recipe at $root/terraform.json: cp it to hosts/$host/terraform.json and run nix flake check"
+    say "recorded the filesystem identities into $recipe_file: commit it and run nix flake check"
   fi
   what="the partitions $host declares"
   [ "$owned" = "true" ] && what="the layout $recipe declares"
@@ -374,12 +374,12 @@ deploy() {
     exit 2
   }
   # A recipe that declares no UUID names every filesystem by label, and a label is unique only within
-  # one drive — two partitions can answer to one name. terraform.sh records the UUIDs of the
-  # filesystems it made or adopted into $root/terraform.json, and folding that file into the recipe is
-  # what makes a mount name one filesystem. Asked before the verdict, so a recipe nobody folded never
-  # reaches the prompt.
+  # one drive — two partitions can answer to one name. The terraform stage records the identities of
+  # the filesystems it made or adopted into the recipe itself, so a mount names one filesystem, and the
+  # config the flake derives from that recipe mounts exactly the layout the drive was built from.
+  # Asked before the prompt, so a recipe nobody recorded never reaches it.
   if [ -n "$recipe" ] && ! grep -q '"uuid": *"[^"]*"' "$recipe"; then
-    say "deploy refused: $recipe declares no filesystem UUID — terraform.sh recorded the drive's UUIDs into $root/terraform.json; cp that over $recipe and re-run nix flake check"
+    say "deploy refused: $recipe declares no filesystem UUID — run the terraform stage, which records them into $recipe, then commit it and re-run nix flake check"
     exit 2
   fi
   # The drive has to still match the recipe the layout was built from. --verify reads it and writes

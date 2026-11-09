@@ -438,20 +438,20 @@ run_install() {
   assert_out "partition table unchanged"
 }
 
-# A recipe run records nothing itself: install.sh's terraform stage folds the recipe onto the drive,
-# after the reproduction and its checks came back clean, so a run that failed leaves no recipe behind.
-@test "the terraform stage folds the recipe onto the drive after the run and its checks" {
+# A recipe run records nothing itself: install.sh's terraform stage writes the filesystem identities
+# into the recipe, after the reproduction and its checks came back clean, so a run that failed leaves
+# the recipe untouched.
+@test "the terraform stage records the identities into the recipe after the run and its checks" {
   dir=$(recipe_repo methyl-nixos "$(owned_recipe)")
   TF_ROOT_DEVICE="$root_dev" run run_install_in "$dir" --stage terraform methyl-nixos
   [ "$status" -eq 0 ]
   assert_calls "./terraform.sh --record --recipe hosts/methyl-nixos/terraform.json --disk /dev/vda --mount /mnt" 1
-  # Folding is the stage's last act, so it follows the run that mounted the root.
+  # Recording is the stage's last act, so it follows the run that mounted the root.
   [ "$(grep -n -- '--record' "$calls" | cut -d: -f1)" -gt "$(grep -n -- ' --mount' "$calls" | head -1 | cut -d: -f1)" ]
-  assert_out "recorded recipe at /mnt/terraform.json"
-  assert_out "hosts/methyl-nixos/terraform.json"
+  assert_out "recorded the filesystem identities into hosts/methyl-nixos/terraform.json"
 }
 
-# A dry run writes nothing anywhere, so it folds nothing.
+# A dry run writes nothing anywhere, so it records nothing.
 @test "a dry-run terraform stage records nothing" {
   dir=$(recipe_repo methyl-nixos "$(owned_recipe)")
   TF_ROOT_DEVICE="$root_dev" run run_install_in "$dir" --dry-run --stage terraform methyl-nixos
@@ -468,30 +468,30 @@ run_install() {
   assert_no_call "--record"
 }
 
-# A recipe that already carries the UUIDs names every filesystem, so there is nothing to fold and the
-# stage says nothing about it.
-@test "a recipe that already carries uuids is not folded again" {
+# A recipe that already carries the identities names every filesystem, so there is nothing to record
+# and the stage says nothing about it.
+@test "a recipe that already carries uuids is not recorded again" {
   dir=$(recipe_repo methyl-nixos "$(uuid_recipe)")
   TF_ROOT_DEVICE="$root_dev" run run_install_in "$dir" --stage terraform methyl-nixos
   [ "$status" -eq 0 ]
   assert_no_call "--record"
-  assert_no_out "recorded recipe"
+  assert_no_out "recorded the filesystem identities"
 }
 
-# A host with no recipe has nothing to fold: its layout comes from flags, not from a file.
-@test "a host with no recipe folds nothing" {
+# A host with no recipe has nothing to record: its layout comes from flags, not from a file.
+@test "a host with no recipe records nothing" {
   printf '' >"$stubs/owned"
   printf '1\n' >"$stubs/mounted"
   dir=$(recipe_repo propyl-nixos "")
   TF_ROOT_DEVICE="$root_dev" run run_install_in "$dir" --stage terraform propyl-nixos
   [ "$status" -eq 0 ]
   assert_no_call "--record"
-  assert_no_out "recorded recipe"
+  assert_no_out "recorded the filesystem identities"
 }
 
 # A recipe that declares no UUID names filesystems by label, and a label is unique only within one
-# drive: two partitions can answer to it. terraform.sh records the UUIDs it made onto the drive, so
-# deploy refuses until the recipe carries them.
+# drive: two partitions can answer to it. The terraform stage records the identities into the recipe,
+# so deploy refuses until the recipe carries them.
 @test "deploy refuses a recipe that declares no filesystem UUID" {
   printf '1\n' >"$stubs/mounted"
   dir=$(recipe_repo methyl-nixos "$(owned_recipe)")

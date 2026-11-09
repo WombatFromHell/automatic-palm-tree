@@ -496,9 +496,11 @@ closure that was _installed_: the running guest's own initrd carries the payload
 drive does not have.
 
 That closure is also the one whose fstab names this drive. The recipe checked into `hosts/` carries
-methyl-test's real UUIDs, and the scratch drive here gets fresh ones, so the probe folds the drive's
-UUIDs into the repo copy in the share, the runner rebuilds the toplevel from that folded recipe and
-pushes it back over the same ssh store, and only then does `deploy` run. The boot keeps the installed
+methyl-test's real UUIDs, and the scratch drive here gets the identities `terraform.sh` derived from
+the recipe it was given and handed to `mkfs`, so the terraform stage records them into the repo copy in
+the share itself. The probe asserts every mounted partition's uuid resolves under `/dev/disk/by-uuid`
+once udev settles, the runner rebuilds the toplevel from that recipe and pushes it back over the same
+ssh store, and only then does `deploy` run. The boot keeps the installed
 parameters' `root=fstab` rather than naming a device, because the fstab is what resolves the UUIDs;
 mounts land wherever qemu numbers the drive. The append also has to name `init=<installed closure>`:
 this nixpkgs' stage-1 finds the closure it is booting by reading `init=` off the kernel command line

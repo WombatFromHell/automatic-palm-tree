@@ -126,16 +126,19 @@ is not live under the root. That guard is not cosmetic: `nixos-install` writes t
 when `/nix` is unmounted, and the boot mount of an empty `@nix` over `/nix` then hides it —
 `/nix/store` empty, stage 2's init missing, `emergency.target`.
 
-Filesystems are named by UUID once they are recorded (ADR-8cd71b226ffb). An entry may carry `uuid`,
-and `fsLib` then derives `/dev/disk/by-uuid/<uuid>` instead of `/dev/disk/by-label/<label>`: a label
-is unique only inside one drive, and every host here declares the same two labels, so a second drive
-or another install answers the same name. `terraform.sh --record` writes the uuids the drive actually
-carries into `<mount>/terraform.json` — the recipe whole, with `uuid` filled in per partition — and
-`/mnt` survives reboot, so that file becomes `/terraform.json` on the installed host. It cannot live
-in the store: eval is pure and the uuids only exist after the drive is formatted. `mkfs` is never
-given a uuid, so an entry can declare only a uuid the drive already holds, and `--verify` refuses one
-it no longer holds. `install.sh --stage deploy` refuses while a mounted partition declares none;
-folding the recorded file into `hosts/<host>/terraform.json` is your commit, not a stage.
+Filesystems are named by UUID (ADR-8cd71b226ffb, assigned rather than recorded by
+ADR-e14303caba55). A mounted entry carries `uuid`, and `fsLib` derives `/dev/disk/by-uuid/<uuid>`
+instead of `/dev/disk/by-label/<label>`: a label is unique only inside one drive, and every host here
+declares the same two labels, so a second drive or another install answers the same name. The uuid is
+in the recipe before the drive exists — where an entry declares none, `terraform.sh` derives one by
+hashing `<host>/<partition name>`, a v4 UUID, or a 32-bit volume serial (`05A7-605A`) for vfat — and
+`mkfs` is told it: `mkfs.ext4 -U`, `mkfs.btrfs -U`, `mkfs.xfs -m uuid=`, `mkfs.fat -i`. So the
+filesystem answers to a name the recipe already knew, eval needs nothing from the drive, and the same
+recipe reproduces the same drive. `--record` writes those identities into
+`hosts/<host>/terraform.json` itself: committing that file is your act, not a stage, and a run that
+failed leaves it untouched. A filesystem this run adopted keeps the uuid it carries, and `--verify`
+refuses a partition carrying a different one; `install.sh --stage deploy` refuses while a mounted
+partition declares none.
 
 ## NixOS module composition (order matters)
 
@@ -416,7 +419,7 @@ flowchart LR
   E9["nix run .#apps.&lt;system&gt;.style"] --> ST["lib/style.sh: every .nix through alejandra + statix,<br/>every .sh/.bats through shfmt + shellcheck, markdown through oxfmt (.ank excluded)<br/>tools from the app's runtimeInputs, not the host profile"]
   E10["nix develop"] --> DEV["curl jq nix bats shellcheck shfmt nix-unit<br/>+ terraform.sh's disk tools (util-linux,<br/>dosfstools, mtools, e2fsprogs, btrfs-progs, xfsprogs):<br/>where features/*/update.sh and terraform.bats run"]
   E11["install.sh --stage prepare|terraform|deploy|postdeploy|reboot <host>"] --> INS["staged installer on the target drive:<br/>prepare read-only + partition-table checksum,<br/>terraform through terraform.sh (--verify decides whether the stage asks),<br/>deploy nixos-install --root, postdeploy ssh keys + passwords,<br/>one confirm per stage (--force is the testing override)"]
-  E12["terraform.sh --emit | --recipe <file> [--verify] [--record]"] --> DRV["reproduce hosts/<host>/terraform.json on its drive<br/>and re-read the drive before reporting success;<br/>--record folds the drive's uuids into <mount>/terraform.json"]
+  E12["terraform.sh --emit | --recipe <file> [--verify] [--record]"] --> DRV["reproduce hosts/<host>/terraform.json on its drive<br/>and re-read the drive before reporting success;<br/>mkfs is told the uuid the recipe declares;<br/>--record writes the identities into the recipe it was given"]
 ```
 
 `bootstrap.sh --standalone` is the host-side bootstrap for a machine that is not NixOS. It runs the

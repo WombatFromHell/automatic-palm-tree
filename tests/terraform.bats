@@ -905,9 +905,9 @@ EOF
   assert_unchanged lin
 }
 
-# A UUID the drive does not carry is not a partition that moved: it is a recipe copied from another
-# drive, and taking the entry anyway would install onto somebody else's filesystem.
-@test "a uuid this drive does not carry refuses the run before anything is written" {
+# A UUID another filesystem on this drive carries is a recipe copied from another drive: taking the
+# entry anyway would install onto somebody else's filesystem, so verification names it.
+@test "a uuid another filesystem on this drive carries refuses before anything is written" {
   owned lin blank
   format_slice lin 1 "$ESP_START" "$ESP_N" vfat boot
   format_slice lin 2 "$LINUX_START" "$LINUX_N" ext4 nixos
@@ -919,28 +919,24 @@ EOF
   run terraform_recipe_run lin "$stubs/recipe.json"
   [ "$status" -eq 2 ]
   assert_out "e7b0e010-10bf-4984-b941-5c7c182d1b74"
-  assert_out "no partition on"
-  assert_out "mkfs is never given a UUID"
+  assert_out "carrying uuid"
   assert_no_call "mkfs"
   assert_no_call "sfdisk --append"
   assert_unchanged lin
 }
 
-# mkfs is never given a UUID, so a UUID can only describe a filesystem that already exists. Declaring
-# one on a partition this run is about to format is asking for a UUID mkfs will invent.
-@test "a uuid declared on a blank partition refuses before any format" {
+# A uuid on a partition that is blank is not a contradiction: this run fills that partition with
+# exactly that identity, which is what lets a checked-in recipe reproduce the same drive twice.
+@test "a uuid declared on a blank partition is the uuid the run formats" {
   owned blank blank
   nodes blank
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
-  recipe_uuid "$stubs/recipe.json" root "BBD9-580F"
-  snapshot blank
+  recipe_uuid "$stubs/recipe.json" root "11112222-3333-4444-8888-555566667777"
 
   run terraform_recipe_run blank "$stubs/recipe.json"
-  [ "$status" -eq 2 ]
-  assert_out "mkfs is never given a UUID"
-  assert_out "terraform.json"
-  assert_no_call "mkfs"
-  assert_unchanged blank
+  [ "$status" -eq 0 ]
+  assert_out "formats it with that uuid"
+  [ "$(uuid_of blank 2)" = "11112222-3333-4444-8888-555566667777" ]
 }
 
 # A uuid outside [A-Za-z0-9-] would reach a device path with a slash or a space in it, the same rule
@@ -958,24 +954,59 @@ EOF
   assert_unchanged lin
 }
 
-# The reproduction records nothing: folding a recipe onto the drive is a separate act, so a run that
-# failed leaves no recipe behind. install.sh's terraform stage calls --record after its verification.
-@test "a recipe run writes no recipe; --record folds the UUIDs onto the mounted root afterwards" {
+# The reproduction records nothing: assigning the filesystem identities is a separate act, so a run
+# that failed leaves no recipe behind. install.sh's terraform stage calls --record before it builds.
+@test "a recipe run writes no recipe; --record puts the identities into the recipe itself" {
   image own blank
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
   run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --force
   [ "$status" -eq 0 ]
   [ ! -e "$disk_dir/mnt/terraform.json" ]
+  cp "$stubs/recipe.json" "$stubs/recipe.before"
   # The nodes the run formatted must not be re-cut from the image: --record reads those filesystems.
   TF_NODES=0 run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --record
   [ "$status" -eq 0 ]
-  jq -e --arg esp "$(uuid_of own 1)" --arg root "$(uuid_of own 2)" '(.partitions[] | select(.name == "esp") | .uuid) == $esp and (.partitions[] | select(.name == "root") | .uuid) == $root and .owns == true' "$disk_dir/mnt/terraform.json" >/dev/null
-  # The layout itself is preserved: a recorded recipe is the same recipe with UUIDs added.
-  jq -e '.partitions[] | select(.name == "root") | .size == "54M" and .mount == "/"' "$disk_dir/mnt/terraform.json" >/dev/null
-  assert_out "terraform.json"
+  # A filesystem UUID for the data partitions, and mkfs.fat's 32-bit serial for the ESP: that is what
+  # blkid reports as a vfat UUID, so the recipe has to carry that shape rather than a UUID.
+  jq -e '(.partitions[] | select(.name == "root") | .uuid) | test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")' "$stubs/recipe.json" >/dev/null
+  jq -e '(.partitions[] | select(.name == "esp") | .uuid) | test("^[0-9A-F]{4}-[0-9A-F]{4}$")' "$stubs/recipe.json" >/dev/null
+  # The layout is preserved: a recorded recipe is the same recipe with identities added, and nothing else.
+  jq -e '.partitions[] | select(.name == "root") | .size == "54M" and .mount == "/"' "$stubs/recipe.json" >/dev/null
+  jq -e --argjson before "$(cat "$stubs/recipe.before")" '. as $now | ($now | del(.partitions[].uuid?)) == ($before | del(.partitions[].uuid?))' "$stubs/recipe.json" >/dev/null
+  assert_out "recorded the filesystem identities"
 }
 
-# Nothing is recorded when the recipe already names every filesystem, so a folded repo re-runs clean.
+# The identities are derived from the recipe, not invented by mkfs, so the same recipe records the
+# same uuids twice and a differently named partition records different ones.
+@test "--record derives the identities from the recipe: reproducible, and unique per partition" {
+  owned lin blank
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  TF_NODES=0 run terraform_recipe_run lin "$stubs/recipe.json" --disk "$disk_dir/lin.img" --record
+  [ "$status" -eq 0 ]
+  cp "$stubs/recipe.json" "$stubs/recipe.first"
+
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  TF_NODES=0 run terraform_recipe_run lin "$stubs/recipe.json" --disk "$disk_dir/lin.img" --record
+  [ "$status" -eq 0 ]
+  jq -e --argjson first "$(cat "$stubs/recipe.first")" '. == $first' "$stubs/recipe.json" >/dev/null
+
+  # A different partition name is a different filesystem, so it must not answer to the same uuid.
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,data:nixos:ext4:16M:/"
+  TF_NODES=0 run terraform_recipe_run lin "$stubs/recipe.json" --disk "$disk_dir/lin.img" --record
+  [ "$status" -eq 0 ]
+  jq -e --arg root "$(jq -r '.partitions[] | select(.name == "root") | .uuid' "$stubs/recipe.first")" '(.partitions[] | select(.name == "data") | .uuid) != $root' "$stubs/recipe.json" >/dev/null
+
+  # A different host is a different machine, so the same partition name must not answer to it either.
+  mkdir -p "$stubs/other-host"
+  recipe_file "$stubs/other-host/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  TF_NODES=0 PATH="$stubs:$PATH" INSTALL_FORCE=1 bash "$repo/terraform.sh" \
+    --recipe "$stubs/other-host/recipe.json" --mount "$disk_dir/mnt" --disk "$disk_dir/lin.img" --record
+  [ "$status" -eq 0 ]
+  jq -e --arg root "$(jq -r '.partitions[] | select(.name == "root") | .uuid' "$stubs/recipe.first")" '(.partitions[] | select(.name == "root") | .uuid) != $root' "$stubs/other-host/recipe.json" >/dev/null
+}
+
+# Nothing is recorded when the recipe already names every filesystem, so a checked-in recipe re-runs
+# clean and an adopted drive keeps the identities it carries rather than being re-cut to new ones.
 @test "--record writes nothing when the recipe already declares every uuid" {
   owned lin blank
   format_slice lin 1 "$ESP_START" "$ESP_N" vfat boot
@@ -984,19 +1015,23 @@ EOF
   recipe_file "$stubs/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
   recipe_uuid "$stubs/recipe.json" esp "$(uuid_of lin 1)"
   recipe_uuid "$stubs/recipe.json" root "$(uuid_of lin 2)"
+  cp "$stubs/recipe.json" "$stubs/recipe.before"
   TF_NODES=0 run terraform_recipe_run lin "$stubs/recipe.json" --disk "$disk_dir/lin.img" --record
   [ "$status" -eq 0 ]
   [ ! -e "$disk_dir/mnt/terraform.json" ]
+  jq -e --argjson before "$(cat "$stubs/recipe.before")" '. == $before' "$stubs/recipe.json" >/dev/null
 }
 
-# --record writes a file, so a dry run has nothing to record.
+# --record edits the recipe, so a dry run has nothing to record.
 @test "--record under --dry-run refuses and writes nothing" {
   owned own blank
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
+  cp "$stubs/recipe.json" "$stubs/recipe.before"
   run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --record --dry-run
   [ "$status" -eq 2 ]
   assert_out "--dry-run writes nothing"
   [ ! -e "$disk_dir/mnt/terraform.json" ]
+  jq -e --argjson before "$(cat "$stubs/recipe.before")" '. == $before' "$stubs/recipe.json" >/dev/null
 }
 
 @test "--record without a recipe refuses" {
@@ -1005,6 +1040,41 @@ EOF
   [ "$status" -eq 2 ]
   assert_out "--recipe is required"
   [ ! -e "$disk_dir/mnt/terraform.json" ]
+}
+
+# The identities in a checked-in recipe are what mkfs is told, so the filesystem that comes out of the
+# run answers to a name the recipe already knew. A second run of that recipe then changes nothing.
+@test "a recipe that declares identities formats exactly those, and re-runs unchanged" {
+  image own blank
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
+  recipe_uuid "$stubs/recipe.json" esp "1A2B-3C4D"
+  recipe_uuid "$stubs/recipe.json" root "11112222-3333-4444-8888-555566667777"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --force
+  [ "$status" -eq 0 ]
+  [ "$(uuid_of own 1)" = "1A2B-3C4D" ]
+  [ "$(uuid_of own 2)" = "11112222-3333-4444-8888-555566667777" ]
+  # mkfs.fat takes the bare hex volume id; blkid reports it back as the dashed UUID the recipe names,
+  # which is the assertion above. mkfs runs for real here, so the call log cannot show its flags.
+  TF_NODES=0 run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --force
+  [ "$status" -eq 0 ]
+  assert_unchanged own
+}
+
+@test "btrfs and xfs take the uuid the recipe declares" {
+  owned own pre-ext4
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:btrfs:114M:/"
+  recipe_uuid "$stubs/recipe.json" root "aaaa1111-2222-4333-9444-5555aaaa6666"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --force
+  [ "$status" -eq 0 ]
+  [ "$(uuid_of own 2)" = "aaaa1111-2222-4333-9444-5555aaaa6666" ]
+
+  # mkfs.xfs refuses a filesystem below 300 MiB, which no fixture slice is, so xfs is proven on the
+  # plan instead of on bytes: a dry run prints the command mkfs would be given.
+  recipe_file "$stubs/xfs.json" true "esp:boot:vfat:8M:/boot,root:nixos:xfs:16M:/"
+  recipe_uuid "$stubs/xfs.json" root "deadbeef-cafe-4bee-8cae-f00dfeedbeef"
+  TF_NODES=1 run terraform_recipe_run blank "$stubs/xfs.json" --disk "$disk_dir/blank.img" --dry-run
+  [ "$status" -eq 0 ]
+  assert_out "[dry-run] mkfs.xfs -f -L nixos -m uuid=deadbeef-cafe-4bee-8cae-f00dfeedbeef"
 }
 
 # --emit is the fold on an installed host, so the UUIDs have to be in what it prints.

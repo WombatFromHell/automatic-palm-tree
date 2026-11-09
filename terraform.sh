@@ -115,6 +115,42 @@ label_of() { blkid -o value -s LABEL "$1" 2>/dev/null || true; }
 # drive, where a label is unique only within one.
 uuid_of() { blkid -o value -s UUID "$1" 2>/dev/null || true; }
 
+# The identity a run formats a partition with, derived from the recipe rather than invented by mkfs.
+# Hashing "<host>/<partition name>" is reproducible, so the same recipe records the same identities
+# twice and a checked-in recipe reproduces the same drive. sha256sum is what makes two hosts with the
+# same partition names disagree, which is the point: a label is unique only within one drive.
+uuid_of_recipe() { # <host> <partition name>
+  local h variant
+  h=$(printf '%s' "$1/$2" | sha256sum | cut -c1-32)
+  # A canonical v4 UUID: version nibble 4, variant nibble one of 8/9/a/b — both taken from the hash
+  # so the value stays reproducible instead of random.
+  variant=$(printf '%x' $(((0x"${h:16:1}" & 3) | 8)))
+  printf '%s-%s-4%s-%s%s-%s' "${h:0:8}" "${h:8:4}" "${h:13:3}" "$variant" "${h:17:3}" "${h:20:12}"
+}
+
+# mkfs.fat takes a 32-bit volume id, and blkid reports it as the partition's UUID in the form
+# XXXX-XXXX. Upper case because that is what the by-uuid symlink a vfat volume id produces is called.
+serial_of_recipe() { # <host> <partition name>
+  local h
+  h=$(printf '%s' "$1/$2" | sha256sum | cut -c1-8 | tr 'a-f' 'A-F')
+  printf '%s-%s' "${h:0:4}" "${h:4:4}"
+}
+
+# identity_for <partition name> <fs> <declared> — the identity this run gives the filesystem: what
+# the recipe declares when it declares one, and the derived identity otherwise. A run that formats
+# without a declared uuid still ends up with an identity the recipe can name, which is what --record
+# then writes into it.
+identity_for() {
+  local name="$1" fs="$2" declared="${3:-}"
+  if [ -n "$declared" ]; then
+    printf '%s' "$declared"
+    return 0
+  fi
+  local host
+  host=$(basename "$(dirname "$recipe")")
+  if [ "$fs" = vfat ]; then serial_of_recipe "$host" "$name"; else uuid_of_recipe "$host" "$name"; fi
+}
+
 # A partition with no type declared still needs a GPT type: a vfat partition is an ESP, anything
 # else is a Linux filesystem partition. The ESP GUID, not the FAT32 GUID — firmware scans partitions
 # by the ESP GUID (UEFI 2.7 §12.3), which is what a real ESP carries (C12A7328… on the VM's
@@ -178,22 +214,23 @@ recipe_opts() {
 }
 
 # A device path that names a partition by the UUID a generated hardware-configuration.nix recorded.
-# Formatting a partition that a UUID path points at is the failure this refuses: a mkfs that
-# cannot finish never leaves half a disk formatted: mkfs would create a UUID the generated
-# hardware-configuration.nix never learned.
+# Formatting is safe only when the run gives mkfs that same UUID: a run that formats a partition with
+# some other identity leaves the config pointing at a filesystem that no longer exists.
 check_uuid() {
-  local node="$1" device="$2" sig="$3"
+  local node="$1" device="$2" sig="$3" declared="${4:-}"
   [ -n "$sig" ] && return 0
   case "$device" in
   /dev/disk/by-uuid/*)
-    refuse "$device is named by UUID, and formatting $node would give it a UUID the host's hardware-configuration.nix cannot know — generate the config on the installed host, or declare the mount by label"
+    [ "${device##*/}" = "$declared" ] ||
+      refuse "$device is named by UUID, and formatting $node would give it a UUID the host's hardware-configuration.nix cannot know — declare that uuid in the recipe, or declare the mount by label"
     ;;
   esac
 }
 
-# Format a blank partition, and only a blank one.
+# Format a blank partition, and only a blank one. The identity is the one the recipe declares (or
+# derives), so the filesystem that comes out of mkfs answers to a name the recipe already knows.
 format_blank() {
-  local node="$1" fs="$2" device="$3" sig="$4" fresh="${5:-0}"
+  local node="$1" fs="$2" device="$3" sig="$4" fresh="${5:-0}" identity="${6:-}"
   # A partition already holding the filesystem the recipe declares is adopted, not formatted.
   [ -n "$sig" ] && [ "$sig" = "$fs" ] && return 0
   # A partition holding some other filesystem is formatted only where this run owns it: a partition
@@ -213,10 +250,16 @@ format_blank() {
     # mkfs.fat has no force flag: it writes over whatever is there.
     args=(-F 32)
     [ -n "$label" ] && args+=(-n "$label")
+    # -i is mkfs.fat's volume id, which blkid reports as this partition's UUID in the form
+    # XXXX-XXXX; mkfs.fat itself takes the bare hex number, so the dash is stripped here.
+    [ -n "$identity" ] && args+=(-i "${identity//-/}")
     ;;
   ext4)
     args=(-q)
     [ -n "$label" ] && args+=(-L "$label")
+    # -U is what makes the filesystem answer to the uuid the recipe declares, rather than one mkfs
+    # invents and the recipe can only learn after the fact.
+    [ -n "$identity" ] && args+=(-U "$identity")
     # -F (not -f) is what lets mkfs.ext4 write over a partition that still carries a superblock.
     [ "$fresh" = 1 ] && args+=(-F)
     ;;
@@ -225,11 +268,13 @@ format_blank() {
     # over a partition whose old superblock is still in place.
     if [ -f "$node" ] || [ "$fresh" = 1 ]; then args+=(-f); fi
     [ -n "$label" ] && args+=(-L "$label")
+    [ -n "$identity" ] && args+=(-m "uuid=$identity")
     ;;
   btrfs)
     # mkfs.btrfs refuses a partition that still carries another filesystem's superblock.
     [ "$fresh" = 1 ] && args+=(-f)
     [ -n "$label" ] && args+=(-L "$label")
+    [ -n "$identity" ] && args+=(-U "$identity")
     ;;
   *) refuse "terraform.sh does not know how to format $fs" ;;
   esac
@@ -378,10 +423,10 @@ resolve_entries() {
         node="$cand"
         break
       done <<<"$parts"
-      # mkfs is never given a UUID, so a declared UUID can only describe a filesystem that already
-      # exists. Asking for one on a partition this run would format is asking for a UUID mkfs invents.
-      [ -n "$node" ] || [ "$discovering" = 1 ] ||
-        refuse "recipe entry $name declares uuid $uuid, which no partition on $disk carries: mkfs is never given a UUID, so a UUID names a filesystem that already exists — a run records one into $mount/terraform.json"
+      # A declared UUID names a filesystem that already exists, or a blank partition this run is
+      # about to fill with that very UUID. Neither is answered by a refusal here: a filesystem under
+      # the recipe's own label carrying a different UUID is refused by verification, and a blank
+      # partition is formatted with the UUID the recipe asks for.
     fi
     if [ -z "$uuid" ]; then
       case "$name" in
@@ -416,6 +461,11 @@ resolve_entries() {
     if [ -n "$node" ]; then
       case "$taken" in *" $node "*) refuse "$name and an earlier entry both claim $node: one partition is not two partitions" ;; esac
       taken="$taken$node "
+    fi
+    # The one case where a declared UUID is not yet on the drive and the run is still right: the
+    # partition it resolved to is blank, so mkfs is about to give it that UUID.
+    if [ -n "$uuid" ] && [ -n "$node" ] && [ "$discovering" = 0 ] && [ -z "$(signature "$node")" ]; then
+      printf 'terraform.sh: recipe entry %s declares uuid %s, which nothing here carries yet — this run formats it with that uuid\n' "$name" "$uuid" >&2
     fi
     resolved+=("$node")
   done
@@ -809,36 +859,42 @@ verify_recipe() {
   done <<<"$entries"
 }
 
-# record_recipe — the UUIDs of the filesystems the drive carries, folded into the recipe and written
-# onto the drive it is installing. The recipe it writes is the recipe it read, with a uuid added per
-# partition: a label is unique only within one drive, so the recipe that names one filesystem is the
-# one worth keeping. It lands on the target root filesystem, which survives reboot, and becomes
-# /terraform.json on the installed host.
+# record_recipe — the filesystem identities the drive now answers to, folded into the recipe file
+# itself. An adopted filesystem keeps the uuid it already carries; a filesystem this run formatted
+# carries the identity it was formatted with, which is the derived one when the recipe declared none.
+# The recipe lands in the repo, where it is committed: it names one filesystem, where a label is
+# unique only within one drive, and the flake mounts exactly what this file says.
 #
-# install.sh's terraform stage calls it as `--record`, after its own post-reproduction verification:
-# folding is not part of reproducing the layout, and a run that failed must not leave a recipe behind.
-# Nothing is written when the recipe already declares every UUID, so a folded repo re-runs clean.
+# install.sh's terraform stage calls it as `--record`. Nothing is written when the recipe already
+# declares every identity, so a checked-in recipe re-runs clean.
 record_recipe() {
-  local n node now out=() missing=0 uuid_json
+  local n node now out=() missing=0 uuid_json name _label fs _size _type _mnt id
   for n in "${!entry_lines[@]}"; do
     [ -n "${uuids[$n]:-}" ] || missing=1
   done
   [ "$missing" = 1 ] || return 0
   # Re-read the drive rather than reuse a table from earlier in the run, so a partition this run
   # appended is included in whichever mode ran.
-  now=$(sfdisk --json "$disk" 2>/dev/null) || refuse "cannot re-read the partition table on $disk to record its UUIDs"
+  now=$(sfdisk --json "$disk" 2>/dev/null) || refuse "cannot re-read the partition table on $disk to record its identities"
   parts=$(printf '%s\n' "$now" | jq -r '(.partitiontable.partitions // [])[] | "\(.node) \(.type)"')
   resolve_entries
   for n in "${!entry_lines[@]}"; do
     node="${resolved[$n]:-}"
-    out+=("$(uuid_of "$node")")
+    IFS="$sep" read -r name _label fs _size _type _mnt <<<"${entry_lines[$n]}"
+    local id
+    id=$(uuid_of "$node")
+    # What the drive carries wins: reformatting a filesystem to a derived identity would break the
+    # config that already names it.
+    [ -n "$id" ] || id=$(identity_for "$name" "$fs")
+    out+=("$id")
   done
   uuid_json=$(printf '%s\n' "${out[@]}" | jq -R -s -c 'split("\n")[:-1]')
   jq --argjson uuids "$uuid_json" '
     .partitions |= (. as $p | [range($p | length)] | map(. as $i | $p[$i] + (if ($uuids[$i] // "") != "" then {uuid: $uuids[$i]} else {} end)))
-  ' "$recipe" >"$mount/terraform.json" ||
-    refuse "cannot write the recorded recipe to $mount/terraform.json"
-  printf 'terraform.sh: recorded the filesystem UUIDs this drive carries into %s — that recipe names one filesystem, where a label is unique only within one drive\n' "$mount/terraform.json" >&2
+  ' "$recipe" >"$recipe.record" ||
+    refuse "cannot write the recorded recipe to $recipe"
+  mv "$recipe.record" "$recipe"
+  printf 'terraform.sh: recorded the filesystem identities into %s — commit that file, and the flake mounts exactly what it names\n' "$recipe" >&2
 }
 
 # owned_run — reproduce a whole drive (ADR-b77ec913151f owned mode): one fresh GPT laid out to the
@@ -945,7 +1001,7 @@ owned_run() {
     if [ "$mnt" = / ]; then
       root_node="$node"
     fi
-    format_blank "$node" "$fs" "/dev/disk/by-label/$label" "$sig" "$fresh" || exit 2
+    format_blank "$node" "$fs" "/dev/disk/by-label/$label" "$sig" "$fresh" "$(identity_for "$name" "$fs" "${uuids[$i]:-}")" || exit 2
     i=$((i + 1))
   done <<<"$plan"
   [ -n "$root_node" ] || refuse "recipe declares no partition mounting /"
@@ -1048,7 +1104,7 @@ fi
 # come back clean — a failed run leaves no recipe behind.
 if [ -n "$record" ]; then
   [ -n "$recipe" ] || refuse "--record folds a recipe onto the drive it installed: --recipe is required"
-  [ "$dry" = 0 ] || refuse "--record writes $mount/terraform.json; --dry-run writes nothing"
+  [ "$dry" = 0 ] || refuse "--record edits $recipe; --dry-run writes nothing"
   record_recipe
   exit 0
 fi
@@ -1064,7 +1120,7 @@ fi
 # Flags mode names a filesystem and two device paths; a recipe names entries, and every entry is
 # resolved below rather than by a device path that moves between machines.
 decision() { [ -n "$1" ] && printf 'adopt' || printf 'format %s' "$2"; }
-add_pending() { pending+=("$1$sep$2$sep$3"); }
+add_pending() { pending+=("$1$sep$2$sep$3$sep${4:-}"); }
 esp=""
 esp_sig=""
 root_part=""
@@ -1246,7 +1302,7 @@ if [ -n "$recipe" ]; then
     IFS="$sep" read -r name label fs _size _type _mnt <<<"${entry_lines[n]}"
     sig=$(signature "$node")
     plan+=("$name: $(decision "$sig" "$fs")")
-    add_pending "$node" "$fs" "${label:+/dev/disk/by-label/$label}"
+    add_pending "$node" "$fs" "${label:+/dev/disk/by-label/$label}" "$(identity_for "$name" "$fs" "${uuids[$n]:-}")"
     case "$name" in
     "$esp_name")
       esp="$node"
@@ -1268,17 +1324,17 @@ fi
 before=$(table_checksum)
 before_entries=""
 [ -z "$recipe" ] || before_entries=$(printf '%s\n' "$table" | jq -c '.partitiontable.partitions')
-check_uuid "$esp" "$esp_device" "$esp_sig"
+check_uuid "$esp" "$esp_device" "$esp_sig" "${uuids[0]:-}"
 [ -n "$root_sig" ] || root_sig=$(signature "$root_part")
-check_uuid "$root_part" "$root_device" "$root_sig"
+check_uuid "$root_part" "$root_device" "$root_sig" "${uuids[1]:-}"
 
 # What this run will do, read-only, before any of it.
 printf 'terraform: drive %s\n' "$disk"
 for line in "${plan[@]}"; do printf '%s\n' "$line"; done
 
 for entry in "${pending[@]}"; do
-  IFS="$sep" read -r node fs device <<<"$entry"
-  format_blank "$node" "$fs" "$device" "$(signature "$node")" || exit 2
+  IFS="$sep" read -r node fs device identity <<<"$entry"
+  format_blank "$node" "$fs" "$device" "$(signature "$node")" 0 "$identity" || exit 2
 done
 
 # Nothing that already existed may have moved: a recipe run may only add entries, and flags mode may

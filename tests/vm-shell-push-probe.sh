@@ -54,41 +54,25 @@ stage() {
 }
 stage prepare,terraform || fail "install stages failed"
 
-# 6. The record: the UUIDs the drive actually carries, written next to the install root. A UUID names
-#    a filesystem that already exists, so every mounted partition's uuid must resolve on this drive.
-record=/mnt/terraform.json
-[ -f "$record" ] || fail "terraform stage left no recorded recipe at $record"
-mounted=$(jq -r '[.partitions[] | select(.mount != null)] | length' "$record")
-# udev makes /dev/disk/by-uuid links asynchronously after mkfs, and this is the path fstab-by-uuid
-# will use at boot, so settle the queue rather than trusting the link to be there already.
+# 6. The recipe the drive was built from, with its identities recorded into it in place. A uuid names
+#    a filesystem, so every mounted partition's uuid has to resolve on this drive: udev makes those
+#    links asynchronously after mkfs, and they are the path fstab-by-uuid uses at boot.
+recipe=/repo/hosts/methyl-test/terraform.json
+mounted=$(jq -r '[.partitions[] | select(.mount != null)] | length' "$recipe")
+[ "$mounted" -gt 0 ] || fail "the recipe mounts nothing"
+jq -e '[.partitions[] | select(.mount != null) | .uuid] | all(. != null and . != "")' "$recipe" >/dev/null ||
+  fail "the terraform stage left the recipe with no filesystem identities"
 udevadm settle --timeout=15 || fail "udev never settled after the filesystems were created"
 missing=0
-for u in $(jq -r '.partitions[] | select(.mount != null) | .uuid // "none"' "$record"); do
-  [ "$u" = none ] || [ -e "/dev/disk/by-uuid/$u" ] || missing=$((missing + 1))
+for u in $(jq -r '.partitions[] | select(.mount != null) | .uuid' "$recipe"); do
+  [ -e "/dev/disk/by-uuid/$u" ] || missing=$((missing + 1))
 done
 [ "$missing" = 0 ] || fail "$missing mounted partitions have no uuid path on the drive"
-[ "$mounted" -gt 0 ] || fail "the recorded recipe mounts nothing"
-ok "recorded recipe: $mounted mounted partitions, every uuid resolves under /dev/disk/by-uuid"
-
-# 7. Deploy refuses before nixos-install while the recipe names labels only. This costs nothing: the
-#    gate is a read, and it fires before any write.
-out=$(stage deploy 2>&1) && fail "deploy accepted a recipe that declares no UUID"
-case "$out" in
-*declares\ no\ filesystem\ UUID*)
-  ok "deploy refused the uuid-free recipe"
-  ;;
-*)
-  fail "deploy failed for a different reason: $(printf '%s\n' "$out" | tail -3)"
-  ;;
-esac
-
-# 8. The fold, into the share this run installed from. The repo file on this host is untouched: these
-#    uuids name a scratch drive, not methyl-test's real one.
-cp "$record" /repo/hosts/methyl-test/terraform.json || fail "could not fold the recorded recipe"
+ok "recipe recorded in place: $mounted mounted partitions, every uuid resolves under /dev/disk/by-uuid"
 
 # The closure built on this host names methyl-test's real drive in its fstab; the scratch drive here
-# carries the uuids just recorded. A boot that mounts by uuid cannot resolve those, so the host
-# rebuilds the closure from the folded recipe in the share and pushes it back before deploy runs.
+# carries the identities just recorded. A boot that mounts by uuid cannot resolve those, so the host
+# rebuilds the closure from the recipe in the share and pushes it back before deploy runs.
 if [ -d /deploy-out ]; then
   touch /deploy-out/rebuild-request
   for _ in $(seq 90); do
@@ -100,11 +84,10 @@ if [ -d /deploy-out ]; then
   install_system=$(cat /deploy-out/rebuilt-system)
   nix path-info "$install_system" >/dev/null || fail "rebuilt closure is not in the guest store"
 fi
-stage deploy || fail "deploy refused after the fold"
-ok "folded into the share, rebuilt, and deployed: $(jq -r '[.partitions[] | .uuid] | join(" ")' /repo/hosts/methyl-test/terraform.json)"
+stage deploy || fail "deploy refused on a recipe whose mounts carry uuids"
+ok "rebuilt from the recorded recipe and deployed: $(jq -r '[.partitions[] | .uuid] | join(" ")' "$recipe")"
 
-# 9. What the stages must have left on the drive: a table, an ESP with boot entries, and the closure.
-# 9. What the stages must have left on the drive: partitions, an ESP with boot entries, and the
+# 7. What the stages must have left on the drive: partitions, an ESP with boot entries, and the
 #    closure. The table is proven by the partitions themselves — this guest's lsblk has no
 #    PARTTABLENAME column, so asking for it reads as "no table" on a drive that has one.
 [ -b /dev/vdb1 ] && [ -b /dev/vdb2 ] ||
