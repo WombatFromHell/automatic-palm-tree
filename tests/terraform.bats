@@ -632,7 +632,7 @@ EOF
   assert_call "^btrfs subvolume create $disk_dir/mnt/@$"
   assert_call "^btrfs subvolume create $disk_dir/mnt/@nix$"
   assert_call "^btrfs subvolume create $disk_dir/mnt/@swap$"
-  assert_call "^umount $disk_dir/mnt$"
+  assert_call "^umount -R $disk_dir/mnt$"
   assert_call "^mount -o noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt$"
   assert_call "^mount -o subvol=@,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt$"
   [ "$(type_of own 2)" = btrfs ]
@@ -675,6 +675,23 @@ EOF
   assert_out "$disk_dir/mnt/home already mounted — adopted, not rebuilt"
   assert_no_call "mount -o subvol=@nix"
   assert_no_call "mount -o subvol=@home"
+}
+
+# The switch to the @ subvolume unmounts $mount, and the ESP plus every sibling of @ hang below it:
+# plain umount refuses a busy target, so a rerun on a drive that is already staged died here and the
+# identities were never recorded (seen on the methyl-test guest, where the deploy stage had staged
+# /mnt before terraform ran again).
+@test 'the subvolume switch unmounts what hangs below $mount, not just $mount' {
+  truncate -s 128M "$disk_dir/own.img"
+  stub_lsblk "$disk_dir/own.img"
+  recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
+  run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
+  [ "$status" -eq 0 ]
+  : >"$calls"
+  TF_NODES=0 run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img" --record
+  [ "$status" -eq 0 ]
+  assert_calls "^umount -R $disk_dir/mnt$" 2
+  assert_out "recorded the filesystem identities"
 }
 
 # A dry run writes nothing, and mounting is a write to this machine's mount table.

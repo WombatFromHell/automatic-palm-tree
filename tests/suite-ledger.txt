@@ -12,7 +12,7 @@ tests/install.bats assert 155
 tests/njust.bats assert 122
 tests/nix-eval.bats assert 8
 tests/sopsctl.bats assert 79
-tests/terraform.bats assert 241
+tests/terraform.bats assert 243
 tests/updater.bats assert 13
 tests/xilo.bats assert 31
 tests/configs.nix checks 26

@@ -1048,12 +1048,14 @@ owned_run() {
     src=${src%%\[*}
     [ -z "$src" ] || [ "$src" = "$root_node" ] ||
       refuse "$mount is mounted from ${src:-nothing}, not the root partition $root_node: terraform.sh will not lay a subvolume tree into somebody else's mount"
+    # -R, not plain umount: the ESP and every sibling of @ hang below $mount, and umount refuses a
+    # busy target — which is how a second run on a staged drive died before recording anything.
     if [ -n "$src" ]; then
-      run umount "$mount"
+      run umount -R "$mount"
     fi
     run mount "$root_node" "$mount"
     create_subvolumes "$mount"
-    run umount "$mount"
+    run umount -R "$mount"
     run mount -o "subvol=@${opts:+,$opts}" "$root_node" "$mount"
     # Creating the tree is only half of staging. Every sibling of @ is a mount the host's config
     # declares, and an unmounted one is a boot failure rather than a cosmetic gap: deploy writes
