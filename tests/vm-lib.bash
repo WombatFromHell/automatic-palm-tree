@@ -44,10 +44,13 @@ vm_selinux_check() {
 # module that reads `config.nixpkgs.flake.source`, which fails on a dirty tree when `nix build`
 # realises the derivation, so the config is evaluated through eval-config.nix directly — same
 # pinned nixpkgs, no second instance, no flake source in the closure.
+# An optional third argument is an override module file (any absolute path, since the eval is
+# --impure), which is how the runner injects a per-run SSH key or a pushed closure without touching
+# the checked-in config.
 vm_build() {
-	local config=$1 out=$2
+	local config=$1 out=$2 override=${3:-}
 	vm_scope "vm-build-$$" 1200M bash -c \
-		"cd $vm_repo && nix build --impure --expr 'let f = builtins.getFlake (toString ./.); np = f.inputs.nixpkgs; in (import (np + \"/nixos/lib/eval-config.nix\") { lib = np.lib; system = \"x86_64-linux\"; modules = [ $config ]; }).config.system.build.vm' -o $out"
+		"cd $vm_repo && nix build --impure --expr 'let f = builtins.getFlake (toString ./.); np = f.inputs.nixpkgs; in (import (np + \"/nixos/lib/eval-config.nix\") { lib = np.lib; system = \"x86_64-linux\"; modules = [ $config${override:+ $override} ]; }).config.system.build.vm' -o $out"
 }
 
 # Boot it: the VM script creates its own blank drive (`emptyDiskImages`), the payload is injected
@@ -102,6 +105,22 @@ vm_free_peak() {
 	awk -v p="$peak" 'BEGIN { printf "peak_guest_mb=%.0f\n", p / 1048576 }'
 }
 
+# Boot an installed drive: qemu direct kernel boot from a kernel and initrd copied out of the
+# installed closure, the deployed drive as /dev/vdb, and a blank drive in front of it so /dev/vda
+# still exists — the installed config's mount sources name /dev/vdb1, and a drive that shows up as
+# /dev/vda1 would not mount. No firmware: this pinned nixpkgs has no plain OVMF, so the boot loader
+# entries on the ESP are not what boots here (see .pi/PLAN-vm-push.md D7).
+vm_boot_disk() {
+	local kernel=$1 initrd=$2 append=$3 drive=$4 log=$5 timeout=${6:-300} qemu=${7:-} fifo=${8:-}
+	local ceiling=${VM_BOOT_CEILING:-2000M}
+	local blank
+	blank=$(dirname "$drive")/boot-blank.qcow2
+	"$(dirname "${qemu%/bin/*}")/bin/qemu-img" create -f qcow2 "$blank" 512M >/dev/null
+	vm_scope "vm-disk-boot-$$" "$ceiling" bash -c \
+		"timeout $timeout $qemu -machine accel=kvm -cpu max -m $((ceiling%M - 400)) -drive file=$blank,format=qcow2,id=drive1,if=none,index=1 -device virtio-blk-pci,drive=drive1 -drive file=$drive,format=qcow2,id=drive2,if=none,index=2 -device virtio-blk-pci,drive=drive2 -kernel $kernel -initrd $initrd -append '$append console=tty0 console=ttyS0,115200n8' -nographic${fifo:+ < $fifo}" \
+		2>&1 | tee -a "$log"
+}
+
 # Wait until a pattern shows up in the serial log the host is already capturing.
 vm_wait_for() {
 	local file=$1 pattern=$2 timeout=${3:-60} waited=0
@@ -119,8 +138,8 @@ vm_wait_for() {
 # oneshot ordered at multi-user.target has run, so typing at the first prompt always comes back
 # "Login incorrect".
 vm_serial_login() {
-	local log=$1 user=$2 pass=$3 timeout=${4:-60} tag=${5:-VM_SERIAL_LOGIN_OK}
-	vm_wait_for "$log" "SPIKE DONE" "$timeout" || return 1
+	local log=$1 user=$2 pass=$3 timeout=${4:-60} tag=${5:-VM_SERIAL_LOGIN_OK} wait_pattern=${6:-SPIKE DONE}
+	[ -n "$wait_pattern" ] && { vm_wait_for "$log" "$wait_pattern" "$timeout" || return 1; }
 	# The prompt has to be one that is live now, not text an earlier timed-out getty left in the
 	# log, so only the tail counts.
 	local deadline=$((SECONDS + timeout))

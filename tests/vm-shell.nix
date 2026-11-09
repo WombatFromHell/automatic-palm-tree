@@ -28,6 +28,11 @@
   # scratch-machine rule — nothing durable lives here).
   services.getty.autologinUser = "root";
 
+  # ssh on by default, so a person can open a second terminal into the guest instead of only the
+  # serial console. Root login stays key-only (the module's default PermitRootLogin is
+  # prohibit-password); the runner installs an ephemeral key and forwards a port on this host.
+  services.openssh.enable = true;
+
   # Everything the real stages run, present before anything is asked of them, so a missing tool
   # fails the probe instead of becoming an on-demand download inside the VM.
   environment.systemPackages = with pkgs; [
@@ -37,6 +42,15 @@
     jq
     dosfstools # mkfs.vfat, which terraform.sh formats the ESP with
     btrfs-progs # mkfs.btrfs and the subvolume commands
+  ];
+
+  # The guest's own `nix` needs the command and flakes enabled: the probe registers a pushed closure
+  # with `nix copy`, and install.sh evaluates the host config before its deploy stage exports
+  # NIX_CONFIG. Without this the guest refuses with "experimental Nix feature 'nix-command' is
+  # disabled" (measured).
+  nix.settings.experimental-features = [
+    "nix-command"
+    "flakes"
   ];
 
   # The guest names its own target drive: its root is tmpfs, so no mount source and no formatted
@@ -71,7 +85,9 @@
       # Inside the script the module generates this is shell text, so the bare $TMPDIR is the
       # per-run dir the runner exports — no extra override knob.
       source = "$TMPDIR/xchg";
-      target = "/mnt/repo";
+      # Not under /mnt: install.sh mounts the installed root at /mnt, which shadows every share
+      # mounted beneath it — the deploy stage then reads a repo path that no longer exists.
+      target = "/repo";
       securityModel = "none";
     };
 

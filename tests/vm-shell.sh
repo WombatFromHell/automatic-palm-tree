@@ -6,6 +6,7 @@
 #
 #   tests/vm-shell.sh                # your keyboard is the guest's console
 #   tests/vm-shell.sh --script FILE  # FILE is typed into the console, then the console closes
+#   tests/vm-shell.sh --push HOST --boot  # install it, then boot the drive it was installed onto
 #
 # End a run by typing `poweroff` in the guest (it shuts the VM down, so qemu exits at once) or with
 # Ctrl-]. Either way the run dir is deleted on exit, and "poweroff" stops the guest, never the host:
@@ -20,14 +21,33 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 source "$repo/tests/vm-lib.bash"
 
 script=""
+push_host=""
+boot_drive=""
 while [ $# -gt 0 ]; do
   case "$1" in
-  --script)
-    script=${2:-}
-    [ -n "$script" ] || {
-      printf 'vm-shell.sh: --script needs a file\n' >&2
+  --push)
+    push_host=${2:-}
+    [ -n "$push_host" ] || {
+      printf 'vm-shell.sh: --push needs a host name\n' >&2
       exit 2
     }
+    shift 2
+    ;;
+  --boot) boot_drive=1; shift ;;
+  --script)
+    script=${2:-}
+    [ -n "$script" ] && [ -f "$script" ] || {
+      printf 'vm-shell.sh: --script needs a readable file\n' >&2
+      exit 2
+    }
+    # The probe runs from the share the guest already has, so the runner types one line. Typing the
+    # whole file makes the guest echo every line back: lines land in a login getty that swallows
+    # them, and the probe's own source text lands in the log beside its output.
+    case "$script" in
+      "$repo"/*) ;;
+      *) printf 'vm-shell.sh: --script must be a file in the repo - the guest reads it from /repo\n' >&2
+         exit 2 ;;
+    esac
     shift 2
     ;;
   *)
@@ -37,6 +57,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ -n "$boot_drive" ] && [ -z "$push_host" ]; then
+  printf 'vm-shell.sh: --boot needs --push HOST - the drive it boots is the one deploy installed\n' >&2
+  exit 2
+fi
 vm_selinux_check || exit 1
 if [ ! -e /dev/kvm ]; then
   printf 'vm-shell.sh: /dev/kvm is absent — this tier needs hardware acceleration.\n' >&2
@@ -45,7 +69,28 @@ fi
 
 run="$vm_tmp/vm-shell-$(date +%s)"
 log=$(vm_log_path vm-shell)
+# A probe finishes in seconds; only a person at the keyboard needs the long backstop. The value is
+# the ceiling for a guest that never shuts itself down, not a wait anyone sits through.
+boot_timeout=${VM_SHELL_TIMEOUT:-300}
+[ -n "$script" ] && boot_timeout=${VM_SHELL_TIMEOUT:-120}
+# A push run copies a host closure into the guest's store disk and installs it onto the drive, so it
+# is minutes of work rather than a probe that finishes in seconds.
+[ -n "$push_host" ] && boot_timeout=${VM_SHELL_TIMEOUT:-900}
+store_mb=${VM_STORE_IMG_MB:-8192}
 mkdir -p "$run/tmp/xchg" "$vm_tmp/logs"
+# --boot boots from files the probe copies out of the installed drive, since a host cannot read a
+# file out of a qcow2 without root.
+[ -n "$boot_drive" ] && mkdir -p "$run/tmp/deploy-out"
+
+# The store disk, recreated every run so nothing carries over. truncate allocates nothing on XFS and
+# mkfs.ext4 defers the inode tables, so the image costs a few megabytes until the guest writes to it
+# (measured here: truncate 0 bytes, mkfs 4.3 MB). Never dd or fallocate — those allocate up front.
+# debugfs creates upper and work because a mount unit creates no directories and overlayfs refuses a
+# missing upperdir, which would read as a boot failure rather than a harness bug.
+store_img="$run/tmp/rw-store.img"
+truncate -s "${store_mb}M" "$store_img"
+mkfs.ext4 -qF "$store_img"
+printf 'mkdir /upper\nmkdir /work\n' | debugfs -w "$store_img" >/dev/null
 # A run costs a store image plus a blank drive, and the log lives in $vm_tmp/logs, so dropping the
 # run dir on exit loses nothing the report needs.
 trap 'rm -rf "$run"' EXIT
@@ -58,11 +103,93 @@ rm -rf "$run/tmp/xchg/.git"
 
 {
   printf 'run=%s\n' "$run"
-  printf 'caps: MemoryMax=1300M MemorySwapMax=0 timeout=300s\n'
+  printf 'caps: MemoryMax=1300M MemorySwapMax=0 timeout=%ss\n' "$boot_timeout"
   printf 'kvm=%s\n' "$(ls -l /dev/kvm)"
+  printf 'store_img=%s apparent=%sM allocated=%sM\n' "$store_img" "$store_mb" "$(du -m "$store_img" | cut -f1)"
 } >"$log"
 
-vm_build ./tests/vm-shell.nix "$run/guest" >>"$log" 2>&1
+# The closure is built here, in its own scope, before the guest boots: a flake eval inside a 1GB guest
+# is exactly the thing that overflows RAM, which is why install.sh takes INSTALL_SYSTEM at all. It
+# reaches the guest over ssh after it boots (see below), so nothing on this host's /nix/store is ever
+# shared with a guest that has autologin root and no password.
+if [ -n "$push_host" ]; then
+  push_system=$(vm_scope "vm-push-$$" 1200M bash -c \
+    "cd $repo && nix build --no-link --print-out-paths .#nixosConfigurations.$push_host.config.system.build.toplevel" 2>>"$log") || {
+    printf 'vm-shell.sh: no closure for host %s — the build failed (see %s)\n' "$push_host" "$log" >&2
+    exit 1
+  }
+  printf '%s\n' "$push_system" >"$run/tmp/xchg/push-system"
+  printf 'push=%s\n' "$push_system" >>"$log"
+  # The checked-in recipe carries UUIDs recorded from the real host, and a UUID names a filesystem
+  # that already exists — mkfs is never given one. A blank drive gets a fresh layout, so the run's
+  # copy of the recipe drops them; the host's own file is untouched and install.sh records new ones.
+  recipe="hosts/$push_host/terraform.json"
+  [ -f "$recipe" ] && jq 'del(.partitions[].uuid)' "$recipe" >"$run/tmp/xchg/$recipe"
+  printf 'push_recipe=%s uuids=%s\n' "$recipe" "$([ -f "$recipe" ] && echo stripped || echo none)" >>"$log"
+fi
+
+# ssh is on in the guest, so this run needs a key and a port. The guest authorises whatever this
+# user already has in ~/.ssh/authorized_keys, so a second terminal is `ssh -p <port> vm@127.0.0.1`
+# with your normal private key. Root is a special user in NixOS, so its authorized_keys lands
+# outside /root and ssh goes to a normal user instead. With no authorized_keys file we fall back to
+# a per-run keypair. No password is ever typed or passed in argv.
+sshkey=""
+auth_keys="$run/authorized_keys"
+if [ -s "$HOME/.ssh/authorized_keys" ]; then
+  cp "$HOME/.ssh/authorized_keys" "$auth_keys"
+else
+  sshkey="$run/host_key"
+  ssh-keygen -t ed25519 -N '' -q -f "$sshkey"
+  cp "$sshkey.pub" "$auth_keys"
+  printf 'ssh: no ~/.ssh/authorized_keys, using a per-run keypair\n' >>"$log"
+fi
+port=""
+# Loopback by default: the guest is scratch (autologin root, tmpfs root, blank drive), so publishing
+# its ssh port on every interface is a person's choice, not the harness's default.
+bind=${VM_SHELL_BIND:-127.0.0.1}
+for candidate in 2222 2223 2224 2225 2226 2227; do
+  [ -z "$(ss -ltnH "sport = :$candidate" 2>/dev/null)" ] && { port=$candidate; break; }
+done
+if [ -z "$port" ]; then
+  printf 'vm-shell.sh: no free port to forward ssh on\n' >&2
+  exit 1
+fi
+
+# Per-run config the checked-in guest does not carry: the authorized keys, the forwarded port, and
+# the store disk. The store disk is a drive appended to the module's own list, so the guest's
+# read-only store image (its own $TMPDIR/store.img) and the blank target drive keep their names:
+# /dev/vda, /dev/vdb, then this at /dev/vdc.
+override="$run/override.nix"
+{
+  printf '{ lib,\n  ...\n}:\n{\n'
+  printf '  users.users.vm = {\n    isNormalUser = true;\n    openssh.authorizedKeys.keys = builtins.filter (k: builtins.isString k && k != "") (builtins.split "\\n" (builtins.readFile "%s"));
+  };\n' "$auth_keys"
+  printf '  virtualisation.forwardPorts = [ { proto = "tcp"; host.address = "%s"; host.port = %s; guest.port = 22; } ];\n' "$bind" "$port"
+  # shellcheck disable=SC2016  # the $ is Nix string text the generated boot script expands, not a shell expansion here
+  # A plain list merges by concatenation (types.listOf's merge), so this appends after the module's
+  # own drives rather than replacing them.
+  printf '  virtualisation.qemu.drives = [ { file = "$TMPDIR/rw-store.img"; driveExtraOpts.format = "raw"; } ];\n'
+  # The writable store moves onto that disk instead of a tmpfs, so registering a host closure costs
+  # disk rather than the guest's RAM.
+  printf '  virtualisation.writableStoreUseTmpfs = false;\n'
+  printf '  virtualisation.fileSystems."/nix/.rw-store" = { device = "/dev/vdc"; fsType = "ext4"; neededForBoot = true; };\n'
+  if [ -n "$push_host" ]; then
+    # A host closure has to fit on the drive it is installed onto, and the 4 GB default does not.
+    printf '  virtualisation.emptyDiskImages = lib.mkForce [ %s ];\n' "${VM_PUSH_DRIVE_MB:-10240}"
+    # A push writes the host's unsigned closure into the guest's store through its nix daemon,
+    # and the daemon refuses unsigned paths unless the user behind the ssh session is a trusted
+    # user (nixos/modules/services/misc/nix-ssh-serve.nix does the same for its own nix-ssh user).
+    printf '  nix.settings.trusted-users = [ "root" "vm" ];\n'
+    if [ -n "$boot_drive" ]; then
+      # The probe copies kernel/initrd out of the installed drive here; /mnt is the install
+      # target, so a share under it would be shadowed by the mount.
+      printf '  virtualisation.sharedDirectories.deploy = { source = "$TMPDIR/deploy-out"; target = "/deploy-out"; };\n'
+    fi
+  fi
+  printf '}\n'
+} >"$override"
+
+vm_build ./tests/vm-shell.nix "$run/guest" "$override" >>"$log" 2>&1
 
 # The console fifo is created before anything opens it: opening a fifo that is not there with `>`
 # creates a regular file, and qemu then reads an empty stdin and exits at once. fd 9 holds the write
@@ -71,13 +198,13 @@ fifo="$run/console.fifo"
 mkfifo "$fifo"
 # tee, not a plain redirect: the console is the interface, so the person who ran this sees it while
 # the host still keeps the transcript.
-vm_boot "$run/guest" "$run/tmp" "$log" 300 "$fifo" tee &
+vm_boot "$run/guest" "$run/tmp" "$log" "$boot_timeout" "$fifo" tee &
 boot=$!
 vm_serial_open "$fifo"
 
 # RAM is sampled while the guest is up, from the host's own cgroup (the guest's /proc reports its
 # own namespace limit).
-vm_free_peak 300 qemu >>"$log" 2>&1 &
+vm_free_peak "$boot_timeout" qemu >>"$log" 2>&1 &
 peak=$!
 
 # Wait for the autologin shell before anything is typed: serial-getty prints its prompt before the
@@ -88,8 +215,77 @@ vm_wait_for "$log" "root@" 90 || {
   exit 1
 }
 
+# The guest's own boot banner is the ready signal on the serial console — sshd's line goes to the
+# journal, which never reaches ttyS0, and typing before the banner lands in a login getty that
+# swallows it. So: wait for the banner, then prove the forwarded port answers from this host. One
+# attempt plus one retry covers sshd finishing after the banner; blind retries are what made a
+# healthy guest cost a minute.
+ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
+ssh_base="ssh -p $port $ssh_opts"
+ssh_nix_opts="$ssh_opts"
+[ -n "$sshkey" ] && ssh_base="$ssh_base -i $sshkey" && ssh_nix_opts="$ssh_nix_opts -i $sshkey"
+ssh_result=""
+if vm_wait_for "$log" "Welcome to NixOS" 60; then
+  if $ssh_base -o ConnectTimeout=5 vm@127.0.0.1 'echo SSH_OK' >"$run/ssh.out" 2>&1 ||
+     { sleep 2; $ssh_base -o ConnectTimeout=5 vm@127.0.0.1 'echo SSH_OK' >>"$run/ssh.out" 2>&1; }; then
+    ssh_result=ok
+  fi
+fi
+printf 'ssh=%s\n' "${ssh_result:-failed}" | tee -a "$log"
+# qemu's user-mode networking is a NAT emulator inside qemu: 10.0.2.15 exists only in the guest, so
+# the host has no route to it and ssh there never opens a session. The forwarded port is the way in,
+# and it is printed once ssh answers, since a person cannot guess which port this run picked.
+if [ "$ssh_result" = ok ]; then
+  # With the port published on every interface, the address worth naming is this host's LAN address.
+  reach=$bind
+  [ "$bind" = "0.0.0.0" ] &&
+    reach=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+  printf 'ssh: %s vm@%s — 10.0.2.15 is qemu internal NAT, unreachable from this host\n' "$ssh_base" "${reach:-this host}"
+else
+  tail -c 200 "$run/ssh.out" >>"$log"
+  if [ -n "$push_host" ]; then
+    printf 'vm-shell.sh: --push needs the forwarded ssh port to answer\n' >&2
+    printf 'log=%s\n' "$log"
+    pgrep -f 'qemu-s[y]stem-x86_64' | xargs -r kill
+    exit 1
+  fi
+fi
+
+# The push itself: the host streams the closure into the guest's own store over ssh, so the guest
+# registers it on its store disk and no copy of this host's store is ever shared. `--no-check-sigs`
+# is the client's check — these paths are built on this host and signed by nothing, and the guest's
+# store is scratch; the destination's trust is the trusted-users override above. Measured here: the
+# ssh store peaked at 22 MB of host RSS, where a staged copy or a NAR cache cost gigabytes.
+if [ -n "$push_host" ] && [ "$ssh_result" = ok ]; then
+  rc=0
+  start=$SECONDS
+  NIX_SSHOPTS="$ssh_nix_opts" nix copy --no-check-sigs --to "ssh://vm@127.0.0.1:$port" "$push_system" \
+    >>"$log" 2>&1 || rc=$?
+  printf 'push_rc=%s secs=%s\n' "$rc" "$((SECONDS - start))" >>"$log"
+  if [ "$rc" -ne 0 ]; then
+    printf 'vm-shell.sh: the closure did not reach the guest store (see %s)\n' "$log" >&2
+    printf 'log=%s\n' "$log"
+    pgrep -f 'qemu-s[y]stem-x86_64' | xargs -r kill
+    exit 1
+  fi
+fi
+
 if [ -n "$script" ]; then
-  cat "$script" >&9
+  printf 'bash /repo/%s\n' "${script#"$repo/"}" >&9
+  exec 9>&-
+  # A probe that reports a failure exits its shell, so the getty respawns and the console goes idle
+  # — that idle is what a failing run looks like from the outside. Ending here, on the guest's own
+  # marker, is the difference between a report and a hang. poweroff cannot be typed instead: after
+  # fail() exits there is no shell, so it would be read as a username at the login prompt.
+  if vm_wait_for "$log" "SHELL DONE\|SHELL FAIL" "$boot_timeout"; then
+    if grep -aq 'SHELL FAIL' "$log"; then
+      pgrep -f 'qemu-s[y]stem-x86_64' | xargs -r kill
+      wait "$boot" || true
+      printf 'probe failed\n' >>"$log"
+      printf 'log=%s\n' "$log"
+      exit 1
+    fi
+  fi
 else
   # Forward the terminal until qemu closes the console; a write into a closed fifo dies with SIGPIPE.
   cat >&9
@@ -97,4 +293,49 @@ fi
 exec 9>&-
 wait "$peak"
 wait "$boot" || printf 'boot ended by timeout\n' >>"$log"
+
+# Boot the drive the probe installed onto. The guest is shut down first: its qcow2 holds the installed
+# system, and the second qemu boots the kernel and initrd the probe copied out of it (D7).
+if [ -n "$boot_drive" ]; then
+  qemu=$(grep -ao '/nix/store/[^ ]*-qemu[^ ]*/bin/qemu-system-x86_64' "$run"/guest/bin/run-*-vm | head -1)
+  [ -n "$qemu" ] || { printf 'vm-shell.sh: the built VM script names no qemu binary\n' >&2; exit 1; }
+  out="$run/tmp/deploy-out"
+  for f in kernel initrd append.txt; do
+    if [ ! -s "$out/$f" ]; then
+      printf 'vm-shell.sh: the probe left no %s in %s\n' "$f" "$out" >&2
+      exit 1
+    fi
+  done
+  printf 'disk_boot=%s append=%s\n' "$run/tmp/empty0.qcow2" "$(cat "$out/append.txt")" >>"$log"
+
+  serial2="$run/tmp/boot-serial"
+  mkfifo "$serial2"
+  vm_serial_open "$serial2"
+  vm_boot_disk "$out/kernel" "$out/initrd" "$(cat "$out/append.txt")" "$run/tmp/empty0.qcow2" "$log" \
+    "${VM_BOOT_TIMEOUT:-300}" "$qemu" "$serial2" &
+  disk=$!
+  peak_disk=$(vm_free_peak "${VM_BOOT_TIMEOUT:-300}" qemu | tee -a "$log") &
+
+  creds=$(head -1 "$vm_repo/tests/vm-spike-secrets.env")
+  vm_wait_for "$log" 'Welcome to NixOS' "${VM_BOOT_TIMEOUT:-300}" || {
+    printf 'installed drive never reached its welcome banner\n' >>"$log"
+    pgrep -f 'qemu-s[y]stem-x86_64' | xargs -r kill
+    printf 'log=%s\n' "$log"
+    exit 1
+  }
+  printf 'BOOT OK: installed generation reached its welcome banner\n' >>"$log"
+  if ! vm_serial_login "$log" "${creds%%:*}" "${creds#*:}" "${VM_BOOT_TIMEOUT:-300}" \
+    "BOOT OK: logged in on the installed drive" ''; then
+    printf 'installed drive reached no login prompt, or the login failed\n' >>"$log"
+    pgrep -f 'qemu-s[y]stem-x86_64' | xargs -r kill
+    printf 'log=%s\n' "$log"
+    exit 1
+  fi
+  # fd 9 is the console of this second qemu, reopened by vm_serial_open after the first run closed it.
+  # shellcheck disable=SC2031,SC2030
+  exec 9>&-
+  wait "$peak_disk"
+  wait "$disk" || printf 'disk boot ended by timeout\n' >>"$log"
+fi
+
 printf 'log=%s\n' "$log"

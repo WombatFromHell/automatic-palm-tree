@@ -14,8 +14,8 @@ fail() {
 ok() { echo "SHELL OK: $1"; }
 
 # 1. The repo the installer will run from, delivered over the 9p share.
-[ -f /mnt/repo/flake.nix ] || fail "repo share not mounted: $(find /mnt/repo -maxdepth 1 2>&1 | head -3)"
-ok "repo visible: $(find /mnt/repo -maxdepth 1 -type f | wc -l) files at the top level"
+[ -f /repo/flake.nix ] || fail "repo share not mounted: $(find /repo -maxdepth 1 2>&1 | head -3)"
+ok "repo visible: $(find /repo -maxdepth 1 -type f | wc -l) files at the top level"
 
 # 2. Every tool the real stages invoke, resolved before any of them is asked for.
 for tool in nix nixos-install terraform jq sfdisk mkfs.btrfs mkfs.vfat; do
@@ -32,8 +32,19 @@ ok "target drive blank: $(lsblk -bno SIZE /dev/vdb) bytes"
 [ "$INSTALL_DRIVE" = /dev/vdb ] || fail "INSTALL_DRIVE is '$INSTALL_DRIVE', not /dev/vdb"
 ok "drive named: $INSTALL_DRIVE"
 
-# 5. The secret file came with the repo share, and the probe never prints its contents.
-cred=/mnt/repo/tests/vm-spike-secrets.env
+# 5. The store disk. The writable store's upper half lives on the raw image the runner recreated for
+#    this run, so registering paths costs disk rather than the guest's RAM.
+src=$(findmnt -n -o SOURCE /nix/.rw-store)
+[ "$src" = /dev/vdc ] || fail "writable store is on $src, not the store disk"
+ok "store disk mounted: $src as $(findmnt -n -o FSTYPE /nix/.rw-store)"
+
+# 6. ssh is up, so a person (or the runner) can open a second terminal into the guest.
+[ "$(systemctl is-active sshd)" = active ] || fail "sshd is $(systemctl is-active sshd)"
+[ -s /etc/ssh/authorized_keys.d/vm ] || fail "no authorized key installed"
+ok "sshd listening, authorized key installed"
+
+# 7. The secret file came with the repo share, and the probe never prints its contents.
+cred=/repo/tests/vm-spike-secrets.env
 grep -q '^[A-Za-z0-9_-]*:' "$cred" || fail "secret file has no user:pass entry"
 ok "secret file delivered: $(wc -c <"$cred") bytes, contents not printed"
 
