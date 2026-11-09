@@ -990,13 +990,26 @@ EOF
   [ "$status" -eq 0 ]
   jq -e --argjson first "$(cat "$stubs/recipe.first")" '. == $first' "$stubs/recipe.json" >/dev/null
 
-  # A different partition name is a different filesystem, so it must not answer to the same uuid.
+  # A name is only how the recipe *makes* a filesystem. On a drive that already holds one, what the
+  # drive carries wins: renaming the entry records the uuid that filesystem actually answers to,
+  # because re-cutting an adopted filesystem would break the config that names it.
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,data:nixos:ext4:16M:/"
+  TF_NODES=0 run terraform_recipe_run lin "$stubs/recipe.json" --disk "$disk_dir/lin.img" --record
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.partitions[] | select(.name == "data") | .uuid' "$stubs/recipe.json")" = "$(uuid_of lin 2)" ]
+
+  # On a drive nothing has formatted yet, the identities are derived per partition name: a differently
+  # named partition is a different filesystem and must not answer to the same uuid.
+  owned lin blank
+  : >"$stubs/mounts" # the mounts the previous run made must not be seen by this one
   recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,data:nixos:ext4:16M:/"
   TF_NODES=0 run terraform_recipe_run lin "$stubs/recipe.json" --disk "$disk_dir/lin.img" --record
   [ "$status" -eq 0 ]
   jq -e --arg root "$(jq -r '.partitions[] | select(.name == "root") | .uuid' "$stubs/recipe.first")" '(.partitions[] | select(.name == "data") | .uuid) != $root' "$stubs/recipe.json" >/dev/null
 
   # A different host is a different machine, so the same partition name must not answer to it either.
+  owned lin blank
+  : >"$stubs/mounts"
   mkdir -p "$stubs/other-host"
   recipe_file "$stubs/other-host/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
   TF_NODES=0 PATH="$stubs:$PATH" INSTALL_FORCE=1 bash "$repo/terraform.sh" \
@@ -1040,6 +1053,28 @@ EOF
   [ "$status" -eq 2 ]
   assert_out "--recipe is required"
   [ ! -e "$disk_dir/mnt/terraform.json" ]
+}
+
+# --record is a run first: a drive that was never laid out must not be recorded as if it were, so the
+# recipe it writes and the drive it wrote have to agree.
+@test "--record reproduces the layout, and the drive answers to the identities the recipe now names" {
+  owned own blank
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
+  TF_NODES=0 run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --record
+  [ "$status" -eq 0 ]
+  assert_out "recorded the filesystem identities"
+  [ "$(jq -r '.partitions[] | select(.name == "esp") | .uuid' "$stubs/recipe.json")" = "$(uuid_of own 1)" ]
+  [ "$(jq -r '.partitions[] | select(.name == "root") | .uuid' "$stubs/recipe.json")" = "$(uuid_of own 2)" ]
+}
+
+# A flag takes a value. `--disk --record` would otherwise take --record as the device and run against
+# a drive that does not exist, printing nothing at all.
+@test "a flag with no value refuses rather than swallowing the next flag" {
+  owned own blank
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk --record
+  [ "$status" -eq 2 ]
+  assert_out "--disk needs a value"
 }
 
 # The identities in a checked-in recipe are what mkfs is told, so the filesystem that comes out of the

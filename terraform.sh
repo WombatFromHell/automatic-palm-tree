@@ -33,12 +33,25 @@ owns=false
 dry=0
 force="${INSTALL_FORCE:-0}"
 
+refuse() {
+  printf 'terraform.sh: %s\n' "$*" >&2
+  exit 2
+}
+
 usage() {
   printf 'usage: terraform.sh [--dry-run] [--force] --recipe <file> [--disk <drive>] [--mount <dir>]\n'
   printf '       terraform.sh [--dry-run] [--force] --disk <drive> --mount <dir> --root-fs <type> --root-device <path> --esp-device <path>\n'
   printf '       terraform.sh --emit [--disk <drive>]   read-only: prints the recipe this drive describes\n'
   printf '       terraform.sh --recipe <file> --verify   read-only: does the drive match the recipe?\n'
-  printf '       terraform.sh --recipe <file> --record  write: fold the UUIDs of the partitions into <mount>/terraform.json\n'
+  printf '       terraform.sh --recipe <file> --record  write: run the recipe, then fold the filesystem identities it wrote into <file>\n'
+}
+
+# value — the argument a flag requires. `--disk --record` would otherwise take --record as the device
+# and run against a drive that does not exist, printing nothing.
+value() {
+  local v="${2:-}"
+  [ -n "$v" ] && [ "${v#-}" = "$v" ] || refuse "$1 needs a value"
+  printf '%s' "$v"
 }
 
 while [ $# -gt 0 ]; do
@@ -49,27 +62,27 @@ while [ $# -gt 0 ]; do
   --verify) verify=1 ;;
   --record) record=1 ;;
   --recipe)
-    recipe="$2"
+    recipe=$(value "$1" "${2:-}")
     shift
     ;;
   --disk)
-    disk="$2"
+    disk=$(value "$1" "${2:-}")
     shift
     ;;
   --mount)
-    mount="$2"
+    mount=$(value "$1" "${2:-}")
     shift
     ;;
   --root-fs)
-    root_fs="$2"
+    root_fs=$(value "$1" "${2:-}")
     shift
     ;;
   --root-device)
-    root_device="$2"
+    root_device=$(value "$1" "${2:-}")
     shift
     ;;
   --esp-device)
-    esp_device="$2"
+    esp_device=$(value "$1" "${2:-}")
     shift
     ;;
   --help | -h)
@@ -89,11 +102,6 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-
-refuse() {
-  printf 'terraform.sh: %s\n' "$*" >&2
-  exit 2
-}
 
 # Checked once, up front: every partition-table read below goes through jq, and a table that holds
 # no partitions must be reported as an empty table, never as a missing tool.
@@ -881,11 +889,17 @@ record_recipe() {
   for n in "${!entry_lines[@]}"; do
     node="${resolved[$n]:-}"
     IFS="$sep" read -r name _label fs _size _type _mnt <<<"${entry_lines[$n]}"
-    local id
+    local id sig
     id=$(uuid_of "$node")
     # What the drive carries wins: reformatting a filesystem to a derived identity would break the
-    # config that already names it.
-    [ -n "$id" ] || id=$(identity_for "$name" "$fs")
+    # config that already names it. A filesystem whose identity blkid cannot read is not blank: a
+    # run without root would write a derived identity onto a filesystem that carries another.
+    if [ -z "$id" ]; then
+      sig=$(signature "$node")
+      [ -z "$sig" ] ||
+        refuse "recipe entry $name: $node holds $sig but blkid reports no identity — --record needs root to read it"
+      id=$(identity_for "$name" "$fs")
+    fi
     out+=("$id")
   done
   uuid_json=$(printf '%s\n' "${out[@]}" | jq -R -s -c 'split("\n")[:-1]')
@@ -1099,18 +1113,17 @@ if [ -n "$verify" ]; then
   exit 0
 fi
 
-# --record folds the drive's UUIDs into the recipe. It writes one file and changes no partition, and
-# install.sh's terraform stage calls it only after the reproduction and its verification have both
-# come back clean — a failed run leaves no recipe behind.
+# --record is a run, not a mode: the reproduction happens first and the record is its last act, so a
+# drive that was never laid out is never recorded as if it were. What it checks is settled here, so a
+# run that cannot record refuses before a single sector is written.
 if [ -n "$record" ]; then
   [ -n "$recipe" ] || refuse "--record folds a recipe onto the drive it installed: --recipe is required"
   [ "$dry" = 0 ] || refuse "--record edits $recipe; --dry-run writes nothing"
-  record_recipe
-  exit 0
 fi
 
 if [ "$owns" = true ]; then
   owned_run
+  if [ -n "$record" ]; then record_recipe; fi
   exit 0
 fi
 
@@ -1378,3 +1391,5 @@ if [ -n "$recipe" ] && [ "$dry" = 0 ]; then
   verify_recipe
   verify_mount "$root_part"
 fi
+
+if [ -n "$record" ]; then record_recipe; fi

@@ -182,8 +182,9 @@ drives can answer to one label. The identities a run formats are _derived from t
 `sha256sum "<host>/<partition name>"` rendered as a v4 UUID, or as a vfat volume serial (`05A7-605A`
 shape) — and `mkfs` is told them: `mkfs.ext4 -U`, `mkfs.btrfs -U`, `mkfs.xfs -m uuid=`,
 `mkfs.fat -i`. The filesystem that comes out of the run therefore answers to a name the recipe already
-knew, and the same recipe reproduces the same drive. `install.sh --stage terraform` calls `--record` as
-its last act, after the reproduction and its checks came back clean, and that writes the identities into
+knew, and the same recipe reproduces the same drive. `install.sh --stage terraform` calls `--record`
+as its last act — the reproduction and the record are one call, so a drive that was never laid out is
+never recorded as if it were — and that writes the identities into
 `hosts/<host>/terraform.json` **itself** — commit the file, then `nix flake check`. A run that failed
 leaves the recipe untouched, and `--stage deploy` refuses until the recipe carries them. A recipe that
 already declares every identity has nothing to record, so the stage says nothing about it.
@@ -191,7 +192,8 @@ already declares every identity has nothing to record, so the stage says nothing
 `--record` writes the file it was **given**, so a checked-in recipe is the workflow: there is no copy
 step and nothing written onto the drive. An identity is derived only where the recipe declares none —
 an adopted filesystem keeps the uuid it already carries, because re-cutting it would break the config
-that names it. `mkfs.fat` takes a bare hex volume id, so a vfat "uuid" is the 32-bit serial blkid
+that names it. Reading a filesystem that already exists needs root: `--record` refuses rather than
+writing a derived identity onto a filesystem that carries another. `mkfs.fat` takes a bare hex volume id, so a vfat "uuid" is the 32-bit serial blkid
 reports as `XXXX-XXXX`; ext4, btrfs and xfs carry a UUID. `--emit` prints whatever the drive reports,
 and leaves it empty on a partition with no filesystem to read.
 
