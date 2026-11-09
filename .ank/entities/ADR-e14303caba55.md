@@ -5,7 +5,7 @@ slug: a-recipe-assigns-its-filesystem-identities-and-m
 title: a recipe assigns its filesystem identities, and mkfs is told them
 created: 2026-11-09T04:01:58Z
 author: josh@methyl-bazzite
-status: proposed
+status: accepted
 scope:
   - terraform.sh
   - install.sh
@@ -20,6 +20,8 @@ enforced_by:
   - install.sh#deploy
   - lib/filesystems.nix#mountsFromRecipe
 amends: [ADR-8cd71b226ffb]
+ratified: 6c44870467b9
+anchor: 6d17873cde84bdc3c20f4b70eafecae021bbcb94
 schema: 4
 version: 1
 ---
