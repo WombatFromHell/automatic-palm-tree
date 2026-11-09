@@ -91,7 +91,7 @@ After a NixOS switch, `/etc/nix/nix.conf` carries the caches from `flakeCache.en
 
 `terraform.sh` is the only thing this repo lets touch a drive (ADR-b77ec913151f), and
 `hosts/<host>/terraform.json` is the layout it acts on — the recipe replaced the flags that named a
-filesystem and a device path. Its tools come from the devShell (`util-linux`, `gptfdisk`,
+filesystem and a device path. Its tools come from the devShell (`util-linux`,
 `dosfstools`, `e2fsprogs`, `btrfs-progs`, `xfsprogs`, `jq`), so the invocation is
 `nix develop --command bash terraform.sh …`. `install.sh --stage terraform` runs it with
 `--recipe <file> --disk <device> --mount <root>`, and `--stage deploy` refuses to install until

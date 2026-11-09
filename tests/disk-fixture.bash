@@ -36,18 +36,26 @@ fixture_dir() { disk_dir="$(mktemp -d)"; }
 fixture_teardown() { rm -rf "$disk_dir"; }
 
 # build_shape <name> [index:start:end:type:name...] — a sparse image with a real GPT, built once.
-# sgdisk costs about a second per call on a regular file, so shapes are built once per file and
-# copied per test; building an image inside a test is what made this suite slow.
+# Shapes are built once per file and copied per test; building an image inside a test is what made
+# this suite slow. It writes with sfdisk, the same tool terraform.sh uses: start and size in exact
+# sectors, so sfdisk follows the geometry the test names instead of aligning it, and GPT wants a
+# type GUID, which every type constant above already is.
 build_shape() {
-  local img="$template_dir/$1.img" spec args=()
+  local img="$template_dir/$1.img" spec layout lines=() names=()
   truncate -s 64M "$img"
   shift
   for spec in "$@"; do
     IFS=: read -r idx start end type name <<<"$spec"
-    args+=(--new="$idx:$start:$end" -t "$idx:$type" -c "$idx:$name")
+    lines+=("$(printf '%s %s %s' "$start" "$((end - start + 1))" "$type")")
+    names+=("$idx:$name")
   done
-  [ "${#args[@]}" -gt 0 ] || return 0
-  sgdisk "${args[@]}" "$img" >/dev/null
+  [ "${#lines[@]}" -gt 0 ] || return 0
+  layout=$(printf '%s\n' "${lines[@]}")
+  sfdisk -X gpt "$img" <<<"$layout" >/dev/null
+  # Names are a second pass: sfdisk writes the table from stdin and labels one partition per call.
+  for n in "${names[@]}"; do
+    sfdisk --part-label "$img" "${n%%:*}" "${n#*:}" >/dev/null
+  done
 }
 
 # fixture_setup_file / fixture_teardown_file — the drive shapes every test needs, built once for the
@@ -61,10 +69,8 @@ fixture_setup_file() {
   local root="2:$LINUX_START:$LINUX_END:$LINUX_TYPE:root"
   local msr="2:$MSR_START:$MSR_END:$MSR_TYPE:msr"
   local ntfs="3:$NTFS_START:$NTFS_END:$NTFS_TYPE:basic-data"
-  # Each shape is its own file, so the shapes build concurrently: sgdisk costs ~1.01s per image
-  # whatever the partition count, which made 11 serial builds ~11.1s of a 17.2s tier, and the same
-  # 11 in parallel measure ~1.0s. `wait` is the barrier -- a failed shape fails setup_file, so a
-  # background job cannot silently leave a missing template.
+  # Each shape is its own file, so the shapes build concurrently. `wait` is the barrier -- a failed
+  # shape fails setup_file, so a background job cannot silently leave a missing template.
   {
     build_shape bare
     build_shape raw
@@ -358,7 +364,8 @@ terraform_recipe_run() {
 }
 
 # terraform_run — the shipped script against the fixture. mount and findmnt stay stubbed (they take
-# root); sgdisk, wipefs, parted and fdisk are stubbed to fail, so a partition write is caught on the
+# root); sgdisk, wipefs, parted and fdisk are stubbed to fail, so a partition write by any of them
+# is caught on the
 # call log instead of silently tolerated.
 terraform_run() {
   local disk="$1"

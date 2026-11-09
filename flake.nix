@@ -124,9 +124,10 @@
           # against the vendored keyring; the suite stubs curl/nix but calls real gpg.
             [curl jq nix bats parallel shellcheck shfmt nix-unit gnupg]
             ++
-            # terraform.sh's tools: the table reader, the signature reader, the five filesystem
-            # formatters and mtools for reading an ESP that lives in a file (tests/disk-fixture.bash).
-            [util-linux gptfdisk dosfstools mtools e2fsprogs btrfs-progs xfsprogs];
+            # terraform.sh's tools: the table reader and partition writer, the signature reader, the
+            # five filesystem formatters and mtools for reading an ESP that lives in a file
+            # (tests/disk-fixture.bash builds its shapes with the same sfdisk terraform.sh uses).
+            [util-linux dosfstools mtools e2fsprogs btrfs-progs xfsprogs];
         };
       }
     );

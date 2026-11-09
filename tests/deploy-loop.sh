@@ -8,7 +8,7 @@
 # Image size defaults to 4G; override with DEPLOY_LOOP_SIZE=8G.
 #
 # Root is required for losetup and mount (measured: both Permission denied as uid 1000, even inside
-# `unshare -r -m`). Nix supplies sgdisk/mkfs/lsblk/blkid/mcopy/jq. Not part of tests/run.sh, which
+# `unshare -r -m`). Nix supplies sfdisk/mkfs/lsblk/blkid/mcopy/jq. Not part of tests/run.sh, which
 # stays root-free.
 set -uo pipefail
 

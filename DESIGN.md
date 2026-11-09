@@ -38,7 +38,7 @@ hosts/             # host records: <name>.nix or <name>/ (nixos.nix + home-<user
                    #   not a host: no default.nix)
 tests/             # eval-only suite (see TEST_DESIGN.md); nix-eval.sh caps each eval in RAM
                    #   bats tiers run against PATH stubs; terraform.bats + disk-fixture.bash drive
-                   #   real mkfs/blkid/sgdisk on sparse loop files; deploy-loop.sh needs root
+                   #   real mkfs/blkid/sfdisk on sparse loop files; deploy-loop.sh needs root
 bootstrap.sh       # day-zero switch: cache urls/keys via --option, then switch
 install.sh         # staged installer: prepare / terraform / deploy / postdeploy / reboot
 terraform.sh       # the only thing here that touches a drive (ADR-b77ec913151f)
@@ -402,7 +402,7 @@ flowchart LR
   E7["credsctl / sopsctl (on PATH)<br/>credsctl: list, encrypt, decrypt [--env], rm<br/>sopsctl: init [--from-ssh], keys, encrypt, decrypt, get, set,<br/>rekey, recipients, protected, verify"] --> CR["credential records, one file each<br/>name.cred = systemd-creds, sealed to this machine<br/>name.sops.json / name.sops.yaml = sops through sopsctl, portable"]
   E8["nix run .#apps.&lt;system&gt;.cache-check &lt;host&gt;"] --> CF["eval-only cache pre-flight (lib/cache-check.sh):<br/>which caches the host's enabled features require<br/>but do not substitute from"]
   E9["nix run .#apps.&lt;system&gt;.style"] --> ST["lib/style.sh: every .nix through alejandra + statix,<br/>every .sh/.bats through shfmt + shellcheck, markdown through oxfmt (.ank excluded)<br/>tools from the app's runtimeInputs, not the host profile"]
-  E10["nix develop"] --> DEV["curl jq nix bats shellcheck shfmt nix-unit<br/>+ terraform.sh's disk tools (util-linux, gptfdisk,<br/>dosfstools, mtools, e2fsprogs, btrfs-progs, xfsprogs):<br/>where features/*/update.sh and terraform.bats run"]
+  E10["nix develop"] --> DEV["curl jq nix bats shellcheck shfmt nix-unit<br/>+ terraform.sh's disk tools (util-linux,<br/>dosfstools, mtools, e2fsprogs, btrfs-progs, xfsprogs):<br/>where features/*/update.sh and terraform.bats run"]
   E11["install.sh --stage prepare|terraform|deploy|postdeploy|reboot <host>"] --> INS["staged installer on the target drive:<br/>prepare read-only + partition-table checksum,<br/>terraform through terraform.sh (--verify decides whether the stage asks),<br/>deploy nixos-install --root, postdeploy ssh keys + passwords,<br/>one confirm per stage (--force is the testing override)"]
   E12["terraform.sh --emit | --recipe <file> [--verify]"] --> DRV["reproduce hosts/<host>/terraform.json on its drive<br/>and re-read the drive before reporting success"]
 ```

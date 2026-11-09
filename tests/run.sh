@@ -243,7 +243,7 @@ devtools=$(mktemp "${TMPDIR:-/tmp}/gate-tools.XXXXXX")
 # shellcheck disable=SC2016
 gate "nix develop resolves the updater, disk and parallel tools" devshell nix develop --command \
   env DEVTOOLS_OUT="$devtools" bash -c 'rc=0
-    for t in curl jq nix bats parallel shellcheck shfmt sfdisk blkid mkfs.vfat mkfs.ext4 mcopy sgdisk nix-unit; do
+    for t in curl jq nix bats parallel shellcheck shfmt sfdisk blkid mkfs.vfat mkfs.ext4 mcopy nix-unit; do
       p=$(command -v "$t" 2>/dev/null || true)
       printf "%s=%s\n" "$t" "$p" >>"$DEVTOOLS_OUT"
       if [ -z "$p" ] && [ "$t" != nix-unit ]; then rc=1; fi
@@ -455,7 +455,7 @@ else
     bats "${jobs[@]}" "${stub_suites[@]}" >"$tiers/stub" 2>&1
     printf '%s' "$?" >"$tiers/stub.rc"
   ) &
-  # terraform.bats is not stub-driven: it runs real mkfs, blkid, mtools and sgdisk on sparse files,
+  # terraform.bats is not stub-driven: it runs real mkfs, blkid, mtools and sfdisk on sparse files,
   # so it runs in the devShell, which is the environment that carries those tools
   # (ADR-b77ec913151f). Running it plainly would skip it on any machine without them, which is where
   # the proof matters. 16 jobs: the fixture copies are sparse now, so the peak is ~1.39GB with no

@@ -953,6 +953,10 @@ owned_run() {
   # Mounting is not destructive, so it is not prompted.
   opts=$(mount_opts "$root_fs" "$root_opts")
   mounted_now=0
+  # mount refuses a target that is not a directory: an install medium whose root is tmpfs
+  # has no /mnt at all, so the mount root gets the same mkdir mount_extra does for its
+  # siblings — creating a directory is not a destructive step.
+  run mkdir -p "$mount"
   if findmnt -n -o SOURCE "$mount" >/dev/null 2>&1; then
     say "$mount already mounted — adopted, not rebuilt"
   else
@@ -1293,6 +1297,9 @@ if findmnt -n -o SOURCE "$mount" >/dev/null 2>&1; then
   say "$mount already mounted — adopted, not rebuilt"
 else
   opts=$(mount_opts "$root_fs" "$root_opts")
+  # mount refuses a target that is not a directory: an install medium whose root is tmpfs has
+  # no /mnt at all, so the mount root gets the same mkdir mount_extra does for its siblings.
+  run mkdir -p "$mount"
   if [ -n "$opts" ]; then
     run mount -o "$opts" "$root_part" "$mount"
   else

@@ -24,7 +24,11 @@ last=\$#
 # The device is the second-to-last argument and the target is the last one, so this models
 # \`mount <node> <dir>\` and \`mount -o subvol=@ <node> <dir>\` alike. Each mount is recorded against
 # its own target, so findmnt below can answer per path rather than "something is mounted".
-mkdir -p "\${@:last:1}"
+# Real mount refuses a target that is not a directory; the run is expected to create it.
+if [ ! -d "\${@:last:1}" ]; then
+  echo "mount: \${@:last:1}: mount point does not exist" >&2
+  exit 32
+fi
 printf '%s %s\n' "\${@:last:1}" "\${@:last-1:1}" >> "$stubs/mounts"
 exit \${MOUNT_EXIT:-0}
 EOF
@@ -130,6 +134,20 @@ teardown() {
   [ "$status" -eq 2 ]
   assert_out "no partition table"
   assert_no_call "mount "
+}
+
+# The installer mounts the root itself, and mount refuses a target that is a non-directory. A
+# minimal install medium (tmpfs root) has no /mnt at all, so terraform.sh creates the mount root the
+# way mount_extra creates its siblings. mkdir is not stubbed, so the proof is the directory itself:
+# the mount stub refuses a target that is not a directory, so a green run can only mean it was made.
+@test "the mount root is created when the target directory does not exist" {
+  truncate -s 128M "$disk_dir/own.img"
+  stub_lsblk "$disk_dir/own.img"
+  recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
+  run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
+  [ "$status" -eq 0 ]
+  [ -d "$disk_dir/mnt" ]
+  assert_call "^mount $disk_dir/own.img2 $disk_dir/mnt$"
 }
 
 @test "a blank ESP and a blank root, both declared by label, are formatted once" {
@@ -1198,8 +1216,8 @@ assert_no_json() {
 
   # What the operator adds is exactly the one thing the drive could not show. The ESP carries no
   # filesystem label here, which is the normal case on a Windows drive, and the run still names it.
-  # The size is left off on purpose: sgdisk aligns this partition away from the geometry the test
-  # names, so the partition is whatever Windows left and an entry that adopts it asks for nothing.
+  # The size is left off on purpose: the partition is whatever Windows left, and sfdisk writes it at
+  # that exact geometry, so an entry that adopts it asks for nothing.
   jq '.partitions += [{name: "root", label: "nixos", fs: "ext4", mount: "/"}]' "$stubs/emit.json" >"$stubs/declared.json"
 
   snapshot winblank

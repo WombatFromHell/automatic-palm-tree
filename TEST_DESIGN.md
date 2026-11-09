@@ -29,7 +29,7 @@ root.
 flowchart TD
   R["tests/run.sh"] --> N["tests/nix-eval.sh<br/>transient systemd scope per capped step<br/>(MemoryMax / MemoryHigh / MemorySwapMax)<br/>peak= reported on stderr"]
   R --> LN["shipped shell lint<br/>shellcheck over the scripts writeShellApplication never sees:<br/>bootstrap.sh, update-all.sh, lib/updater.sh, lib/cache-check.sh,<br/>lib/style.sh, install.sh, terraform.sh, lib/confirm.sh, the pinentry + nasmount scripts"]
-  R --> DV["nix develop resolves the updater and disk tools<br/>curl jq nix bats shellcheck shfmt<br/>+ sfdisk blkid mkfs.vfat mkfs.ext4 mcopy sgdisk"]
+  R --> DV["nix develop resolves the updater and disk tools<br/>curl jq nix bats shellcheck shfmt<br/>+ sfdisk blkid mkfs.vfat mkfs.ext4 mcopy"]
   N --> U["tests/suite.nix<br/>nix-unit test* attributes in one process<br/>filesystems, pins, caches, warnings, swap, loader<br/>+ two tripwires; a failing attribute prints its own diff<br/>skip when nix-unit is absent from the devShell"]
   N --> G["eval suites, one process each<br/>tests/home.nix, mounts.nix, outputs.nix, wrap.nix<br/>via nix eval --impure --file"]
   N --> B["fixture builds — the build's exit status is the assertion<br/>appdir, brave-layout, shellwrap, yazi-install"]
@@ -37,7 +37,7 @@ flowchart TD
   R --> M["bootstrap.sh mocked rebuild<br/>stub sudo + stub nixos-rebuild report their own cgroup:<br/>the scope wrap is observed, not grepped; plus the no-user-bus fallback"]
   R --> P["expander parity<br/>one nix eval lists every features/*/metadata.json x pinned system;<br/>bash expands the same list through render_url and diffs byte-for-byte"]
   R --> I["stub bats suites, against PATH stubs<br/>bootstrap, build-harness, njust, creds, sopsctl, xilo, updater, install,<br/>cache-check (apps.cache-check's exit codes against a stubbed `nix`)<br/>skip when bats is absent"]
-  R --> T["tests/terraform.bats<br/>inside `nix develop`, which carries the disk tools, inside a scope,<br/>bats --jobs: real mkfs/blkid/mtools/sgdisk on sparse images<br/>whose partitions are files; skip when nix, bats or parallel is absent"]
+  R --> T["tests/terraform.bats<br/>inside `nix develop`, which carries the disk tools, inside a scope,<br/>bats --jobs: real mkfs/blkid/mtools/sfdisk on sparse images<br/>whose partitions are files; skip when nix, bats or parallel is absent"]
   LN --> X["exit 0 = repo is green"]
   DV --> X
   U --> X
@@ -101,14 +101,15 @@ here takes root, formats, or installs.
 `tests/terraform.bats` (80 tests) is the byte-level half, and it is not stub-driven. The fixtures in
 `tests/disk-fixture.bash` are sparse images with a real GPT, sized to the smallest device each
 filesystem accepts (ext4 6MB, btrfs ~114MB, xfs ~300MB — each `mkfs` refuses below its own floor),
-and built once per file: `sgdisk` costs about a second per call, and the three drives whose tests
+and built once per file with `sfdisk`, the tool `terraform.sh` itself writes tables with, and the
+three drives whose tests
 only read a filesystem that already exists are formatted in `fixture_setup_file` too, which is what
 made the suite slow when images and filesystems were built inside a test. Formatting rewrites the
 superblocks, so the holes are punched back out afterwards and every copy into a run directory is
 sparse — a copy costs what the filesystem actually wrote, not the whole drive, and the byte-parity
 assertions still hold because a sparse copy reproduces every byte. Each partition is extracted with
 `dd` to a file named exactly the way `sfdisk` names a node (`<disk>1`). So `blkid`, `mkfs.vfat`,
-`mkfs.ext4`, `mkfs.btrfs`, `mtools`, `debugfs` and `sgdisk` all
+`mkfs.ext4`, `mkfs.btrfs`, `mtools`, `debugfs` and `sfdisk` all
 run for real on paths, with no root and no loop device: a blank partition really gets formatted, and
 a partition another OS owns comes back byte-identical. Only `mount` and `findmnt` are stubbed (they
 need root), and every tool that could rewrite a partition entry is stubbed to fail, so a partition
@@ -443,10 +444,57 @@ the password.
 
 A person drives the same harness through `tests/vm-shell.sh`, which hands the serial console to the
 terminal (`tee`, not a redirect) instead of asserting markers. `tests/vm-check.bats` drives it with
-`--script` so the interactive path is exercised rather than assumed. Either way the guest ends the run
-by powering off — `uptime; echo MARKER; poweroff` on one line, because `exit` first would land the
-shutdown on the respawned login prompt, where it reads as a username — and the boot's `timeout` stays
-as the backstop for a guest that never gets there.
+`--script` so the interactive path is exercised rather than assumed. A script runs from the share the
+guest already mounts — the runner types `bash /repo/<path>`, one line — because typing a whole
+file makes the guest echo every line back, which swallows lines at a login prompt and puts the probe's
+own source text in the log beside its output. The runner waits for the guest's boot banner before it
+types or sshes: sshd's readiness line goes to the journal and never reaches ttyS0. A scripted run
+capped at 120s ends on the probe's marker, and a probe that reports failure ends the run with a
+non-zero exit instead of idling at the respawned login prompt — that idle is what a failing run looks
+like from the outside, and `poweroff` cannot be typed after `fail()` exits, because there is no shell
+left and the line reads as a username. The forwarded ssh port stays loopback unless `VM_SHELL_BIND`
+asks for otherwise — the guest is scratch, so publishing it on every interface is a person's choice —
+and with the port published the run names this host's own address, since qemu's user-mode networking
+makes the guest's `10.0.2.15` internal to qemu and unreachable from any machine. Bridging instead
+(`virtualisation.qemu.networkingOptions`, a tap on `br0`) is the upgrade, and it needs root: tap
+creation and enslaving need `CAP_NET_ADMIN`, and `br0` currently has no carrier because no LAN port
+is enslaved. The boot's `timeout` stays as the backstop for a guest that
+never gets there; an interactive run keeps the 300s ceiling, since a person at the keyboard is not
+being timed.
+
+Every run recreates a raw store disk in the run dir (`truncate -s`, then `mkfs.ext4`, then `debugfs`
+mkdirs the overlay's `upper`/`work`) and moves the writable store onto it: `writableStoreUseTmpfs`
+is false and `/nix/.rw-store` mounts the appended drive (`/dev/vdc`) instead of a tmpfs, so
+registering paths costs disk rather than the guest's RAM — the read-only store image stays underneath
+as the overlay's lower half. The image is sparse on XFS: `truncate` allocates nothing and `mkfs.ext4`
+defers the inode tables (measured: 0 bytes, then 4.3 MB), so an empty guest leaves an empty file and
+the run dir's removal frees whatever was written. `tests/vm-shell.sh --push HOST` builds that host's
+closure on this host, in its own scope, before the guest boots, and streams it into the guest's own
+store over ssh once the forwarded port answers: `nix copy --no-check-sigs --to
+ssh://vm@127.0.0.1:<port>`, with the guest's `vm` user in `nix.settings.trusted-users` because the
+daemon refuses unsigned paths for anyone else. Nothing of this host's `/nix/store` is ever shared, so
+a guest with autologin root reads only the closure it was handed. Measured: the ssh store peaked at
+22 MB of host RSS, where a staged copy of the paths cost gigabytes of disk and `nix copy --to
+file://…` (a NAR cache) OOM-killed a 1200 MB scope mid-closure. The closure path travels in `/repo/push-system`, never in the guest
+config: naming a store path there fails the derivation's reference check, which is what killed the
+first `--push`. The push probe asserts the closure is registered in the guest's store, installs it
+onto the blank drive with `install.sh --stage prepare,terraform,deploy`, and asserts the boot loader
+entries and store paths that came out of that install. It copies gigabytes, so it runs only under
+`VM_PUSH=1`.
+
+Booting the installed drive (`--push HOST --boot`) is a second qemu run, not a reboot: `reboot` inside
+the deploy guest re-runs the same tmpfs config with the same kernel and initrd, so the drive is never
+what boots. The probe copies the installed `kernel`, `initrd` and boot parameters out through a
+writable share, because a host cannot read a file out of a qcow2 without root (`qemu-nbd` needs
+`CAP_NET_ADMIN` and module loading), and this pinned nixpkgs ships no plain `OVMF` (only
+`OVMF-cloud-hypervisor` and `OVMF-xen`) while this host has no firmware file either. The runner boots
+qemu with `-kernel`/`-initrd` from those files and `root=` set to the partition the probe saw as its
+root, the deployed qcow2 as `/dev/vdb` behind a blank drive — the installed config's mount sources
+name `/dev/vdb1`, and a drive that appears as `/dev/vda1` would not mount. The proof is the guest's
+own welcome banner, a live `login:` at the tail of the log, and a shell prompt after the login typed
+from the secret file; `login(1)` never echoes the password, so the log holds the login and not the
+secret. Direct kernel boot proves the installed generation boots; it does not prove the ESP's entries
+are what a machine would pick, which is the caveat named above.
 
 ## What we do not cover
 
