@@ -201,6 +201,17 @@ let
           && (e.mounts == {} || cfg.fileSystems."/var/log".neededForBoot)
           && (e.mounts == {} || cfg.fileSystems."/boot".fsType == "vfat")))
 
+      # A layout this flake creates has to name its filesystems, not their labels: a label is unique
+      # only within one drive, and a recipe whose identities are only learned by --record rewrites
+      # the file the config is derived from, which changes the closure hash on the first deploy.
+      # terraform.sh refuses to stamp an owns=false recipe for the same reason: an adopted
+      # filesystem already carries an identity of its own, so that recipe names by label until
+      # --record folds what the drive actually carries.
+      (ck "${host}: every mount its own recipe names is identified by a UUID"
+        (!builtins.pathExists ../hosts/${host}/terraform.json
+          || !recipe.owns
+          || lib.all (p: (p.mount or "") == "" || (p.uuid or "") != "") (recipe.partitions or [])))
+
       # --- nixGL disabled on this NixOS host ------------------------------------
       # features/hm-nixgl sets packages only when flakeHost.isNixOS is false, and Home Manager's
       # wrapper is a no-op on null. Asserted here rather than in tests/wrap.nix because this is
@@ -239,7 +250,8 @@ let
                 nvtop = lib.head (s.pkgNamed (homeCfg cfg).home.packages "nvtop");
               in
                 # The package installed is the variant the option names, whatever the host set.
-                nvtop.outPath == s.pkgs.nvtopPackages.${variant}.outPath
+                nvtop.outPath
+                == s.pkgs.nvtopPackages.${variant}.outPath
                 && lib.all (i: !lib.hasPrefix "cuda" (s.pkgName i)) nvtop.buildInputs)))))
 
       # --- this host's own profile effects -------------------------------------

@@ -29,7 +29,8 @@ force="${INSTALL_FORCE:-0}"
 # The ISO's /nix/store has no room and Nix refuses a store under a world-writable /tmp, so the
 # evals and the install build go to a store under /run (tmpfs, 755).
 scratch="${INSTALL_SCRATCH:-/run/flakeroot-scratch}"
-# INSTALL_PASSWORDS (user:password lines), INSTALL_SYSTEM (a toplevel store path) and INSTALL_DRIVE
+# INSTALL_ZRAM=0 leaves zram alone (a caller whose guest is capped at MemoryMax cannot swap into
+# RAM), INSTALL_PASSWORDS (user:password lines), INSTALL_SYSTEM (a toplevel store path) and INSTALL_DRIVE
 # (the drive to deploy onto) are the non-interactive path: passwords without a terminal, an install
 # of a closure built on the machine that called the installer rather than one built inside it, and a
 # target drive for a guest whose root is tmpfs and so names no drive of its own.
@@ -280,6 +281,12 @@ resolve() {
 # whenever it is missing, not only when RAM looks short at the moment of the check: the pressure
 # arrives mid-build, after the free-space reading.
 add_zram() {
+  # A caller that caps memory cannot spill into zram: zram is RAM, so swapping into it spends
+  # the very bytes the cap measures (measured in tests/vm-check.bats: 2332 MB against a 1300 MB cap).
+  if [ "${INSTALL_ZRAM:-1}" = 0 ]; then
+    say "zram skipped: INSTALL_ZRAM=0 — this caller caps memory, and zram is RAM"
+    return
+  fi
   if [ -n "$(lsblk -n -o TYPE /dev/zram0 2>/dev/null)" ]; then
     return
   fi
@@ -499,7 +506,9 @@ postdeploy() {
     # declare must leave the tree untouched, not leave it half-set.
     pairs=()
     while IFS= read -r line; do
-      [ -n "$line" ] || continue
+      # Blank lines and comments in a passwords file are documentation, not accounts: chpasswd takes
+      # user:password, and a header line read as a pair refuses the whole batch.
+      case "$line" in '' | '#'*) continue ;; esac
       user=${line%%:*}
       known=0
       for a in root $admins; do

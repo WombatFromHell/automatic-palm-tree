@@ -447,6 +447,16 @@ run_install() {
   assert_out "partition table unchanged"
 }
 
+# zram is RAM-backed: bytes swapped into it are bytes the caller's memory cap still counts, so a
+# caller that caps the guest (tests/vm-shell-push-probe.sh, at MemoryMax=1300M) must not spill there.
+@test "INSTALL_ZRAM=0 skips zram, so a capped guest does not swap into RAM" {
+  INSTALL_ZRAM=0 INSTALL_FORCE=1 run run_install --stage prepare methyl-nixos
+  [ "$status" -eq 0 ]
+  assert_no_call "zram0"
+  assert_out "zram skipped"
+  assert_out "partition table unchanged"
+}
+
 # A recipe run records nothing itself: install.sh's terraform stage writes the filesystem identities
 # into the recipe, after the reproduction and its checks came back clean, so a run that failed leaves
 # the recipe untouched.
@@ -753,15 +763,15 @@ EOF
   printf '%s\n' "$dir"
 }
 
-# The recipe this flake commits for its owned host, read from the tree so the suite can never drift
-# from the file install.sh acts on.
-owned_recipe() { cat "$repo/hosts/methyl-nixos/terraform.json"; }
+# The recipe this flake commits for its owned host, with its identities stripped: the state a recipe
+# is in before its first stamp or its first record. Stripped from the tree file rather than retyped,
+# so the fixture cannot drift from it.
+owned_recipe() { jq 'del(.partitions[].uuid)' "$repo/hosts/methyl-nixos/terraform.json"; }
 
-# The same recipe with a UUID on every partition, which is what terraform.sh records onto the drive
-# and what deploy accepts. Inserted rather than retyped, so the fixture cannot drift from the file.
-uuid_recipe() {
-  sed 's/"label": /"uuid": "e7b0e010-10bf-4984-b941-5c7c182d1b74", "label": /' "$repo/hosts/methyl-nixos/terraform.json"
-}
+# The same recipe with a filesystem identity on every partition — what terraform.sh --stamp writes
+# before a drive exists, what --record folds onto one that does, and what deploy accepts. It is the
+# committed file itself now, so the fixture cannot drift from it either.
+uuid_recipe() { cat "$repo/hosts/methyl-nixos/terraform.json"; }
 
 run_install_in() { # <repo dir> [install.sh args]
   local dir="$1"
@@ -1026,6 +1036,19 @@ EOF
   [ "$status" -eq 2 ]
   assert_out "mallory"
   assert_no_call "^nixos-enter"
+}
+
+# A passwords file is operator input, and a comment in it is documentation, not an account. The VM
+# tier's fixture file carries a header line, so reading every line as a pair refuses the run.
+@test "INSTALL_PASSWORDS ignores comment lines" {
+  printf '1\n' >"$stubs/mounted"
+  dir=$(recipe_repo methyl-nixos "$(owned_recipe)")
+  stub_chpasswd
+  INSTALL_PASSWORDS=$'# fake fixture credentials - not secrets\nroot:toortest\njosh:testpass' INSTALL_FORCE=1 run run_install_in "$dir" --stage postdeploy methyl-nixos
+  [ "$status" -eq 0 ]
+  assert_out "password set for root"
+  assert_out "password set for josh"
+  assert_no_out "postdeploy refused"
 }
 
 # The reboot guard reads the installed shadow, so a password supplied through the environment is

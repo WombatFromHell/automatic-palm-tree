@@ -1096,6 +1096,107 @@ EOF
   [ "$(jq -r '.partitions[] | select(.name == "root") | .uuid' "$stubs/recipe.json")" = "$(uuid_of own 2)" ]
 }
 
+# --stamp is the fold that needs no drive: identity_for derives the identities a blank run would
+# format blank partitions with, and the stamp puts them in the recipe before the drive exists. That
+# is what makes a host's closure one hash: the recipe file the flake reads never changes afterwards,
+# so `--record` on the first deploy has nothing to fold in.
+stamp_run() { # <recipe> [flags]
+  bash "$repo/terraform.sh" --recipe "$1" --stamp "${@:2}"
+}
+
+@test "--stamp declares the identities a blank run would format with, with no drive named" {
+  mkdir -p "$stubs/host-a"
+  recipe_file "$stubs/host-a/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  cp "$stubs/host-a/recipe.json" "$stubs/host-a/before.json"
+  run stamp_run "$stubs/host-a/recipe.json"
+  [ "$status" -eq 0 ]
+  assert_out "stamped the filesystem identities into $stubs/host-a/recipe.json"
+  # A canonical v4 UUID for the data partition, mkfs.fat's 32-bit serial for the ESP: the two shapes
+  # blkid reports back, so the recipe can name a filesystem mkfs is about to make.
+  jq -e '(.partitions[] | select(.name == "root") | .uuid) | test("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")' "$stubs/host-a/recipe.json" >/dev/null
+  jq -e '(.partitions[] | select(.name == "esp") | .uuid) | test("^[0-9A-F]{4}-[0-9A-F]{4}$")' "$stubs/host-a/recipe.json" >/dev/null
+  # The layout is preserved: a stamped recipe is the same recipe with identities added, and nothing else.
+  jq -e --argjson before "$(cat "$stubs/host-a/before.json")" '. as $now | ($now | del(.partitions[].uuid?)) == ($before | del(.partitions[].uuid?))' "$stubs/host-a/recipe.json" >/dev/null
+}
+
+@test "--stamp is reproducible, and one host's partition name is never another host's identity" {
+  mkdir -p "$stubs/host-a" "$stubs/host-b"
+  recipe_file "$stubs/host-a/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  run stamp_run "$stubs/host-a/recipe.json"
+  [ "$status" -eq 0 ]
+  cp "$stubs/host-a/recipe.json" "$stubs/host-a/first.json"
+  run stamp_run "$stubs/host-a/recipe.json"
+  [ "$status" -eq 0 ]
+  jq -e --argjson first "$(cat "$stubs/host-a/first.json")" '. == $first' "$stubs/host-a/recipe.json" >/dev/null
+
+  recipe_file "$stubs/host-b/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  run stamp_run "$stubs/host-b/recipe.json"
+  [ "$status" -eq 0 ]
+  assert_out "stamped the filesystem identities into $stubs/host-b/recipe.json"
+  jq -e --arg root "$(jq -r '.partitions[] | select(.name == "root") | .uuid' "$stubs/host-a/first.json")" '(.partitions[] | select(.name == "root") | .uuid) != $root' "$stubs/host-b/recipe.json" >/dev/null
+}
+
+# A recipe that already names every filesystem needs no stamp: a committed recipe is the state a
+# re-run leaves alone, so re-stamping it changes no closure.
+@test "--stamp writes nothing when the recipe already declares every uuid" {
+  mkdir -p "$stubs/host-a"
+  recipe_file "$stubs/host-a/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  recipe_uuid "$stubs/host-a/recipe.json" esp "1A2B-3C4D"
+  recipe_uuid "$stubs/host-a/recipe.json" root "11112222-3333-4444-8888-555566667777"
+  cp "$stubs/host-a/recipe.json" "$stubs/host-a/before.json"
+  run stamp_run "$stubs/host-a/recipe.json"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  jq -e --argjson before "$(cat "$stubs/host-a/before.json")" '. == $before' "$stubs/host-a/recipe.json" >/dev/null
+}
+
+# A drive that exists answers to identities of its own, and re-cutting them would break the config
+# that already names them. So a stamp never runs against a drive: --record is the fold for one.
+@test "--stamp refuses a drive it could stamp over, and a dry run that would write nothing" {
+  owned own blank
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
+  cp "$stubs/recipe.json" "$stubs/recipe.before"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --stamp
+  [ "$status" -eq 2 ]
+  assert_out "--record"
+  jq -e --argjson before "$(cat "$stubs/recipe.before")" '. == $before' "$stubs/recipe.json" >/dev/null
+
+  mkdir -p "$stubs/host-a"
+  recipe_file "$stubs/host-a/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  cp "$stubs/host-a/recipe.json" "$stubs/host-a/before.json"
+  run stamp_run "$stubs/host-a/recipe.json" --dry-run
+  [ "$status" -eq 2 ]
+  assert_out "--dry-run writes nothing"
+  jq -e --argjson before "$(cat "$stubs/host-a/before.json")" '. == $before' "$stubs/host-a/recipe.json" >/dev/null
+}
+
+@test "--stamp refuses a recipe that adopts a drive: an adopted filesystem carries its own identity" {
+  mkdir -p "$stubs/host-a"
+  recipe_file "$stubs/host-a/recipe.json" false "esp:boot:vfat:8M:/boot,root:nixos:ext4:16M:/"
+  cp "$stubs/host-a/recipe.json" "$stubs/host-a/before.json"
+  run stamp_run "$stubs/host-a/recipe.json"
+  [ "$status" -eq 2 ]
+  assert_out "owns=false"
+  assert_out "by label"
+  jq -e --argjson before "$(cat "$stubs/host-a/before.json")" '. == $before' "$stubs/host-a/recipe.json" >/dev/null
+}
+
+# The stamp is not a guess the run ignores: mkfs is told the stamped identities, so the filesystem
+# that comes out of the run answers to them, and --record has nothing left to fold in.
+@test "a stamped recipe is exactly what the run formats, and --record then changes nothing" {
+  owned own blank
+  recipe_file "$stubs/recipe.json" true "esp:boot:vfat:8M:/boot,root:nixos:ext4:54M:/"
+  run stamp_run "$stubs/recipe.json"
+  cp "$stubs/recipe.json" "$stubs/recipe.stamped"
+  run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --force
+  [ "$status" -eq 0 ]
+  [ "$(uuid_of own 1)" = "$(jq -r '.partitions[] | select(.name == "esp") | .uuid' "$stubs/recipe.stamped")" ]
+  [ "$(uuid_of own 2)" = "$(jq -r '.partitions[] | select(.name == "root") | .uuid' "$stubs/recipe.stamped")" ]
+  TF_NODES=0 run terraform_recipe_run own "$stubs/recipe.json" --disk "$disk_dir/own.img" --record
+  [ "$status" -eq 0 ]
+  jq -e --argjson stamped "$(cat "$stubs/recipe.stamped")" '. == $stamped' "$stubs/recipe.json" >/dev/null
+}
+
 # A flag takes a value. `--disk --record` would otherwise take --record as the device and run against
 # a drive that does not exist, printing nothing at all.
 @test "a flag with no value refuses rather than swallowing the next flag" {

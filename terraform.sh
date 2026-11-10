@@ -29,6 +29,7 @@ recipe=""
 emit=""
 verify=""
 record=""
+stamp=""
 owns=false
 dry=0
 force="${INSTALL_FORCE:-0}"
@@ -44,6 +45,7 @@ usage() {
   printf '       terraform.sh --emit [--disk <drive>]   read-only: prints the recipe this drive describes\n'
   printf '       terraform.sh --recipe <file> --verify   read-only: does the drive match the recipe?\n'
   printf '       terraform.sh --recipe <file> --record  write: run the recipe, then fold the filesystem identities it wrote into <file>\n'
+  printf '       terraform.sh --recipe <file> --stamp  write: put the identities a blank run would format with into <file>, with no drive present\n'
 }
 
 # value — the argument a flag requires. `--disk --record` would otherwise take --record as the device
@@ -61,6 +63,7 @@ while [ $# -gt 0 ]; do
   --force) force=1 ;;
   --verify) verify=1 ;;
   --record) record=1 ;;
+  --stamp) stamp=1 ;;
   --recipe)
     recipe=$(value "$1" "${2:-}")
     shift
@@ -157,6 +160,34 @@ identity_for() {
   local host
   host=$(basename "$(dirname "$recipe")")
   if [ "$fs" = vfat ]; then serial_of_recipe "$host" "$name"; else uuid_of_recipe "$host" "$name"; fi
+}
+
+# fold_uuids <identities-json> — the one place a recipe file's identities are written, in partition
+# order and nothing else. --record and --stamp derive them differently; both fold them the same way.
+fold_uuids() {
+  jq --argjson uuids "$1" '
+    .partitions |= (. as $p | [range($p | length)] | map(. as $i | $p[$i] + (if ($uuids[$i] // "") != "" then {uuid: $uuids[$i]} else {} end)))
+  ' "$recipe" >"$recipe.identities" ||
+    refuse "cannot write the filesystem identities into $recipe"
+  mv "$recipe.identities" "$recipe"
+}
+
+# stamp_recipe — the identities a blank run would format blank partitions with, put into the recipe
+# before any drive exists. They come from identity_for, so a stamp is reproducible, mkfs is told
+# exactly them, and --record afterwards finds nothing to fold in. This is what makes a host's closure
+# one hash: the recipe file the flake reads stops changing after the first commit.
+stamp_recipe() {
+  local out=() missing=0 n name fs
+  for n in "${!entry_lines[@]}"; do
+    [ -n "${uuids[$n]:-}" ] || missing=1
+  done
+  [ "$missing" = 1 ] || return 0
+  for n in "${!entry_lines[@]}"; do
+    IFS="$sep" read -r name _label fs _size _type _mnt <<<"${entry_lines[$n]}"
+    out+=("$(identity_for "$name" "$fs" "${uuids[$n]:-}")")
+  done
+  fold_uuids "$(printf '%s\n' "${out[@]}" | jq -R -s -c 'split("\n")[:-1]')"
+  printf 'terraform.sh: stamped the filesystem identities into %s — commit it. A drive that already carries other identities is folded by --record, never stamped\n' "$recipe" >&2
 }
 
 # A partition with no type declared still needs a GPT type: a vfat partition is an ESP, anything
@@ -384,23 +415,23 @@ gpt_name() {
 # label, or a blank partition whose GPT type says boot. Naming them turns "nothing here is /boot"
 # into "declare the label this ESP actually carries".
 esp_offers() {
-  local cand type sig out=""
+  local cand type sig msg=""
   while read -r cand type; do
     [ -n "$cand" ] || continue
     sig=$(signature "$cand")
     if [ -n "$sig" ]; then
       [ "$sig" = vfat ] || continue
-      out="$out $cand (vfat, label $(label_of "$cand"))"
+      msg="$msg $cand (vfat, label $(label_of "$cand"))"
       continue
     fi
     case "${type^^}" in
     C12A7328-F81F-11D2-BA4B-00A0C93EC93B | C12A7EA9-344C-4175-A575-202976385741)
-      out="$out $cand (blank, GPT type ${type^^})"
+      msg="$msg $cand (blank, GPT type ${type^^})"
       ;;
     esac
   done <<<"$parts"
-  [ -n "$out" ] || out=" no FAT partition and no partition the GPT type says is boot"
-  printf '%s\n' "$out"
+  [ -n "$msg" ] || msg=" no FAT partition and no partition the GPT type says is boot"
+  printf '%s\n' "$msg"
 }
 
 # resolve_entries — where each recipe entry lives on the drive today, in the order the recipe allows:
@@ -713,11 +744,28 @@ if [ -n "$recipe" ]; then
   [ -z "$disk" ] && disk=$(jq -r '.disk // ""' "$recipe" 2>/dev/null || true)
   if [ "$owns" = true ]; then
     # A wipe cannot be guessed. Nothing on a drive that is about to be erased identifies it, so the
-    # drive has to be named by the recipe or by --disk.
-    [ -n "$disk" ] || refuse 'owns=true wipes the whole drive: name it with --disk or a "disk" field'
-  elif [ -z "$disk" ]; then
+    # drive has to be named by the recipe or by --disk. --stamp writes no sectors, so it needs none.
+    [ -n "$disk" ] || [ -n "$stamp" ] || refuse 'owns=true wipes the whole drive: name it with --disk or a "disk" field'
+  elif [ -z "$disk" ] && [ -z "$stamp" ]; then
+    # A stamp writes no sectors, so it never needs a drive discovered.
     disk=$(discover_disk)
   fi
+fi
+
+# --stamp writes the recipe alone: no drive, no mount, no root. A drive that exists answers to
+# identities of its own, and re-cutting them would break the config that already names them, so the
+# stamp refuses one and --record is the fold for it.
+if [ -n "$stamp" ]; then
+  [ -n "$recipe" ] || refuse "--stamp writes identities into a recipe: --recipe is required"
+  [ "$dry" = 0 ] || refuse "--stamp edits $recipe; --dry-run writes nothing"
+  [ -z "$disk" ] || refuse "--stamp is for a drive that does not exist yet: on a live drive use --record, which folds what it actually carries"
+  # An adopted filesystem already answers to an identity of its own, and stamping a derived one over
+  # it would name a filesystem the drive does not have. Until --record folds what the drive carries,
+  # that recipe's mounts keep naming its partitions by label.
+  [ "$owns" = true ] ||
+    refuse "--stamp writes identities for partitions this run creates: with owns=false the run adopts filesystems that already carry theirs, so --record folds them and the mounts name the partitions by label"
+  stamp_recipe
+  exit 0
 fi
 
 # The ESP need not be named: a foreign ESP often has no label at all, and the ESP is found by its
@@ -908,11 +956,7 @@ record_recipe() {
     out+=("$id")
   done
   uuid_json=$(printf '%s\n' "${out[@]}" | jq -R -s -c 'split("\n")[:-1]')
-  jq --argjson uuids "$uuid_json" '
-    .partitions |= (. as $p | [range($p | length)] | map(. as $i | $p[$i] + (if ($uuids[$i] // "") != "" then {uuid: $uuids[$i]} else {} end)))
-  ' "$recipe" >"$recipe.record" ||
-    refuse "cannot write the recorded recipe to $recipe"
-  mv "$recipe.record" "$recipe"
+  fold_uuids "$uuid_json"
   printf 'terraform.sh: recorded the filesystem identities into %s — commit that file, and the flake mounts exactly what it names\n' "$recipe" >&2
 }
 
