@@ -5,13 +5,8 @@
 # runs a stage — S2 proves the guest can see what the stages need.
 set -u
 
-# fail exits, so a probe that reports a failure never reaches SHELL DONE, and the runner's marker
-# loop is what catches it.
-fail() {
-  echo "SHELL FAIL: $1"
-  exit 1
-}
-ok() { echo "SHELL OK: $1"; }
+# shellcheck source=tests/vm-probe-lib.bash
+source "$(dirname "$0")/vm-probe-lib.bash"
 
 # 1. The repo the installer will run from, delivered over the 9p share.
 [ -f /repo/flake.nix ] || fail "repo share not mounted: $(find /repo -maxdepth 1 2>&1 | head -3)"
@@ -48,7 +43,5 @@ cred=/repo/tests/vm-spike-secrets.env
 grep -q '^[A-Za-z0-9_-]*:' "$cred" || fail "secret file has no user:pass entry"
 ok "secret file delivered: $(wc -c <"$cred") bytes, contents not printed"
 
-# poweroff, not exit: a shell that merely exits gets its getty respawned, and qemu then sits idle
-# on an open console until the runner's timeout. Shutting the guest down ends the run immediately.
-echo "SHELL DONE"
-poweroff
+# poweroff, not exit (see vm-probe-lib.bash): shutting the guest down ends the run immediately.
+finish

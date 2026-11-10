@@ -41,9 +41,8 @@ fi
 
 log=$(vm_log_path vm-gate)
 # The preconditions and the log path go to the terminal as well as the log: the path up front is the
-# thing you can `tail -f` while a run takes minutes. Everything this gate prints goes through `out`,
+# thing you can `tail -f` while a run takes minutes. Everything this gate prints goes through vm_say,
 # so the tty stream and the log say the same thing.
-out() { printf '%s\n' "$@" | tee -a "$log"; }
 {
   printf 'run=%s\n' "${suites[*]}"
   printf 'ceiling=%s (each runner scopes its own guest at MemoryMax, MemorySwapMax=0)\n' "$cap"
@@ -66,7 +65,7 @@ interrupted() {
   kill -TERM "$bats_pid" "$peak" 2>/dev/null || true
   # systemd's own mechanism, not a signal: a guest lives in a scope no tty signal can reach.
   vm_stop_all
-  out "interrupted — log=$log"
+  vm_say "interrupted — log=$log"
   exit 130
 }
 trap interrupted INT TERM
@@ -94,14 +93,14 @@ wait "$peak" || true
 # abort here and leave the gate reporting no verdict at all.
 observed=$(grep -o 'peak_guest_mb=[0-9]*' "$log" | cut -d= -f2 | sort -n | tail -1 || true)
 if [ "$rc" -ne 0 ]; then
-  out "FAIL VM tier [${#suites[@]} suites]"
+  vm_say "FAIL VM tier [${#suites[@]} suites]"
   tail -n 20 "$log" | tee -a "$log"
 elif [ -z "$observed" ] || [ "$observed" -gt "$cap" ]; then
-  out "FAIL VM tier peak_guest_mb=${observed:-none} over the ${cap}MB ceiling"
+  vm_say "FAIL VM tier peak_guest_mb=${observed:-none} over the ${cap}MB ceiling"
   tail -n 20 "$log" | tee -a "$log"
   rc=1
 else
-  out "ok   VM tier [${#suites[@]} suites, peak_guest_mb=$observed <= $cap]"
+  vm_say "ok   VM tier [${#suites[@]} suites, peak_guest_mb=$observed <= $cap]"
 fi
-out "log=$log"
+vm_say "log=$log"
 exit "$rc"

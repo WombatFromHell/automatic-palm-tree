@@ -17,11 +17,8 @@
 # while each stage's own output stays in a per-stage log the markers quote on failure.
 set -u
 
-fail() {
-  echo "SHELL FAIL: $1"
-  exit 1
-}
-ok() { echo "SHELL OK: $1"; }
+# shellcheck source=tests/vm-probe-lib.bash
+source "$(dirname "$0")/vm-probe-lib.bash"
 
 # One timed stage: the stage's output goes to its own log, and `time`'s real/user/sys lines go there
 # too, so the console carries only the marker.
@@ -39,9 +36,7 @@ timed() {
 # 1. The drive formatted and mounted by the real terraform stage. The target store has to be the
 #    filesystem a host would actually boot from, not a scratch directory.
 cd /repo || fail "cannot enter the repo share"
-mkdir -p /nix/.rw-store/scratch && chmod 755 /nix/.rw-store/scratch
-timed terraform env INSTALL_ZRAM=0 INSTALL_DRIVE=/dev/vdb \
-  bash install.sh --force --scratch /nix/.rw-store/scratch --stage prepare,terraform methyl-test
+timed terraform install_stage prepare,terraform
 findmnt -n -o TARGET /mnt >/dev/null || fail "/mnt is not mounted after the terraform stage"
 ok "drive staged: $(findmnt -n -o SOURCE /mnt) as $(findmnt -n -o FSTYPE /mnt)"
 
@@ -66,8 +61,8 @@ ok "drive store accepts the archive: $after paths registered under /mnt/nix/stor
 # 3. Deploy against a drive store that already holds the closure. `nixos-install` copies the system
 #    path into the target store when it is not valid there; a store that already carries it should
 #    write no copies at all. The count is the whole measurement.
-timed deploy env INSTALL_ZRAM=0 INSTALL_SYSTEM="$path" INSTALL_DRIVE=/dev/vdb \
-  bash install.sh --force --scratch /nix/.rw-store/scratch --stage deploy methyl-test
+INSTALL_SYSTEM="$path"
+timed deploy install_stage deploy
 copies=$(grep -c 'copying path' /tmp/drive-probe-deploy.log 2>/dev/null || true)
 entries=$(find /mnt/boot/loader/entries -maxdepth 1 -type f 2>/dev/null | wc -l)
 printf 'marker deploy_copy_lines=%s boot_entries=%s drive_store_paths=%s\n' \
@@ -75,7 +70,5 @@ printf 'marker deploy_copy_lines=%s boot_entries=%s drive_store_paths=%s\n' \
 [ "$entries" -gt 0 ] || fail "deploy wrote no boot entries: $(tail -c 300 /tmp/drive-probe-deploy.log)"
 ok "deploy: $copies 'copying path' lines, $entries boot entries on the ESP"
 
-# poweroff, not exit: a shell that merely exits gets its getty respawned, and qemu then sits idle on
-# an open console until the runner's timeout.
-echo "SHELL DONE"
-poweroff
+# poweroff, not exit (see vm-probe-lib.bash): shutting the guest down ends the run immediately.
+finish

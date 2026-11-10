@@ -20,12 +20,8 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=tests/vm-lib.bash
 source "$repo/tests/vm-lib.bash"
 
-# A pause with no line reads as a hang. Every step the runner takes says what it is doing, and the
-# same line lands in the log once the log exists.
-say() {
-  printf '%s\n' "$1"
-  if [ -n "${log:-}" ]; then printf '%s\n' "$1" >>"$log"; fi
-}
+# A pause with no line reads as a hang, so every step the runner takes says what it is doing — through
+# vm_say, which puts the same line in the log once the log exists.
 
 script=""
 push_host=""
@@ -93,11 +89,10 @@ default_timeout=300
 boot_timeout=${VM_SHELL_TIMEOUT:-$default_timeout}
 store_mb=${VM_STORE_IMG_MB:-8192}
 mkdir -p "$run/tmp/xchg" "$vm_tmp/logs"
-# The closure reaches the guest as a packed store archive on a share rather than through its ssh
-# daemon. The archive is packed into the run dir on every run and dies with it: no archive cached on
-# this host may satisfy the guest, so a run proves the closure travels rather than that a leftover
-# archive still decodes. The cost is paid every run (measured: 240s of wall time and 28 CPU-minutes
-# of xz for methyl-test's closure).
+# The closure reaches the guest as a copy of its store paths on a share, not through its ssh daemon.
+# The copy is made into the run dir on every run and dies with it: no copy cached on this host may
+# satisfy the guest, so a run proves the closure travels rather than that a leftover still decodes.
+# The cost is paid every run (measured: 203s of wall time for methyl-test's closure).
 push_cache="$run/tmp/push-cache"
 [ -n "$push_host" ] && mkdir -p "$push_cache"
 # The archive this harness used to keep in $vm_tmp is gone; delete it so no run can find it.
@@ -124,7 +119,7 @@ trap 'vm_abort' INT TERM
 # The repo the guest installs from, without git history: the guest only ever reads the working
 # tree. The trailing /. copies the contents — `cp -a dir existing-dir` nests the directory inside
 # it, which is how a mounted share ends up with nothing at its top level.
-say "share: copying the working tree into $run/tmp/xchg"
+vm_say "share: copying the working tree into $run/tmp/xchg"
 cp -a "$repo/." "$run/tmp/xchg"
 rm -rf "$run/tmp/xchg/.git"
 
@@ -137,10 +132,10 @@ rm -rf "$run/tmp/xchg/.git"
 
 # The closure is built here, in its own scope, before the guest boots: a flake eval inside a 1GB guest
 # is exactly the thing that overflows RAM, which is why install.sh takes INSTALL_SYSTEM at all. It
-# reaches the guest as the packed nars of the closure being installed, so the guest never reads this
+# reaches the guest as raw store paths off this run's own share, so the guest never reads this
 # host's live /nix/store — which matters because it has autologin root and no password.
 if [ -n "$push_host" ]; then
-  say "push: building $push_host's closure on the host"
+  vm_say "push: building $push_host's closure on the host"
   push_system=$(vm_scope "vm-push-$$" 1200M bash -c \
     "cd $repo && nix build --no-link --print-out-paths .#nixosConfigurations.$push_host.config.system.build.toplevel" 2>>"$log") || {
     printf 'vm-shell.sh: no closure for host %s — the build failed (see %s)\n' "$push_host" "$log" >&2
@@ -148,25 +143,25 @@ if [ -n "$push_host" ]; then
   }
   printf '%s\n' "$push_system" >"$run/tmp/xchg/push-system"
   printf 'push=%s\n' "$push_system" >>"$log"
-  # Packing is the slow half of the handover, and it is paid every run: the archive is this run's,
+  # Copying is the slow half of the handover, and it is paid every run: the copy is this run's,
   # so nothing a previous run packed can stand in for it.
   rc=0
   start=$SECONDS
-  say "push: packing the closure's nars into $push_cache - minutes of xz, nothing cached between runs"
+  vm_say "push: copying the closure's store paths into $push_cache - raw bytes, re-hashed on both sides, nothing cached between runs"
   nix copy --no-check-sigs --to "file:$push_cache" "$push_system" >>"$log" 2>&1 || rc=$?
   printf 'push_cache=new\n' >>"$log"
   printf 'push_rc=%s secs=%s\n' "$rc" "$((SECONDS - start))" >>"$log"
   if [ "$rc" -ne 0 ]; then
-    printf 'vm-shell.sh: the closure could not be packed for the guest (%s)\n' "$push_system" >&2
+    printf 'vm-shell.sh: the closure could not be copied for the guest (%s)\n' "$push_system" >&2
     printf 'log=%s\n' "$log"
     exit 1
   fi
-  # The checked-in recipe carries UUIDs recorded from the real host, and a UUID names a filesystem
-  # that already exists — mkfs is never given one. A blank drive gets a fresh layout, so the run's
-  # copy of the recipe drops them; the host's own file is untouched and install.sh records new ones.
+  # The guest installs from the working-tree copy in the share, which already carries the uuids the
+  # recipe declares. terraform.sh hands mkfs exactly those (identity_for prefers a declared uuid, and
+  # --record is a no-op once every uuid is present), so the drive is formatted with the uuids the
+  # closure's own fstab names — no rebuild of the closure is needed to make the drive bootable.
   recipe="hosts/$push_host/terraform.json"
-  [ -f "$recipe" ] && jq 'del(.partitions[].uuid)' "$recipe" >"$run/tmp/xchg/$recipe"
-  printf 'push_recipe=%s uuids=%s\n' "$recipe" "$([ -f "$recipe" ] && echo stripped || echo none)" >>"$log"
+  printf 'push_recipe=%s uuids=%s\n' "$recipe" "$([ -f "$repo/$recipe" ] && echo recorded || echo none)" >>"$log"
 fi
 
 # ssh is on in the guest, so this run needs a key and a port. The guest authorises whatever this
@@ -231,14 +226,9 @@ override="$run/override.nix"
   if [ -n "$push_host" ]; then
     # A host closure has to fit on the drive it is installed onto, and the 4 GB default does not.
     printf '  virtualisation.emptyDiskImages = lib.mkForce [ %s ];\n' "${VM_PUSH_DRIVE_MB:-10240}"
-    # The rebuilt closure still comes over ssh — it is new every run, so it can never be packed and
-    # cached — and the daemon refuses unsigned paths unless the user behind the ssh session is a
-    # trusted user (nixos/modules/services/misc/nix-ssh-serve.nix does the same for its own nix-ssh
-    # user).
-    printf '  nix.settings.trusted-users = [ "root" "vm" ];\n'
-    # The initial closure comes as a store archive instead: the guest reads packed nars off this
-    # share and registers them itself. The source is an absolute host path, not a $TMPDIR literal,
-    # because the archive is kept between runs.
+    # The closure comes over the 9p share instead: the guest reads this run's store copy and
+    # registers it itself. The source is an absolute host path because it lives in the run dir, which
+    # the guest reaches through this same share.
     printf '  virtualisation.sharedDirectories.push = { source = "%s"; target = "/push-cache"; securityModel = "none"; };\n' "$push_cache"
     if [ -n "$boot_drive" ]; then
       # The probe copies kernel/initrd out of the installed drive here; /mnt is the install
@@ -254,7 +244,7 @@ override="$run/override.nix"
   printf '}\n'
 } >"$override"
 
-say "guest: building tests/vm-shell.nix"
+vm_say "guest: building tests/vm-shell.nix"
 vm_build ./tests/vm-shell.nix "$run/guest" "$override" >>"$log" 2>&1
 
 fifo="$run/console.fifo"
@@ -302,6 +292,7 @@ printf 'ssh=%s\n' "${ssh_result:-failed}" | tee -a "$log"
 # qemu's user-mode networking is a NAT emulator inside qemu: 10.0.2.15 exists only in the guest, so
 # the host has no route to it and ssh there never opens a session. The forwarded port is the way in,
 # and it is printed once ssh answers, since a person cannot guess which port this run picked.
+# Whether it answers is recorded, not fatal: no stage of the push flow depends on it.
 if [ "$ssh_result" = ok ]; then
   # With the port published on every interface, the address worth naming is this host's LAN address.
   reach=$bind
@@ -310,44 +301,11 @@ if [ "$ssh_result" = ok ]; then
   printf 'ssh: %s vm@%s — 10.0.2.15 is qemu internal NAT, unreachable from this host\n' "$ssh_base" "${reach:-this host}"
 else
   tail -c 200 "$run/ssh.out" >>"$log"
-  # Only --boot needs ssh: it is the run whose rebuilt closure is pushed back, and a rebuilt closure
-  # is new every run, so it can never be packed into the archive the other push reads from.
-  if [ -n "$boot_drive" ]; then
-    printf 'vm-shell.sh: --boot needs the forwarded ssh port to answer\n' >&2
-    printf 'log=%s\n' "$log"
-    vm_kill_scope "vm-boot-$$"
-    exit 1
-  fi
+  printf 'vm-shell.sh: ssh did not answer — a person cannot open a terminal into this guest\n' | tee -a "$log"
 fi
 
 if [ -n "$script" ]; then
   printf 'bash /repo/%s\n' "${script#"$repo/"}" >&9
-  # The terraform stage records the identities it formatted into the repo copy in the share, and the
-  # closure installed onto the drive has to be the one rebuilt from that recipe — its fstab names the
-  # uuids this drive carries, or the drive's boot times out on /dev/disk/by-uuid. Rebuild here and
-  # push it back; the probe waits on rebuilt-system, so this runs while the guest is still up.
-  if [ -n "$boot_drive" ]; then
-    (
-      for _ in $(seq 120); do
-        [ -e "$run/tmp/deploy-out/rebuild-request" ] && break
-        sleep 1
-      done
-      [ -e "$run/tmp/deploy-out/rebuild-request" ] || exit 0
-      rebuilt=$(vm_scope "vm-rebuild-$$" 1200M bash -c \
-        "cd $run/tmp/xchg && nix build --no-link --print-out-paths .#nixosConfigurations.$push_host.config.system.build.toplevel" 2>>"$log") || {
-        printf 'rebuild failed\n' >"$run/tmp/deploy-out/rebuild-failed"
-        exit 0
-      }
-      NIX_SSHOPTS="$ssh_opts" nix copy --no-check-sigs --to "ssh://vm@127.0.0.1:$port" "$rebuilt" \
-        >>"$log" 2>&1 || {
-        printf 'push of the rebuilt closure failed\n' >"$run/tmp/deploy-out/rebuild-failed"
-        exit 0
-      }
-      printf '%s\n' "$rebuilt" >"$run/tmp/deploy-out/rebuilt-system.new"
-      mv "$run/tmp/deploy-out/rebuilt-system.new" "$run/tmp/deploy-out/rebuilt-system"
-      printf 'rebuild=%s\n' "$rebuilt" >>"$log"
-    ) &
-  fi
   exec 9>&-
   # A probe that reports a failure exits its shell, so the getty respawns and the console goes idle
   # — that idle is what a failing run looks like from the outside. Ending here, on the guest's own

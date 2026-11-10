@@ -474,14 +474,15 @@ registering paths costs disk rather than the guest's RAM — the read-only store
 as the overlay's lower half. The image is sparse on XFS: `truncate` allocates nothing and `mkfs.ext4`
 defers the inode tables (measured: 0 bytes, then 4.3 MB), so an empty guest leaves an empty file and
 the run dir's removal frees whatever was written. `tests/vm-shell.sh --push HOST` builds that host's
-closure on this host, in its own scope, before the guest boots, and packs it into a NAR archive in
-the run dir (`nix copy --no-check-sigs --to file:…`), which the guest reads off a share at
-`/push-cache` and registers itself with `nix copy --from file:/push-cache`. Only the packed nars of
+closure on this host, in its own scope, before the guest boots, and copies it into the run dir
+(`nix copy --no-check-sigs --to file:…`), which the guest reads off a share at
+`/push-cache` and registers itself with `nix copy --from file:/push-cache`. Only the store paths of
 the closure being installed are shared — never this host's live `/nix/store`, which matters because
-the guest has autologin root and no password. Packing is the slow half: measured 240s of wall time,
-28 CPU-minutes of xz compression and a 2.2 GB archive for methyl-test's closure. It is paid **every
-run** — the archive lives in the run dir and dies with it, so a run proves the closure travels
-(`push_cache=new`) rather than that an archive an earlier run left behind still decodes.
+the guest has autologin root and no password. The copy is the slow half: measured 203s of wall time
+and 5.7 GiB for methyl-test's closure — raw path bytes, re-hashed on both sides, nothing compressed
+(`nixConfig.store-compression` is unset, so it is Nix's default of `none`). It is paid **every
+run** — the copy lives in the run dir and dies with it, so a run proves the closure travels
+(`push_cache=new`) rather than that a copy an earlier run left behind still registers.
 Nothing is sent over ssh on this path. The closure path travels in `/repo/push-system`, never in the guest
 config: naming a store path there fails the derivation's reference check, which is what killed the
 first `--push`. The push probe asserts the closure is registered in the guest's store, installs it
@@ -500,11 +501,13 @@ closure that was _installed_: the running guest's own initrd carries the payload
 drive does not have.
 
 That closure is also the one whose fstab names this drive. The recipe checked into `hosts/` carries
-methyl-test's real UUIDs, and the scratch drive here gets the identities `terraform.sh` derived from
-the recipe it was given and handed to `mkfs`, so the terraform stage records them into the repo copy in
-the share itself. The probe asserts every mounted partition's uuid resolves under `/dev/disk/by-uuid`
-once udev settles, the runner rebuilds the toplevel from that recipe and pushes it back over the same
-ssh store, and only then does `deploy` run. The boot keeps the installed
+methyl-test's real UUIDs and reaches the guest untouched through the repo share: `terraform.sh`'s
+`identity_for` prefers a declared uuid and hands it to `mkfs` (`-U` for ext4/btrfs, `-i` for vfat,
+`-m uuid=` for xfs), so the scratch drive is formatted with exactly the uuids the closure's fstab
+names, and `--record` folds nothing once every uuid is present. The probe asserts every mounted
+partition's uuid resolves under `/dev/disk/by-uuid` once udev settles, and only then does `deploy`
+run — there is no second closure and no rebuild, because the closure this host booted is the closure
+the drive mounts. The boot keeps the installed
 parameters' `root=fstab` rather than naming a device, because the fstab is what resolves the UUIDs;
 mounts land wherever qemu numbers the drive. The append also has to name `init=<installed closure>`:
 this nixpkgs' stage-1 finds the closure it is booting by reading `init=` off the kernel command line

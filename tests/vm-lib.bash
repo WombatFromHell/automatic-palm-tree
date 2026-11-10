@@ -23,6 +23,14 @@ vm_repo=${VM_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 
 vm_log_path() { printf '%s/logs/%s-%s.log\n' "$vm_tmp" "$1" "$(date +%s)"; }
 
+# One line to the terminal and, once a log exists, to the log too. Both VM runners print the same
+# stream, so the person waiting on the run and the log that survives it read the same words. The log
+# check is conditional because vm-shell.sh prints its steps before the log path exists.
+vm_say() {
+  printf '%s\n' "$1"
+  if [ -n "${log:-}" ]; then printf '%s\n' "$1" >>"$log"; fi
+}
+
 vm_scope() {
   # TimeoutStopSec bounds a `systemctl stop` (S1's vm-run.sh stop): KillMode defaults to
   # control-group, so stop SIGTERMs every process in the cgroup and SIGKILLs the rest after this.

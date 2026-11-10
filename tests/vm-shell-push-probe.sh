@@ -5,13 +5,8 @@
 # marker is a failure even if qemu exited 0.
 set -u
 
-# fail exits, so a probe that reports a failure never reaches SHELL DONE, and the runner's marker
-# loop is what catches it.
-fail() {
-  echo "SHELL FAIL: $1"
-  exit 1
-}
-ok() { echo "SHELL OK: $1"; }
+# shellcheck source=tests/vm-probe-lib.bash
+source "$(dirname "$0")/vm-probe-lib.bash"
 
 # 1. The raw store image, mounted where the writable store's upper half lives. A tmpfs here would
 #    charge the guest's RAM for every path registered, which is the whole reason this disk exists.
@@ -33,10 +28,10 @@ case "$path" in
 esac
 ok "closure handed over: $(basename "$path")"
 
-# 4. Registration. The closure arrived as packed nars on /push-cache, and this guest copied them
+# 4. Registration. The closure arrived as raw store paths on /push-cache, and this guest copied them
 #    into its own store, so the paths and their DB rows are real store content on the store disk —
 #    `nix path-info` answering is the proof the closure is usable inside the guest rather than merely
-#    visible on a share. The nars are this host's own unsigned build, so the signature check is the
+#    visible on a share. The paths are this host's own unsigned build, so the signature check is the
 #    client's to skip.
 nix path-info "$path" >/dev/null ||
   nix copy --no-check-sigs --from "file:/push-cache" "$path" ||
@@ -46,23 +41,16 @@ ok "closure registered: $(nix path-info --recursive "$path" | wc -l) paths on $s
 
 # 5. The real deploy path, in two calls, because the UUID gate sits between them. install.sh builds
 #    into its own scratch store, so that store goes on the disk too: a tmpfs scratch inside a 1GB
-#    guest is the thing that overflows RAM.
-mkdir -p /nix/.rw-store/scratch
-chmod 755 /nix/.rw-store/scratch
+#    guest is the thing that overflows RAM — install_stage owns that scratch.
 cd /repo || fail "cannot enter the repo share"
-# The closure installed is the one whose fstab names THIS drive's uuids, so it is rebuilt from the
-# recipe the terraform stage recorded into (see step 8). Before that record it is the host's recipe.
-install_system="$path"
-stage() {
-  # The guest is capped at MemoryMax and cannot swap; zram would spend the very RAM the cap bounds.
-  INSTALL_ZRAM=0 INSTALL_SYSTEM="$install_system" INSTALL_DRIVE=/dev/vdb bash install.sh --force \
-    --scratch /nix/.rw-store/scratch --stage "$1" methyl-test
-}
-stage prepare,terraform || fail "install stages failed"
+# The closure installed is the one this run booted: its fstab names the uuids the recipe declares, and
+# terraform.sh formats the drive with exactly those, so the drive mounts its own closure (step 6).
+INSTALL_SYSTEM="$path"
+install_stage prepare,terraform || fail "install stages failed"
 
-# 6. The recipe the drive was built from, with its identities recorded into it in place. A uuid names
-#    a filesystem, so every mounted partition's uuid has to resolve on this drive: udev makes those
-#    links asynchronously after mkfs, and they are the path fstab-by-uuid uses at boot.
+# 6. The recipe the drive was built from, carrying the uuids it declared. A uuid names a filesystem,
+#    so every mounted partition's uuid has to resolve on this drive: udev makes those links
+#    asynchronously after mkfs, and they are the path fstab-by-uuid uses at boot.
 recipe=/repo/hosts/methyl-test/terraform.json
 mounted=$(jq -r '[.partitions[] | select(.mount != null)] | length' "$recipe")
 [ "$mounted" -gt 0 ] || fail "the recipe mounts nothing"
@@ -74,24 +62,10 @@ for u in $(jq -r '.partitions[] | select(.mount != null) | .uuid' "$recipe"); do
   [ -e "/dev/disk/by-uuid/$u" ] || missing=$((missing + 1))
 done
 [ "$missing" = 0 ] || fail "$missing mounted partitions have no uuid path on the drive"
-ok "recipe recorded in place: $mounted mounted partitions, every uuid resolves under /dev/disk/by-uuid"
+ok "recipe uuids resolve on the drive: $mounted mounted partitions, every uuid resolves under /dev/disk/by-uuid"
 
-# The closure built on this host names methyl-test's real drive in its fstab; the scratch drive here
-# carries the identities just recorded. A boot that mounts by uuid cannot resolve those, so the host
-# rebuilds the closure from the recipe in the share and pushes it back before deploy runs.
-if [ -d /deploy-out ]; then
-  touch /deploy-out/rebuild-request
-  for _ in $(seq 90); do
-    [ -s /deploy-out/rebuilt-system ] && break
-    [ -s /deploy-out/rebuild-failed ] && fail "host rebuild: $(cat /deploy-out/rebuild-failed)"
-    sleep 1
-  done
-  [ -s /deploy-out/rebuilt-system ] || fail "no rebuilt closure within 90s"
-  install_system=$(cat /deploy-out/rebuilt-system)
-  nix path-info "$install_system" >/dev/null || fail "rebuilt closure is not in the guest store"
-fi
-stage deploy || fail "deploy refused on a recipe whose mounts carry uuids"
-ok "rebuilt from the recorded recipe and deployed: $(jq -r '[.partitions[] | .uuid] | join(" ")' "$recipe")"
+install_stage deploy || fail "deploy refused on a recipe whose mounts carry uuids"
+ok "deployed the pushed closure: $(jq -r '[.partitions[] | .uuid] | join(" ")' "$recipe")"
 
 # 7. What the stages must have left on the drive: partitions, an ESP with boot entries, and the
 #    closure. The table is proven by the partitions themselves — this guest's lsblk has no
@@ -111,7 +85,7 @@ passwords=/repo/tests/vm-spike-secrets.env
 [ -s "$passwords" ] || fail "no password fixture on the share: $passwords"
 INSTALL_PASSWORDS=$(cat "$passwords")
 export INSTALL_PASSWORDS
-stage postdeploy || fail "postdeploy refused"
+install_stage postdeploy || fail "postdeploy refused"
 for u in root josh; do
   hash=$(grep "^$u:" /mnt/etc/shadow | cut -d: -f2)
   case "$hash" in
@@ -132,17 +106,15 @@ ok "passwords written: root and josh hold hashes in the installed shadow"
 #     closure's own kernel-params file names no init, so it is added here; root=fstab stays, because
 #     the installed fstab is what names this drive's uuids.
 if [ -d /deploy-out ]; then
-  cp "$install_system/kernel" /deploy-out/kernel || fail "no kernel in the installed closure"
-  cp "$install_system/initrd" /deploy-out/initrd || fail "no initrd in the installed closure"
+  cp "$INSTALL_SYSTEM/kernel" /deploy-out/kernel || fail "no kernel in the installed closure"
+  cp "$INSTALL_SYSTEM/initrd" /deploy-out/initrd || fail "no initrd in the installed closure"
   append=$(sed -e 's/[[:space:]]*regInfo=[^[:space:]]*//' -e '/^[[:space:]]*$/d' \
-    "$install_system/kernel-params" | tr '\n' ' ')
+    "$INSTALL_SYSTEM/kernel-params" | tr '\n' ' ')
   [ -n "$append" ] || fail "the installed closure names no kernel parameters"
-  printf '%s init=%s/init\n' "$append" "$install_system" >"/deploy-out/append.txt"
+  printf '%s init=%s/init\n' "$append" "$INSTALL_SYSTEM" >"/deploy-out/append.txt"
   grep -q 'init=' "/deploy-out/append.txt" || fail "the boot append names no init"
   ok "boot files copied out: kernel, initrd, $(grep -o 'root=[^ ]*' "/deploy-out/append.txt")"
 fi
 
-# poweroff, not exit: a shell that merely exits gets its getty respawned, and qemu then sits idle on
-# an open console until the runner's timeout.
-echo "SHELL DONE"
-poweroff
+# poweroff, not exit (see vm-probe-lib.bash): shutting the guest down ends the run immediately.
+finish
