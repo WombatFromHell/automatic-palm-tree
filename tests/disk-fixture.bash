@@ -275,24 +275,27 @@ format_slice() { # <disk> <index> <start> <count> <fs> [label]
   # btrfs-progs refuses a device below ~114MB, so a btrfs slice has to be a big one.
   if [ -n "$label" ]; then
     case "$fs" in
-      vfat) mkfs.vfat -F 32 -n "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
-      ext4) mkfs.ext4 -q -T ext4 -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
-      btrfs) mkfs.btrfs -f -q -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
-      xfs) mkfs.xfs -f -q -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+    vfat) mkfs.vfat -F 32 -n "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+    ext4) mkfs.ext4 -q -T ext4 -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+    btrfs) mkfs.btrfs -f -q -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+    xfs) mkfs.xfs -f -q -L "$label" "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
     esac
   else
     case "$fs" in
-      vfat) mkfs.vfat -F 32 "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
-      ext4) mkfs.ext4 -q -T ext4 "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
-      btrfs) mkfs.btrfs -f -q "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
-      xfs) mkfs.xfs -f -q "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+    vfat) mkfs.vfat -F 32 "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+    ext4) mkfs.ext4 -q -T ext4 "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+    btrfs) mkfs.btrfs -f -q "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
+    xfs) mkfs.xfs -f -q "$disk_dir/$disk.img$idx" >/dev/null 2>&1 ;;
     esac
   fi
   adopt "$disk" "$idx" "$start" "$count"
 }
 
 # Root data another install owns, written into the filesystem itself rather than the image.
-root_data() { printf 'KEEP\n' >"$disk_dir/keep.txt"; debugfs -w -R "write $disk_dir/keep.txt /keep.txt" "$disk_dir/$1.img2" >/dev/null 2>&1; }
+root_data() {
+  printf 'KEEP\n' >"$disk_dir/keep.txt"
+  debugfs -w -R "write $disk_dir/keep.txt /keep.txt" "$disk_dir/$1.img2" >/dev/null 2>&1
+}
 
 # nodes <disk> — create the partition files sfdisk names for this image. A real disk always has
 # these nodes; a fixture has to make them, out of the image region each partition covers. A blank

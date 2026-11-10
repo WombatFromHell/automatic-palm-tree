@@ -25,10 +25,11 @@ let
   watcher = extra:
     (s.bareEval [hmStubs module]
       {
-        features.niri.wl-watcher = {
-          enable = true;
-        }
-        // extra;
+        features.niri.wl-watcher =
+          {
+            enable = true;
+          }
+          // extra;
       }
       {inherit (s) pkgs;})
     .home.packages;
