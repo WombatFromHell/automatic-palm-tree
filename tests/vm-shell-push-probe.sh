@@ -33,10 +33,15 @@ case "$path" in
 esac
 ok "closure handed over: $(basename "$path")"
 
-# 4. Registration. The host pushed the closure into this guest's store over ssh, so the paths and
-#    their DB rows are real store content on the store disk — `nix path-info` answering is the proof
-#    the closure is usable inside the guest, not merely visible on a share.
-nix path-info "$path" >/dev/null || fail "closure is not registered in the guest store — the host's ssh push failed"
+# 4. Registration. The closure arrived as packed nars on /push-cache, and this guest copied them
+#    into its own store, so the paths and their DB rows are real store content on the store disk —
+#    `nix path-info` answering is the proof the closure is usable inside the guest rather than merely
+#    visible on a share. The nars are this host's own unsigned build, so the signature check is the
+#    client's to skip.
+nix path-info "$path" >/dev/null ||
+  nix copy --no-check-sigs --from "file:/push-cache" "$path" ||
+  fail "closure did not register from /push-cache"
+nix path-info "$path" >/dev/null || fail "closure is not registered in the guest store"
 ok "closure registered: $(nix path-info --recursive "$path" | wc -l) paths on $src"
 
 # 5. The real deploy path, in two calls, because the UUID gate sits between them. install.sh builds
@@ -49,7 +54,8 @@ cd /repo || fail "cannot enter the repo share"
 # recipe the terraform stage recorded into (see step 8). Before that record it is the host's recipe.
 install_system="$path"
 stage() {
-  INSTALL_SYSTEM="$install_system" INSTALL_DRIVE=/dev/vdb bash install.sh --force \
+  # The guest is capped at MemoryMax and cannot swap; zram would spend the very RAM the cap bounds.
+  INSTALL_ZRAM=0 INSTALL_SYSTEM="$install_system" INSTALL_DRIVE=/dev/vdb bash install.sh --force \
     --scratch /nix/.rw-store/scratch --stage "$1" methyl-test
 }
 stage prepare,terraform || fail "install stages failed"
@@ -97,6 +103,22 @@ entries=$(find /mnt/boot/loader/entries -maxdepth 1 -type f 2>/dev/null | wc -l)
 [ "$(find /mnt/nix/store -maxdepth 1 -type d 2>/dev/null | wc -l)" -gt 100 ] ||
   fail "the closure is not on the drive: $(find /mnt/nix/store -maxdepth 1 2>/dev/null | wc -l) entries"
 ok "installed on the drive: $entries boot entries, $(find /mnt/nix/store -maxdepth 1 -type d | wc -l) store paths"
+
+# 8. The way in. deploy leaves root locked, so the drive's login prompt is unanswerable until
+#    postdeploy writes passwords into the installed tree. The fixture file is on this share; the
+#    values reach chpasswd on stdin, never in argv and never in the transcript.
+passwords=/repo/tests/vm-spike-secrets.env
+[ -s "$passwords" ] || fail "no password fixture on the share: $passwords"
+INSTALL_PASSWORDS=$(cat "$passwords")
+export INSTALL_PASSWORDS
+stage postdeploy || fail "postdeploy refused"
+for u in root josh; do
+  hash=$(grep "^$u:" /mnt/etc/shadow | cut -d: -f2)
+  case "$hash" in
+  '' | '!' | '!!' | '*') fail "$u holds no password in the installed shadow" ;;
+  esac
+done
+ok "passwords written: root and josh hold hashes in the installed shadow"
 
 # 10. The boot files for --boot. The host cannot read a file out of a qcow2 without root, so the
 #    installed kernel and initrd are copied out through the writable share. The installed config's

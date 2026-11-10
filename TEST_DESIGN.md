@@ -427,23 +427,25 @@ never re-evaluates a host config.
 `tests/vm-lib.bash` holds the harness; `tests/vm-run.sh` is the gate that runs the VM suites, and it
 is separate from `tests/run.sh` by the guide rule above: the gate runs on any machine, while this tier
 needs `/dev/kvm`, SELinux permissive, and minutes per run. The gate fails loudly when a precondition
-is missing rather than skipping, because a VM tier that silently skips proves nothing.
+is missing rather than skipping, because a VM tier that silently skips proves nothing. Everything the
+gate prints goes to the terminal and to its log file, so a foregrounded run is followable live and the
+log is complete afterwards; `bash tests/vm-run.sh stop` ends a tier running elsewhere by asking
+systemd to stop its `vm-*.scope` units, then removing the scratch dirs whose owner is gone.
 
 What it proves that no stub can: a blank drive partitioned and formatted by `terraform.sh`, a closure
 installed by `nixos-install`, and that drive booting its own installed generation as far as its login
 prompt. What
 it still cannot prove: firmware boot order and real firmware behaviour — a qemu ESP is not a machine's
-ESP — and the password `postdeploy` writes. `deploy` runs `nixos-install --no-root-passwd` and the
-fixture carries no build-time password on purpose, so root stays locked on the installed drive until
-postdeploy runs, and no VM run does that yet.
+ESP — and a password-authenticated login on that drive. The probe does run `postdeploy`, so the
+installed shadow holds hashes for `root` and `josh`, but the installed config stalls at `Password:`
+over the serial console, so the tier proves the prompt only.
 
 Three properties hold every run, and each is asserted rather than assumed: memory is capped by a
 transient systemd scope (`MemoryMax`, `MemorySwapMax=0`, because `systemd-kill`'s `MemoryMax=` is a
 no-op), guest state is fresh per run (blank drive written anew, root on tmpfs, no persisted image),
 and the log lands on the host that called the runner. Secrets reach the guest through the 9p share,
 not systemd credentials — measured on this guest kernel, `fw_cfg` delivers nothing — and they are
-never typed into argv or echoed to the console, so the log the host keeps carries the login but not
-the password.
+never typed into argv or echoed to the console, so the log the host keeps carries no password.
 
 A person drives the same harness through `tests/vm-shell.sh`, which hands the serial console to the
 terminal (`tee`, not a redirect) instead of asserting markers. `tests/vm-check.bats` drives it with
@@ -472,13 +474,15 @@ registering paths costs disk rather than the guest's RAM — the read-only store
 as the overlay's lower half. The image is sparse on XFS: `truncate` allocates nothing and `mkfs.ext4`
 defers the inode tables (measured: 0 bytes, then 4.3 MB), so an empty guest leaves an empty file and
 the run dir's removal frees whatever was written. `tests/vm-shell.sh --push HOST` builds that host's
-closure on this host, in its own scope, before the guest boots, and streams it into the guest's own
-store over ssh once the forwarded port answers: `nix copy --no-check-sigs --to
-ssh://vm@127.0.0.1:<port>`, with the guest's `vm` user in `nix.settings.trusted-users` because the
-daemon refuses unsigned paths for anyone else. Nothing of this host's `/nix/store` is ever shared, so
-a guest with autologin root reads only the closure it was handed. Measured: the ssh store peaked at
-22 MB of host RSS, where a staged copy of the paths cost gigabytes of disk and `nix copy --to
-file://…` (a NAR cache) OOM-killed a 1200 MB scope mid-closure. The closure path travels in `/repo/push-system`, never in the guest
+closure on this host, in its own scope, before the guest boots, and packs it into a NAR archive in
+the run dir (`nix copy --no-check-sigs --to file:…`), which the guest reads off a share at
+`/push-cache` and registers itself with `nix copy --from file:/push-cache`. Only the packed nars of
+the closure being installed are shared — never this host's live `/nix/store`, which matters because
+the guest has autologin root and no password. Packing is the slow half: measured 240s of wall time,
+28 CPU-minutes of xz compression and a 2.2 GB archive for methyl-test's closure. It is paid **every
+run** — the archive lives in the run dir and dies with it, so a run proves the closure travels
+(`push_cache=new`) rather than that an archive an earlier run left behind still decodes.
+Nothing is sent over ssh on this path. The closure path travels in `/repo/push-system`, never in the guest
 config: naming a store path there fails the derivation's reference check, which is what killed the
 first `--push`. The push probe asserts the closure is registered in the guest's store, installs it
 onto the blank drive with `install.sh --stage prepare,terraform,deploy`, and asserts the boot loader
@@ -512,8 +516,9 @@ plymouth swallows systemd's `Reached target Multi-User System` line on this cons
 `serial-getty` — the prompt — starts only once multi-user is reached, while a drive that fails to
 mount its own UUIDs drops to emergency mode and prints no prompt at all. The runner waits on the
 bytes this boot wrote, not on the whole log, because the deploy guest put its own prompt in that log
-minutes earlier. A password is not typed here, and could not be: root is locked until postdeploy sets
-it, so a failed login would say nothing about the boot. Direct kernel boot proves the installed
+minutes earlier. A password is not typed here, and the login is not answered: the installed config
+stalls at `Password:` over the serial console, and a stalled login costs a full `VM_BOOT_TIMEOUT` for
+no evidence. Direct kernel boot proves the installed
 generation boots; it does not prove the ESP's entries are what a machine would pick, which is the
 caveat named above.
 

@@ -9,12 +9,15 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=tests/vm-lib.bash
 source "$repo/tests/vm-lib.bash"
 
-run="$vm_tmp/vm-spike-$(date +%s)"
+# Pid-named, so `vm-run.sh stop` can tell an orphan dir from one whose runner is still alive.
+run="$vm_tmp/vm-spike-$$"
 log=$(vm_log_path vm-spike)
 mkdir -p "$run/tmp" "$vm_tmp/logs"
 # A failing run leaves a ~1.2G store image plus the blank drive behind; the log lives in
 # $vm_tmp/logs, so dropping the run dir on exit costs nothing the report needs.
-trap 'rm -rf "$run"' EXIT
+trap 'vm_kill_all; rm -rf "$run"' EXIT
+trap 'vm_abort' INT TERM
+(vm_watch_harness "$$" "$run") &
 # The 9p share is the guest's copy of the scripts the e2e tier will run, plus the password fixture,
 # so step 6 and step 5 can prove the payload reached the guest instead of assuming it. systemd
 # credentials are not used (see vm-spike.nix), so this is the secret channel.
@@ -33,24 +36,24 @@ pass=$(awk -F: '/^[A-Za-z0-9_-]+:/ { print $2; exit }' "$repo/tests/vm-spike-sec
   printf 'caps: MemoryMax=1300M MemorySwapMax=0 timeout=300s\n'
   vm_selinux_check
   printf 'kvm=%s\n' "$(ls -l /dev/kvm)"
-} >"$log"
+} | tee -a "$log"
 
-vm_build ./tests/vm-spike.nix "$run/guest" >>"$log" 2>&1
+vm_build ./tests/vm-spike.nix "$run/guest" 2>&1 | tee -a "$log"
 
 # Boot in the background: the login has to be driven while the VM is alive, and the guest's own
 # timeout ends the run. Its exit code is not the assertion — the markers in the log are. qemu's
 # stdin is the console (-nographic), so it reads the fifo; fd 9 holds the write end open so qemu
 # never sees EOF.
-# The console fifo is created before anything opens it: opening a fifo that is not there with `>`
-# creates a regular file, and qemu then reads an empty stdin and exits at once.
 fifo="$run/console.fifo"
 mkfifo "$fifo"
-vm_boot "$run/guest" "$run/tmp" "$log" 240 "$fifo" &
+# tee, not a redirect: whoever ran this watches the console while the host keeps the transcript.
+vm_boot "$run/guest" "$run/tmp" "$log" 240 "$fifo" tee &
 boot=$!
-vm_serial_open "$fifo"
+# Opened after the boot: an O_WRONLY open of a fifo blocks until qemu has it open for reading.
+vm_console_open "$fifo"
 
 # RAM is sampled while the guest is up, so it runs alongside the login rather than after it.
-vm_free_peak 150 qemu >>"$log" 2>&1 &
+vm_free_peak 150 qemu-system "$boot" | tee -a "$log" &
 peak=$!
 
 # The proof this tier can prove at all: the payload's credentials reached the guest, chpasswd
@@ -58,28 +61,27 @@ peak=$!
 # here; install.sh runs inside a full system closure, so that belongs to the installer tier.
 login=fail
 if vm_serial_login "$log" "$user" "$pass" 90; then login=ok; fi
-wait "$peak"
-wait "$boot" || printf 'boot ended by timeout\n' >>"$log"
 exec 9>&-
+vm_end_boot "vm-boot-$$" "$peak" "$boot"
 
 for marker in 'SPIKE OK: closure registered' 'SPIKE OK: fresh root: tmpfs' 'SPIKE OK: writable store' \
   'SPIKE OK: target drive' 'SPIKE OK: secret file delivered' 'SPIKE OK: nixos-install present' \
   'SPIKE OK: passwords applied' 'SPIKE DONE'; do
   if ! grep -q "$marker" "$log"; then
-    printf 'SPIKE=failed missing marker: %s\n' "$marker" >>"$log"
+    printf 'SPIKE=failed missing marker: %s\n' "$marker" | tee -a "$log"
     exit 1
   fi
 done
 if [ "$login" != ok ]; then
-  printf 'SPIKE=failed serial login\n' >>"$log"
+  printf 'SPIKE=failed serial login\n' | tee -a "$log"
   exit 1
 fi
 
 # The secret must not be in the log the host keeps. The guest never echoes a password; we typed it.
 if grep -q "$pass" "$log"; then
-  printf 'SPIKE=failed password present in log\n' >>"$log"
+  printf 'SPIKE=failed password present in log\n' | tee -a "$log"
   exit 1
 fi
 
-printf 'SPIKE=ok login=%s\n' "$login" >>"$log"
+printf 'SPIKE=ok login=%s\n' "$login" | tee -a "$log"
 printf 'log=%s\n' "$log"

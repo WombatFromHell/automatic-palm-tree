@@ -25,14 +25,23 @@ harness_teardown() { rm -rf "$stubs"; }
 # ones stay grep — the patterns there are anchored regexes matched against one line per
 # invocation — and assert_no_call counts rather than negating grep, so a missing log file fails
 # instead of passing on grep's exit 2.
-assert_call()     { grep -q -- "$1" "$calls"; }
-assert_no_call()  { [ "$(grep -c -- "$1" "$calls")" = 0 ]; }
-assert_calls()    { [ "$(grep -c -- "$1" "$calls")" = "$2" ]; }
+assert_call() { grep -q -- "$1" "$calls"; }
+assert_no_call() { [ "$(grep -c -- "$1" "$calls")" = 0 ]; }
+assert_calls() { [ "$(grep -c -- "$1" "$calls")" = "$2" ]; }
 
 # $output is one string bats already holds, so absence/presence is a [[ ]] match, not a grep pipe.
-assert_out()       { [[ $output == *"$1"* ]]; }
-assert_no_out()    { [[ $output != *"$1"* ]]; }
+assert_out() { [[ $output == *"$1"* ]]; }
+assert_no_out() { [[ $output != *"$1"* ]]; }
 assert_out_count() { [ "$(grep -c -- "$1" <<<"$output")" = "$2" ]; }
+
+# Status of a sub-runner bats ran with `run`. bats keeps the runner's output in $output and never
+# prints it unless the test does, so a failing VM tier would show only bats' assertion line while the
+# reason sits in a log nobody named. Dumping it on a bad exit puts it on the tty and, through the
+# gate's tee, in the gate's log.
+assert_status() {
+  [ "$status" = "$1" ] || printf '%s\n' "$output"
+  [ "$status" = "$1" ]
+}
 
 # stub <name> — write an executable stub from stdin. A quoted heredoc keeps the body unevaluated.
 stub() {

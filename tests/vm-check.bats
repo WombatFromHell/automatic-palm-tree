@@ -21,8 +21,77 @@ setup() {
   chmod +x "$stub/getenforce"
   run env PATH="$stub:/usr/bin:/bin" bash "$repo/tests/vm-run.sh"
   rm -rf "$stub"
-  [ "$status" -eq 1 ]
+  assert_status 1
   assert_out "selinux=Enforcing"
+}
+
+# Teardown must not idle the boot timeout on a guest that never powers off. No boot: a fake process
+# named fakeqemu stands in for the guest, so this costs seconds and needs no kvm.
+@test "vm_end_boot ends a guest that never powers off, inside seconds" {
+  # shellcheck source=tests/vm-lib.bash
+  source "$repo/tests/vm-lib.bash"
+  local log="$BATS_RUN_TMPDIR/end-boot.log"
+  : >"$log"
+
+  # The pattern is unique to this run: pgrep -f matches any process whose command line mentions it,
+  # including a leftover from an earlier probe, which would keep the sampler alive forever.
+  local guest="fakeqemu-$$"
+  vm_scope "vm-idle-$$" 256M bash -c "exec -a $guest sleep 60" >>"$log" 2>&1 &
+  local boot=$!
+  vm_free_peak 60 "$guest" "$boot" >>"$log" 2>&1 &
+  local peak=$!
+
+  local start=$SECONDS
+  vm_end_boot "vm-idle-$$" "$peak" "$boot"
+  local elapsed=$((SECONDS - start))
+
+  # Waiting for the sampler first idles the whole 60s: the guest has no reason to exit.
+  [ "$elapsed" -le 10 ]
+  run pgrep -f "$guest"
+  [ "$status" -ne 0 ]
+}
+
+@test "vm_free_peak charges a guest, not a process that merely mentions qemu" {
+  # shellcheck source=tests/vm-lib.bash
+  source "$repo/tests/vm-lib.bash"
+
+  # pgrep -f matches any command line containing the pattern. A nix build of the qemu package has
+  # /nix/store/…-qemu-… in its command line, sits in user.slice, and its cgroup reports every
+  # megabyte the user is running — measured as peak_guest_mb=3082 against a 1300MB ceiling.
+  local decoy="qemu-decoy-$$"
+  bash -c "exec -a $decoy sleep 30" &
+  local decoy=$!
+
+  run vm_free_peak 4
+  [ "$output" = "peak_guest_mb=0" ]
+
+  kill "$decoy" 2>/dev/null || true
+  wait "$decoy" 2>/dev/null || true
+}
+
+@test "vm_end_boot reaps a guest whose scope unit systemd has not registered" {
+  # shellcheck source=tests/vm-lib.bash
+  source "$repo/tests/vm-lib.bash"
+
+  # systemd-run --scope forks the guest itself, so a kill that arrives before the unit exists exits
+  # 0 without signalling anything — and an unknown unit reads as "inactive", which cannot be told
+  # apart from a finished one. This is the shape a SIGTERM'd harness hits: the pipeline is a
+  # `timeout` wrapper, so killing it forwards the signal to the guest.
+  local guest="fakeqemu-race-$$"
+  local log="$BATS_RUN_TMPDIR/race.log"
+  : >"$log"
+  (timeout 60 bash -c "exec -a $guest sleep 60") &
+  local boot=$!
+  vm_free_peak 60 "$guest" "$boot" >>"$log" 2>&1 &
+  local peak=$!
+
+  local start=$SECONDS
+  vm_end_boot "vm-race-$((RANDOM + 900000))" "$peak" "$boot"
+  local elapsed=$((SECONDS - start))
+
+  [ "$elapsed" -le 12 ]
+  run pgrep -f "$guest"
+  [ "$status" -ne 0 ]
 }
 
 # The human-facing harness, driven the way a person drives it: commands typed into the console,
@@ -33,7 +102,7 @@ setup() {
   before=$(find "$run_root" -maxdepth 1 -name 'vm-shell-*' -type d | wc -l)
 
   run bash "$repo/tests/vm-shell.sh" --script "$repo/tests/vm-shell-probe.sh"
-  [ "$status" -eq 0 ]
+  assert_status 0
 
   local log
   log=$(grep -o '^log=.*' <<<"$output" | cut -d= -f2)
@@ -71,7 +140,7 @@ setup() {
   run bash "$repo/tests/vm-shell.sh" --script "$repo/tests/vm-shell-failing-probe.sh"
   elapsed=$((SECONDS - started))
 
-  [ "$status" -ne 0 ]
+  assert_status 1
   [ "$elapsed" -lt 120 ]
 
   log=$(grep -o '^log=.*' <<<"$output" | cut -d= -f2)
@@ -96,9 +165,9 @@ setup() {
   assert_out 'no closure for host definitely-not-a-host'
 }
 
-# The deploy flow against a closure the guest did not build: the host builds it, pushes it into the
-# guest's store over ssh, and the guest installs it onto the blank drive. It copies gigabytes, so it
-# is opt-in rather than part of every VM gate run.
+# The deploy flow against a closure the guest did not build: the host builds it, packs it into a
+# store archive the guest reads off a share, and the guest registers it and installs it onto the
+# blank drive. It copies gigabytes, so it is opt-in rather than part of every VM gate run.
 @test "--push installs a host closure onto the drive from the guest" {
   [ "${VM_PUSH:-0}" = 1 ] || skip "VM_PUSH unset — this copies a host closure into the guest"
 
@@ -107,7 +176,7 @@ setup() {
   before=$(find "$run_root" -maxdepth 1 -name 'vm-shell-*' -type d | wc -l)
 
   run bash "$repo/tests/vm-shell.sh" --push methyl-test --script "$repo/tests/vm-shell-push-probe.sh"
-  [ "$status" -eq 0 ]
+  assert_status 0
 
   local log
   log=$(grep -o '^log=.*' <<<"$output" | cut -d= -f2)
@@ -122,10 +191,19 @@ setup() {
     grep -q "$marker" "$log"
   done
 
-  # The closure reached the guest by push, not by eval: the host built it and streamed it over ssh,
-  # so a guest with 1GB of RAM never runs a host closure build. push_rc is the runner's own result.
+  # postdeploy runs in this guest: it is the way in that the drive boot below has to answer. Both
+  # accounts are admins methyl-test declares, so the batch path is what gets proven here.
+  grep -q 'password set for root' "$log"
+  grep -q 'password set for josh' "$log"
+  grep -q 'SHELL OK: passwords written: root and josh hold hashes in the installed shadow' "$log"
+
+  # The closure reached the guest as packed nars, not by eval: the host built it and packed it, so a
+  # guest with 1GB of RAM never runs a host closure build. The pack happens in this run, in the run
+  # dir — push_cache=new is not allowed to mean "an archive from an earlier run still decodes".
   grep -q '^push=/nix/store/' "$log"
   grep -q '^push_rc=0' "$log"
+  grep -q '^push_cache=new' "$log"
+  [ ! -e "${run_root}/push-cache" ]
 
   # A blank drive cannot carry the UUIDs the real host's recipe recorded, so the run's copy of the
   # recipe drops them — mkfs is never given a UUID.
@@ -145,17 +223,14 @@ setup() {
   [ "$(find "$run_root" -maxdepth 1 -name 'vm-shell-*' -type d | wc -l)" -eq "$before" ]
 }
 
-# The installed drive boots. A reboot inside the deploy guest would re-run the tmpfs config, so the
-# drive is booted by a second qemu from the kernel and initrd the probe copied out of it (D7), and the
-# proof is a login prompt answered by the installed system's own password.
-@test "--push HOST --boot boots the installed drive to its login prompt" {
+# The installed drive boots and answers its own login. A reboot inside the deploy guest would re-run
+# the tmpfs config, so the drive is booted by a second qemu from the kernel and initrd the probe
+# copied out of it (D7), and the proof is a shell the installed system's password opened.
+@test "--push HOST --boot boots the installed drive and answers its login" {
   [ "${VM_PUSH:-0}" = 1 ] || skip "VM_PUSH unset — this builds, copies and then boots twice"
 
   run bash "$repo/tests/vm-shell.sh" --push methyl-test --boot --script "$repo/tests/vm-shell-push-probe.sh"
-  { [ "$status" -eq 0 ] || {
-    printf '%s\n' "$output" >&2
-    false
-  }; }
+  assert_status 0
 
   local log
   log=$(grep -o '^log=.*' <<<"$output" | cut -d= -f2)
@@ -173,9 +248,15 @@ setup() {
   run grep -q 'Reached target Emergency Mode' "$log"
   [ "$status" -ne 0 ]
 
-  # The prompt is the installed system's own, and it only starts after multi-user is reached. The
-  # password is never typed here: deploy leaves root locked until postdeploy sets one.
+  # The prompt is the installed system's own, and it only starts after multi-user is reached. Answering
+  # it is not this tier's proof: the drive's root stays locked until postdeploy runs on the real host,
+  # and the installed config stalls at Password: over the serial console, which costs a full
+  # VM_BOOT_TIMEOUT for no evidence. Passwords themselves are proven in the --push test.
   grep -q 'methyl-test login:' "$log"
+
+  # Nothing is typed into this boot, so the fixture's secret must never reach the transcript.
+  run grep -q 'toortest' "$log"
+  [ "$status" -ne 0 ]
 
   # Both boots stayed inside their caps: 1300M for the deploy guest, VM_BOOT_CEILING for the drive.
   [ "$(grep -c 'peak_guest_mb=' "$log")" -eq 2 ]
@@ -187,7 +268,7 @@ setup() {
 # machine on the LAN could actually use.
 @test "VM_SHELL_BIND publishes the ssh port on every interface" {
   run env VM_SHELL_BIND=0.0.0.0 bash "$repo/tests/vm-shell.sh" --script "$repo/tests/vm-shell-probe.sh"
-  [ "$status" -eq 0 ]
+  assert_status 0
 
   assert_out "ssh=ok"
   local line
@@ -201,7 +282,7 @@ setup() {
   before=$(find "$run_root" -maxdepth 1 -name 'vm-spike-*' -type d | wc -l)
 
   run bash "$repo/tests/vm-spike-run.sh"
-  [ "$status" -eq 0 ]
+  assert_status 0
 
   # Requirement 4: the run drops a log on the machine that called it, and names it in its output.
   local log
@@ -221,4 +302,46 @@ setup() {
   # the host keeps.
   run grep -q 'toortest' "$log"
   [ "$status" -ne 0 ]
+}
+
+# `vm-run.sh stop` is how a person ends a tier that is running somewhere else. systemd owns the
+# guest's cgroup, so the standard mechanism is what ends it: KillMode defaults to control-group
+# (systemd.kill(5)), so stopping a scope SIGTERMs every process in it. The leftovers a scope cannot
+# remove are the host-side ones: a scope has no main process (systemd.scope(5)), so killing it never
+# touches the run dir its spawner made.
+@test "vm-run.sh stop ends every vm-*.scope and removes only the run dirs nobody owns" {
+  # shellcheck source=tests/vm-lib.bash
+  source "$repo/tests/vm-lib.bash"
+  local guest="fakeqemu-stop-$$"
+  vm_scope "vm-boot-$$" 256M bash -c "exec -a $guest sleep 60" >/dev/null 2>&1 &
+  local boot=$!
+
+  # systemd-run forks the guest, so the unit exists only after registration; stopping an
+  # unregistered name signals nothing.
+  local until=$((SECONDS + 10))
+  while [ "$SECONDS" -lt "$until" ]; do
+    [ "$(systemctl --user show -p ActiveState --value "vm-boot-$$.scope" 2>/dev/null)" = active ] && break
+    sleep 1
+  done
+
+  # One dir whose owner is gone, one whose owner is still running.
+  bash -c 'exit' &
+  local dead=$!
+  wait "$dead"
+  mkdir -p "$vm_tmp/vm-shell-$dead" "$vm_tmp/vm-shell-$$"
+
+  run bash "$repo/tests/vm-run.sh" stop
+  assert_status 0
+  assert_out 'stopped=1'
+  # The count is however many orphan dirs this host has accumulated, so it is asserted as a fact
+  # that removals happened, and ownership is checked on the two dirs this test made.
+  grep -q 'removed=[0-9]*' <<<"$output"
+
+  [ "$(systemctl --user show -p ActiveState --value "vm-boot-$$.scope" 2>/dev/null)" != active ]
+  run pgrep -f "$guest"
+  [ "$status" -ne 0 ]
+  [ ! -d "$vm_tmp/vm-shell-$dead" ]
+  [ -d "$vm_tmp/vm-shell-$$" ]
+  rm -rf "$vm_tmp/vm-shell-$$"
+  wait "$boot" 2>/dev/null || true
 }

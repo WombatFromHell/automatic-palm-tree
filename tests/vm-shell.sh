@@ -72,17 +72,29 @@ if [ ! -e /dev/kvm ]; then
   exit 1
 fi
 
-run="$vm_tmp/vm-shell-$(date +%s)"
+# The pid is in the dir name so `vm-run.sh stop` can tell an orphan from a run that is still alive:
+# a scope has no main process (systemd.scope(5)), so killing a guest never removes this dir.
+run="$vm_tmp/vm-shell-$$"
 log=$(vm_log_path vm-shell)
-# A probe finishes in seconds; only a person at the keyboard needs the long backstop. The value is
-# the ceiling for a guest that never shuts itself down, not a wait anyone sits through.
-boot_timeout=${VM_SHELL_TIMEOUT:-300}
-[ -n "$script" ] && boot_timeout=${VM_SHELL_TIMEOUT:-120}
-# A push run copies a host closure into the guest's store disk and installs it onto the drive, so it
-# is minutes of work rather than a probe that finishes in seconds.
-[ -n "$push_host" ] && boot_timeout=${VM_SHELL_TIMEOUT:-900}
+# A probe finishes in seconds; a push run copies a host closure into the guest's store disk and
+# installs it onto the drive, so it is minutes of work; only a person at the keyboard needs the
+# longest backstop. The value is the ceiling for a guest that never shuts itself down, not a wait
+# anyone sits through.
+default_timeout=300
+[ -n "$script" ] && default_timeout=120
+[ -n "$push_host" ] && default_timeout=900
+boot_timeout=${VM_SHELL_TIMEOUT:-$default_timeout}
 store_mb=${VM_STORE_IMG_MB:-8192}
 mkdir -p "$run/tmp/xchg" "$vm_tmp/logs"
+# The closure reaches the guest as a packed store archive on a share rather than through its ssh
+# daemon. The archive is packed into the run dir on every run and dies with it: no archive cached on
+# this host may satisfy the guest, so a run proves the closure travels rather than that a leftover
+# archive still decodes. The cost is paid every run (measured: 240s of wall time and 28 CPU-minutes
+# of xz for methyl-test's closure).
+push_cache="$run/tmp/push-cache"
+[ -n "$push_host" ] && mkdir -p "$push_cache"
+# The archive this harness used to keep in $vm_tmp is gone; delete it so no run can find it.
+[ -d "$vm_tmp/push-cache" ] && rm -rf "$vm_tmp/push-cache"
 # --boot boots from files the probe copies out of the installed drive, since a host cannot read a
 # file out of a qcow2 without root.
 [ -n "$boot_drive" ] && mkdir -p "$run/tmp/deploy-out"
@@ -98,7 +110,9 @@ mkfs.ext4 -qF "$store_img"
 printf 'mkdir /upper\nmkdir /work\n' | debugfs -w "$store_img" >/dev/null
 # A run costs a store image plus a blank drive, and the log lives in $vm_tmp/logs, so dropping the
 # run dir on exit loses nothing the report needs.
-trap 'rm -rf "$run"' EXIT
+trap 'vm_kill_all; rm -rf "$run"' EXIT
+trap 'vm_abort' INT TERM
+(vm_watch_harness "$$" "$run") &
 
 # The repo the guest installs from, without git history: the guest only ever reads the working
 # tree. The trailing /. copies the contents — `cp -a dir existing-dir` nests the directory inside
@@ -115,8 +129,8 @@ rm -rf "$run/tmp/xchg/.git"
 
 # The closure is built here, in its own scope, before the guest boots: a flake eval inside a 1GB guest
 # is exactly the thing that overflows RAM, which is why install.sh takes INSTALL_SYSTEM at all. It
-# reaches the guest over ssh after it boots (see below), so nothing on this host's /nix/store is ever
-# shared with a guest that has autologin root and no password.
+# reaches the guest as the packed nars of the closure being installed, so the guest never reads this
+# host's live /nix/store — which matters because it has autologin root and no password.
 if [ -n "$push_host" ]; then
   push_system=$(vm_scope "vm-push-$$" 1200M bash -c \
     "cd $repo && nix build --no-link --print-out-paths .#nixosConfigurations.$push_host.config.system.build.toplevel" 2>>"$log") || {
@@ -125,6 +139,18 @@ if [ -n "$push_host" ]; then
   }
   printf '%s\n' "$push_system" >"$run/tmp/xchg/push-system"
   printf 'push=%s\n' "$push_system" >>"$log"
+  # Packing is the slow half of the handover, and it is paid every run: the archive is this run's,
+  # so nothing a previous run packed can stand in for it.
+  rc=0
+  start=$SECONDS
+  nix copy --no-check-sigs --to "file:$push_cache" "$push_system" >>"$log" 2>&1 || rc=$?
+  printf 'push_cache=new\n' >>"$log"
+  printf 'push_rc=%s secs=%s\n' "$rc" "$((SECONDS - start))" >>"$log"
+  if [ "$rc" -ne 0 ]; then
+    printf 'vm-shell.sh: the closure could not be packed for the guest (%s)\n' "$push_system" >&2
+    printf 'log=%s\n' "$log"
+    exit 1
+  fi
   # The checked-in recipe carries UUIDs recorded from the real host, and a UUID names a filesystem
   # that already exists — mkfs is never given one. A blank drive gets a fresh layout, so the run's
   # copy of the recipe drops them; the host's own file is untouched and install.sh records new ones.
@@ -138,14 +164,26 @@ fi
 # with your normal private key. Root is a special user in NixOS, so its authorized_keys lands
 # outside /root and ssh goes to a normal user instead. With no authorized_keys file we fall back to
 # a per-run keypair. No password is ever typed or passed in argv.
+#
+# The keys go into the override module as literals, not through builtins.readFile of a per-run path:
+# readFile embeds the run directory, so every run's module is a different derivation and pays a
+# fresh eval and build (measured here: 14s where the cached eval answers in 3s). Lines containing a
+# quote or a backslash are skipped rather than escaped, since ssh keys are base64 plus a comment.
 sshkey=""
-auth_keys="$run/authorized_keys"
-if [ -s "$HOME/.ssh/authorized_keys" ]; then
-  cp "$HOME/.ssh/authorized_keys" "$auth_keys"
+keys_src="$HOME/.ssh/authorized_keys"
+keys_list=""
+if [ -s "$keys_src" ]; then
+  # A quote or a backslash would need Nix escaping; ssh keys are base64 plus a comment, so a line
+  # carrying one is dropped rather than escaped.
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    keys_list="$keys_list\"$line\" "
+  done < <(grep -v '["\\]' "$keys_src")
 else
   sshkey="$run/host_key"
   ssh-keygen -t ed25519 -N '' -q -f "$sshkey"
-  cp "$sshkey.pub" "$auth_keys"
+  keys_src="$sshkey.pub"
+  keys_list="\"$(cat "$keys_src")\""
   printf 'ssh: no ~/.ssh/authorized_keys, using a per-run keypair\n' >>"$log"
 fi
 port=""
@@ -170,8 +208,7 @@ fi
 override="$run/override.nix"
 {
   printf '{ lib,\n  ...\n}:\n{\n'
-  printf '  users.users.vm = {\n    isNormalUser = true;\n    openssh.authorizedKeys.keys = builtins.filter (k: builtins.isString k && k != "") (builtins.split "\\n" (builtins.readFile "%s"));
-  };\n' "$auth_keys"
+  printf '  users.users.vm = {\n    isNormalUser = true;\n    openssh.authorizedKeys.keys = [ %s ];\n  };\n' "$keys_list"
   printf '  virtualisation.forwardPorts = [ { proto = "tcp"; host.address = "%s"; host.port = %s; guest.port = 22; } ];\n' "$bind" "$port"
   # shellcheck disable=SC2016  # the $ is Nix string text the generated boot script expands, not a shell expansion here
   # A plain list merges by concatenation (types.listOf's merge), so this appends after the module's
@@ -184,10 +221,15 @@ override="$run/override.nix"
   if [ -n "$push_host" ]; then
     # A host closure has to fit on the drive it is installed onto, and the 4 GB default does not.
     printf '  virtualisation.emptyDiskImages = lib.mkForce [ %s ];\n' "${VM_PUSH_DRIVE_MB:-10240}"
-    # A push writes the host's unsigned closure into the guest's store through its nix daemon,
-    # and the daemon refuses unsigned paths unless the user behind the ssh session is a trusted
-    # user (nixos/modules/services/misc/nix-ssh-serve.nix does the same for its own nix-ssh user).
+    # The rebuilt closure still comes over ssh — it is new every run, so it can never be packed and
+    # cached — and the daemon refuses unsigned paths unless the user behind the ssh session is a
+    # trusted user (nixos/modules/services/misc/nix-ssh-serve.nix does the same for its own nix-ssh
+    # user).
     printf '  nix.settings.trusted-users = [ "root" "vm" ];\n'
+    # The initial closure comes as a store archive instead: the guest reads packed nars off this
+    # share and registers them itself. The source is an absolute host path, not a $TMPDIR literal,
+    # because the archive is kept between runs.
+    printf '  virtualisation.sharedDirectories.push = { source = "%s"; target = "/push-cache"; securityModel = "none"; };\n' "$push_cache"
     if [ -n "$boot_drive" ]; then
       # The probe copies kernel/initrd out of the installed drive here; /mnt is the install
       # target, so a share under it would be shadowed by the mount.
@@ -204,20 +246,19 @@ override="$run/override.nix"
 
 vm_build ./tests/vm-shell.nix "$run/guest" "$override" >>"$log" 2>&1
 
-# The console fifo is created before anything opens it: opening a fifo that is not there with `>`
-# creates a regular file, and qemu then reads an empty stdin and exits at once. fd 9 holds the write
-# end open so the guest never sees EOF until this script decides the console is done.
 fifo="$run/console.fifo"
 mkfifo "$fifo"
 # tee, not a plain redirect: the console is the interface, so the person who ran this sees it while
 # the host still keeps the transcript.
 vm_boot "$run/guest" "$run/tmp" "$log" "$boot_timeout" "$fifo" tee &
 boot=$!
-vm_serial_open "$fifo"
+# The write end opens only after the boot is launched: qemu opens the fifo for reading in the
+# background, and an O_WRONLY open of a fifo blocks until a reader exists.
+vm_console_open "$fifo"
 
 # RAM is sampled while the guest is up, from the host's own cgroup (the guest's /proc reports its
 # own namespace limit).
-vm_free_peak "$boot_timeout" qemu >>"$log" 2>&1 &
+vm_free_peak "$boot_timeout" qemu-system "$boot" >>"$log" 2>&1 &
 peak=$!
 
 # Wait for the autologin shell before anything is typed: serial-getty prints its prompt before the
@@ -234,9 +275,8 @@ vm_wait_for "$log" "root@" 90 || {
 # attempt plus one retry covers sshd finishing after the banner; blind retries are what made a
 # healthy guest cost a minute.
 ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
+[ -n "$sshkey" ] && ssh_opts="$ssh_opts -i $sshkey"
 ssh_base="ssh -p $port $ssh_opts"
-ssh_nix_opts="$ssh_opts"
-[ -n "$sshkey" ] && ssh_base="$ssh_base -i $sshkey" && ssh_nix_opts="$ssh_nix_opts -i $sshkey"
 ssh_result=""
 if vm_wait_for "$log" "Welcome to NixOS" 60; then
   if $ssh_base -o ConnectTimeout=5 vm@127.0.0.1 'echo SSH_OK' >"$run/ssh.out" 2>&1 ||
@@ -259,27 +299,10 @@ if [ "$ssh_result" = ok ]; then
   printf 'ssh: %s vm@%s — 10.0.2.15 is qemu internal NAT, unreachable from this host\n' "$ssh_base" "${reach:-this host}"
 else
   tail -c 200 "$run/ssh.out" >>"$log"
-  if [ -n "$push_host" ]; then
-    printf 'vm-shell.sh: --push needs the forwarded ssh port to answer\n' >&2
-    printf 'log=%s\n' "$log"
-    vm_kill_scope "vm-boot-$$"
-    exit 1
-  fi
-fi
-
-# The push itself: the host streams the closure into the guest's own store over ssh, so the guest
-# registers it on its store disk and no copy of this host's store is ever shared. `--no-check-sigs`
-# is the client's check — these paths are built on this host and signed by nothing, and the guest's
-# store is scratch; the destination's trust is the trusted-users override above. Measured here: the
-# ssh store peaked at 22 MB of host RSS, where a staged copy or a NAR cache cost gigabytes.
-if [ -n "$push_host" ] && [ "$ssh_result" = ok ]; then
-  rc=0
-  start=$SECONDS
-  NIX_SSHOPTS="$ssh_nix_opts" nix copy --no-check-sigs --to "ssh://vm@127.0.0.1:$port" "$push_system" \
-    >>"$log" 2>&1 || rc=$?
-  printf 'push_rc=%s secs=%s\n' "$rc" "$((SECONDS - start))" >>"$log"
-  if [ "$rc" -ne 0 ]; then
-    printf 'vm-shell.sh: the closure did not reach the guest store (see %s)\n' "$log" >&2
+  # Only --boot needs ssh: it is the run whose rebuilt closure is pushed back, and a rebuilt closure
+  # is new every run, so it can never be packed into the archive the other push reads from.
+  if [ -n "$boot_drive" ]; then
+    printf 'vm-shell.sh: --boot needs the forwarded ssh port to answer\n' >&2
     printf 'log=%s\n' "$log"
     vm_kill_scope "vm-boot-$$"
     exit 1
@@ -304,7 +327,7 @@ if [ -n "$script" ]; then
         printf 'rebuild failed\n' >"$run/tmp/deploy-out/rebuild-failed"
         exit 0
       }
-      NIX_SSHOPTS="$ssh_nix_opts" nix copy --no-check-sigs --to "ssh://vm@127.0.0.1:$port" "$rebuilt" \
+      NIX_SSHOPTS="$ssh_opts" nix copy --no-check-sigs --to "ssh://vm@127.0.0.1:$port" "$rebuilt" \
         >>"$log" 2>&1 || {
         printf 'push of the rebuilt closure failed\n' >"$run/tmp/deploy-out/rebuild-failed"
         exit 0
@@ -333,8 +356,7 @@ else
   cat >&9
 fi
 exec 9>&-
-wait "$peak"
-wait "$boot" || printf 'boot ended by timeout\n' >>"$log"
+vm_end_boot "vm-boot-$$" "$peak" "$boot"
 
 # Boot the drive the probe installed onto. The guest is shut down first: its qcow2 holds the installed
 # system, and the second qemu boots the kernel and initrd the probe copied out of it (D7).
@@ -364,21 +386,21 @@ if [ -n "$boot_drive" ]; then
   disk=$!
   # Sampled in its own background job, so the pid lands in this shell: assigning $(...) inside a
   # backgrounded pipeline leaves peak_disk empty here, and the wait below waits for nothing.
-  vm_free_peak "${VM_BOOT_TIMEOUT:-300}" qemu | tee -a "$log" &
+  vm_free_peak "${VM_BOOT_TIMEOUT:-300}" qemu-system "$disk" | tee -a "$log" &
   peak_disk=$!
 
-  vm_wait_for "$log" 'login:' "${VM_BOOT_TIMEOUT:-300}" "$boot_start" || {
+  if vm_wait_for "$log" 'login:' "${VM_BOOT_TIMEOUT:-300}" "$boot_start"; then
+    printf 'BOOT OK: installed generation reached its login prompt\n' >>"$log"
+  else
     printf 'installed drive never reached a login prompt\n' >>"$log"
     vm_kill_scope "vm-disk-boot-$$"
     printf 'log=%s\n' "$log"
     exit 1
-  }
-  printf 'BOOT OK: installed generation reached its login prompt\n' >>"$log"
-  # The proof is in, and nothing can power this boot off: root is locked until postdeploy sets a
-  # password, so the scope is ended here rather than letting VM_BOOT_TIMEOUT run out.
-  vm_kill_scope "vm-disk-boot-$$"
-  wait "$peak_disk"
-  wait "$disk" || true
+  fi
+  # Nothing is typed into this boot: the drive's root stays locked until postdeploy runs on the real
+  # host, and a serial login stalls at Password: on the installed config. The scope is ended here
+  # rather than letting VM_BOOT_TIMEOUT run out on a prompt that is already proof enough.
+  vm_end_boot "vm-disk-boot-$$" "$peak_disk" "$disk"
 fi
 
 printf 'log=%s\n' "$log"
