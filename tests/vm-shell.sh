@@ -20,6 +20,13 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=tests/vm-lib.bash
 source "$repo/tests/vm-lib.bash"
 
+# A pause with no line reads as a hang. Every step the runner takes says what it is doing, and the
+# same line lands in the log once the log exists.
+say() {
+  printf '%s\n' "$1"
+  if [ -n "${log:-}" ]; then printf '%s\n' "$1" >>"$log"; fi
+}
+
 script=""
 push_host=""
 boot_drive=""
@@ -117,6 +124,7 @@ trap 'vm_abort' INT TERM
 # The repo the guest installs from, without git history: the guest only ever reads the working
 # tree. The trailing /. copies the contents — `cp -a dir existing-dir` nests the directory inside
 # it, which is how a mounted share ends up with nothing at its top level.
+say "share: copying the working tree into $run/tmp/xchg"
 cp -a "$repo/." "$run/tmp/xchg"
 rm -rf "$run/tmp/xchg/.git"
 
@@ -132,6 +140,7 @@ rm -rf "$run/tmp/xchg/.git"
 # reaches the guest as the packed nars of the closure being installed, so the guest never reads this
 # host's live /nix/store — which matters because it has autologin root and no password.
 if [ -n "$push_host" ]; then
+  say "push: building $push_host's closure on the host"
   push_system=$(vm_scope "vm-push-$$" 1200M bash -c \
     "cd $repo && nix build --no-link --print-out-paths .#nixosConfigurations.$push_host.config.system.build.toplevel" 2>>"$log") || {
     printf 'vm-shell.sh: no closure for host %s — the build failed (see %s)\n' "$push_host" "$log" >&2
@@ -143,6 +152,7 @@ if [ -n "$push_host" ]; then
   # so nothing a previous run packed can stand in for it.
   rc=0
   start=$SECONDS
+  say "push: packing the closure's nars into $push_cache - minutes of xz, nothing cached between runs"
   nix copy --no-check-sigs --to "file:$push_cache" "$push_system" >>"$log" 2>&1 || rc=$?
   printf 'push_cache=new\n' >>"$log"
   printf 'push_rc=%s secs=%s\n' "$rc" "$((SECONDS - start))" >>"$log"
@@ -244,6 +254,7 @@ override="$run/override.nix"
   printf '}\n'
 } >"$override"
 
+say "guest: building tests/vm-shell.nix"
 vm_build ./tests/vm-shell.nix "$run/guest" "$override" >>"$log" 2>&1
 
 fifo="$run/console.fifo"
