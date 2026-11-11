@@ -9,6 +9,10 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 # shellcheck source=tests/vm-lib.bash
 source "$repo/tests/vm-lib.bash"
 
+# Same refusal as vm-shell.sh: this runner boots a guest at 1300M, and on a RAM-constrained host the
+# thing systemd-oomd kills is whatever holds the most RAM, not the guest.
+vm_headroom_check "$vm_headroom_guest" || exit 1
+
 # Pid-named, so `vm-run.sh stop` can tell an orphan dir from one whose runner is still alive.
 run="$vm_tmp/vm-spike-$$"
 log=$(vm_log_path vm-spike)
