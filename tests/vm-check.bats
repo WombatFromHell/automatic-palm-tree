@@ -21,17 +21,11 @@ run_shell() {
   [ -f "$log" ]
 }
 
-# One --push --boot run serves both push tests: it is the same deploy guest, and the drive boot is
-# the only thing the second test adds. Lazy, not setup_file — the tier must not boot a guest for a
-# run where VM_PUSH is unset, and every push test skips before calling this.
-push_log=""
-shared_push_run() {
-  if [ -z "$push_log" ]; then
-    run_shell --push methyl-test --boot --script "$repo/tests/vm-shell-push-probe.sh"
-    push_log="$log"
-  fi
-  log="$push_log"
-}
+# The push guest is the gate's, not the suite's: bats runs each test in its own process, so nothing
+# in the file can carry a run from one test to the next, and tests/vm-run.sh boots the one
+# --push --boot run that serves both push tests and hands its log to them as VM_PUSH_LOG. A push
+# test run outside the gate (VM_PUSH set, no VM_PUSH_LOG) skips with a message, so a hidden
+# multi-minute boot can never surprise a direct bats run again.
 
 # The VM gate (tests/vm-run.sh) owns this tier, and it must refuse rather than skip when the host
 # cannot run qemu. Cheap: a stub getenforce, no boot.
@@ -44,6 +38,75 @@ shared_push_run() {
   rm -rf "$stub"
   assert_status 1
   assert_out "selinux=Enforcing"
+}
+
+# RAM is a host fact the tier cannot borrow. systemd-oomd killed the local model server during a
+# --push run (journal: 29.1G/32.7G RAM and 7.5G/8.6G swap, both over its 87% thresholds) because the
+# guest plus the host-side pack scope pushed user.slice past them: the victim is whichever cgroup
+# holds the most RAM, and that is never the guest. Fake meminfo, no boot.
+@test "the VM gate refuses to run where the host has no headroom" {
+  local stub="$BATS_TMPDIR/vm-headroom-stub-$$"
+  mkdir -p "$stub"
+  printf '#!/usr/bin/env bash\nprintf "Permissive\n"\n' >"$stub/getenforce"
+  printf 'MemTotal: 32000000 kB\nMemAvailable: 900000 kB\nSwapTotal: 8000000 kB\nSwapFree: 200000 kB\n' >"$stub/meminfo"
+  # VM_PUSH is pinned, not inherited: the gate boots its one push guest when VM_PUSH=1, and this PATH
+  # has no nix, so an inherited VM_PUSH from the tier would boot against the stub and fail on the
+  # boot instead of on the RAM refusal. Same reason the other knobs are pinned.
+  run env PATH="$stub:/usr/bin:/bin" VM_PUSH=0 VM_MEMINFO="$stub/meminfo" VM_GATE_MEM=1300 VM_GATE_PEAK_SECONDS=2 \
+    bash "$repo/tests/vm-run.sh"
+  assert_status 1
+  assert_out "headroom: ram=878 swap=195, needs 2324/1024"
+
+  # The push tier needs vm-shell.sh's own 2500 (a pack scope plus a guest), not cap+1024: without the
+  # raised threshold a push run slips past the gate and its refusal hides behind a test skip.
+  run env PATH="$stub:/usr/bin:/bin" VM_PUSH=1 VM_MEMINFO="$stub/meminfo" VM_GATE_MEM=1300 VM_GATE_PEAK_SECONDS=2 \
+    bash "$repo/tests/vm-run.sh"
+  rm -rf "$stub"
+  assert_status 1
+  assert_out "headroom: ram=878 swap=195, needs 2500/1024"
+}
+
+# The gate's ceiling has to tolerate the same overshoot the suite's own peak assertion does (see the
+# cap+64 slack in the --push test), or a tier whose every test passed fails on the last line the gate
+# prints. Fake suite, no boot: it reports a peak at exactly cap+64 and exits 0. The %%s is what makes
+# that number reach the gate — a bare %s here is consumed by the printf that writes the stub, which
+# left the stub printing `peak_guest_mb=` with no value and the gate judging its own sampler's 0.
+@test "the VM gate accepts the overshoot its own suite tolerates" {
+  local stub="$BATS_TMPDIR/vm-ceiling-stub-$$"
+  mkdir -p "$stub"
+  printf '#!/usr/bin/env bash\nprintf "Permissive\n"\n' >"$stub/getenforce"
+  # Roomy on purpose: this test judges the ceiling, not the host's RAM, so it must not depend on
+  # how much memory the machine happens to have while the suite runs.
+  printf 'MemTotal: 32000000 kB\nMemAvailable: 20000000 kB\nSwapTotal: 8000000 kB\nSwapFree: 6000000 kB\n' >"$stub/meminfo"
+  # Single quotes are deliberate: the arithmetic must survive into the stub, not expand here.
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\nprintf "peak_guest_mb=%%s\\n" "$((VM_GATE_MEM + 64))"\n' >"$stub/bats"
+  chmod +x "$stub/getenforce" "$stub/bats"
+  # Pinned for the same reason as the headroom test: this stub PATH cannot build a closure, so an
+  # inherited VM_PUSH=1 would make the gate run a real push guest and fail the status assert on it.
+  run env PATH="$stub:/usr/bin:/bin" VM_PUSH=0 VM_MEMINFO="$stub/meminfo" VM_GATE_MEM=1300 VM_GATE_PEAK_SECONDS=2 \
+    bash "$repo/tests/vm-run.sh"
+  rm -rf "$stub"
+  assert_status 0
+  # The verdict must name the suite's peak, not the gate's own empty sample: 0 would pass any ceiling.
+  assert_out "peak_guest_mb=1364 <= 1364"
+}
+
+# The gate boots the push itself, so a push run that dies before printing its log must fail the gate:
+# if it instead left VM_PUSH_LOG empty, both push tests would skip and a tier with a dead push would
+# report green. Stub PATH with no nix, roomy fake meminfo — vm-shell.sh passes its own headroom check
+# and fails building the closure, which is the path that exits without a log. No boot.
+@test "the VM gate fails when its push run dies before printing a log" {
+  local stub="$BATS_TMPDIR/vm-push-dead-stub-$$"
+  mkdir -p "$stub"
+  printf '#!/usr/bin/env bash\nprintf "Permissive\n"\n' >"$stub/getenforce"
+  printf 'MemTotal: 32000000 kB\nMemAvailable: 20000000 kB\nSwapTotal: 8000000 kB\nSwapFree: 6000000 kB\n' >"$stub/meminfo"
+  chmod +x "$stub/getenforce"
+  run env PATH="$stub:/usr/bin:/bin" VM_PUSH=1 VM_MEMINFO="$stub/meminfo" VM_GATE_MEM=1300 VM_GATE_PEAK_SECONDS=2 \
+    bash "$repo/tests/vm-run.sh"
+  rm -rf "$stub"
+  assert_status 1
+  assert_out "push run ended before printing its log"
 }
 
 # Teardown must not idle the boot timeout on a guest that never powers off. No boot: a fake process
@@ -237,13 +300,14 @@ EOF
 # paths into the run dir, and the guest registers them and installs the closure onto the blank drive.
 # It copies gigabytes, so it is opt-in rather than part of every VM gate run.
 @test "--push installs a host closure onto the drive from the guest" {
-  [ "${VM_PUSH:-0}" = 1 ] || skip "VM_PUSH unset — this copies a host closure into the guest"
+  [ "${VM_PUSH:-0}" = 1 ] || skip "VM_PUSH unset — the push guest runs in tests/vm-run.sh"
+  [ -n "${VM_PUSH_LOG:-}" ] || skip "VM_PUSH set but VM_PUSH_LOG empty — run the gate: VM_PUSH=1 bash tests/vm-run.sh"
 
   local run_root=${VM_TMP:-/var/mnt/data0/temp/flakeroot-tmp}
   local before
   before=$(find "$run_root" -maxdepth 1 -name 'vm-shell-*' -type d | wc -l)
 
-  shared_push_run
+  log="$VM_PUSH_LOG"
   for marker in 'SHELL OK: store disk mounted: /dev/vdc' \
     'SHELL OK: writable store layered on the read-only store image' \
     'SHELL OK: closure handed over' \
@@ -290,9 +354,10 @@ EOF
 # the tmpfs config, so the drive is booted by a second qemu from the kernel and initrd the probe
 # copied out of it (D7), and the proof is a shell the installed system's password opened.
 @test "--push HOST --boot boots the installed drive and answers its login" {
-  [ "${VM_PUSH:-0}" = 1 ] || skip "VM_PUSH unset — this builds, copies and then boots twice"
+  [ "${VM_PUSH:-0}" = 1 ] || skip "VM_PUSH unset — the push guest runs in tests/vm-run.sh"
+  [ -n "${VM_PUSH_LOG:-}" ] || skip "VM_PUSH set but VM_PUSH_LOG empty — run the gate: VM_PUSH=1 bash tests/vm-run.sh"
 
-  shared_push_run
+  log="$VM_PUSH_LOG"
   # The boot files come from the installed closure. root=fstab makes systemd read this drive's uuids
   # out of its own fstab; init=<path> is what stage-1 reads to find the closure it is booting.
   grep -q '^disk_boot=.*empty0.qcow2 append=.*root=fstab' "$log"

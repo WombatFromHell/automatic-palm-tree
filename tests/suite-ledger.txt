@@ -35,4 +35,4 @@ tests/swap.nix attrs 19
 tests/floors.bats assert 6
 tests/ci.bats assert 5
 tests/vm-fixture.nix checks 8
-tests/vm-check.bats assert 14
+tests/vm-check.bats assert 22

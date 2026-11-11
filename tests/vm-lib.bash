@@ -21,6 +21,13 @@
 vm_tmp=${VM_TMP:-/var/mnt/data0/temp/flakeroot-tmp}
 vm_repo=${VM_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 
+# RAM each run asks for before it creates anything, so every runner refuses with the same number:
+# a guest alone is scoped at 1300M, and a --push run holds that guest plus a host-side build scope
+# (1200M) at the same time. If the gate's threshold and the runner's ever disagree, the runner
+# refuses mid-run and the tier reports an obscure "no log" instead of a headroom refusal.
+vm_headroom_guest=1400
+vm_headroom_push=2500
+
 vm_log_path() { printf '%s/logs/%s-%s.log\n' "$vm_tmp" "$1" "$(date +%s)"; }
 
 # One line to the terminal and, once a log exists, to the log too. Both VM runners print the same
@@ -48,6 +55,36 @@ vm_selinux_check() {
   printf 'selinux=%s — this tier needs SELinux permissive for qemu to open its /dev/shm share.\n' "$mode"
   printf 'Restore it afterwards with: sudo setenforce 1\n'
   return 1
+}
+
+# RAM the tier may spend, read from the host's own meminfo (VM_MEMINFO stands in for it in tests).
+# The tier's footprint is a guest at MemoryMax plus the host-side pack scope, so it wants cap plus a
+# gigabyte. Swap is demanded even though the scope runs with MemorySwapMax=0: systemd-oomd kills the
+# largest holder under user.slice when RAM *and* swap both cross its thresholds (journal:
+# 29.1G/32.7G and 7.5G/8.6G, both over 87%), and the holder on this host is the local model server,
+# not the guest. A host with swap nearly full is already in that state.
+vm_headroom_check() {
+  local need=${1:-2324} swap_need=${2:-1024} line
+  line=$(awk -v need="$need" -v swap_need="$swap_need" '
+    /^MemAvailable:/ { ram = int($2 / 1024) }
+    /^SwapTotal:/    { swap_total = int($2 / 1024) }
+    /^SwapFree:/     { swap_free = int($2 / 1024) }
+    END {
+      # No swap on this host means oomd never reaches its swap threshold, so there is nothing to ask for.
+      if (ram < need || (swap_total > 0 && swap_free < swap_need)) {
+        printf "short: ram=%d swap=%d, needs %d/%d\n", ram, swap_free, need, swap_need
+      } else {
+        printf "ok: ram=%d swap=%d\n", ram, swap_free
+      }
+    }' "${VM_MEMINFO:-/proc/meminfo}")
+  case "$line" in
+  short:*)
+    vm_say "FAIL headroom${line#short} — the tier boots a guest plus a host-side pack scope; free RAM (or stop the largest holder under user.slice) before running it"
+    return 1
+    ;;
+  esac
+  vm_say "headroom${line#ok}"
+  return 0
 }
 
 # Build only the VM script (config.system.build.vm). nixpkgs' legacy lib.nixosSystem injects a
@@ -79,11 +116,15 @@ vm_build() {
 vm_boot() {
   local guest=$1 run_dir=$2 serial=$3 timeout=${4:-300} fifo=${5:-} mode=${6:-redirect}
   local cmd="TMPDIR=$run_dir USE_TMPDIR=1 timeout $timeout $guest/bin/run-*-vm${fifo:+ < $fifo}"
+  # The scope has to hold qemu plus the guest's whole RAM (memorySize) plus its page cache: a
+  # 1300M scope around a 1024 MB guest leaves ~276 MB. VM_BOOT_CEILING is the separate cap for
+  # the installed drive (vm_boot_disk).
+  local ceiling=1300M
   if [ "$mode" = tee ]; then
     # The console is the interface: the caller sees it while the host keeps the transcript.
-    vm_scope "vm-boot-$$" 1300M bash -c "$cmd" 2>&1 | tee -a "$serial"
+    vm_scope "vm-boot-$$" "$ceiling" bash -c "$cmd" 2>&1 | tee -a "$serial"
   else
-    vm_scope "vm-boot-$$" 1300M bash -c "$cmd" >>"$serial" 2>&1
+    vm_scope "vm-boot-$$" "$ceiling" bash -c "$cmd" >>"$serial" 2>&1
   fi
 }
 
