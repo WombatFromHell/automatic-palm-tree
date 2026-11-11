@@ -147,7 +147,7 @@ teardown() {
   run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 0 ]
   [ -d "$disk_dir/mnt" ]
-  assert_call "^mount $disk_dir/own.img2 $disk_dir/mnt$"
+  assert_call "^mount -t btrfs $disk_dir/own.img2 $disk_dir/mnt$"
 }
 
 @test "a blank ESP and a blank root, both declared by label, are formatted once" {
@@ -624,7 +624,7 @@ EOF
   recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
   run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 0 ]
-  assert_call "^mount -o fmask=0077,dmask=0077 $disk_dir/own.img1 $disk_dir/mnt/boot$"
+  assert_call "^mount -t vfat -o fmask=0077,dmask=0077 $disk_dir/own.img1 $disk_dir/mnt/boot$"
   nodes own
   run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 0 ]
@@ -645,9 +645,23 @@ EOF
   assert_call "^btrfs subvolume create $disk_dir/mnt/@nix$"
   assert_call "^btrfs subvolume create $disk_dir/mnt/@swap$"
   assert_call "^umount -R $disk_dir/mnt$"
-  assert_call "^mount -o noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt$"
-  assert_call "^mount -o subvol=@,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt$"
+  assert_call "^mount -t btrfs -o noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt$"
+  assert_call "^mount -t btrfs -o subvol=@,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt$"
   [ "$(type_of own 2)" = btrfs ]
+}
+
+# A mount with no type is a guess, and the guess reads the device: a partition formatted moments ago
+# can still answer as blank, and the guess then walks /proc/filesystems. In the VM guest that reached
+# /sbin/mount.erofs with btrfs's `compress=zstd`, which the kernel refused with EINVAL, and terraform
+# left /mnt unmounted. Every mount names its filesystem, so only the right helper can ever run.
+@test "every mount names the filesystem it is mounting" {
+  truncate -s 128M "$disk_dir/own.img"
+  stub_lsblk "$disk_dir/own.img"
+  recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
+  run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^mount ' "$calls")" = "$(grep -c '^mount -t ' "$calls")" ]
+  [ "$(grep -c '^mount ' "$calls")" -gt 0 ]
 }
 
 # Creating the tree is only half of it: every sibling of @ is a mount hosts/methyl-nixos/nixos.nix
@@ -661,14 +675,14 @@ EOF
   recipe_file "$stubs/owned.json" true "boot:boot:vfat:8M:/boot,nixos:nixos:btrfs:rest:/"
   run terraform_recipe_run own "$stubs/owned.json" --disk "$disk_dir/own.img"
   [ "$status" -eq 0 ]
-  assert_call "^mount -o subvol=@nix,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/nix$"
-  assert_call "^mount -o subvol=@home,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/home$"
-  assert_call "^mount -o subvol=@log,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/var/log$"
-  assert_call "^mount -o subvol=@cache,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/var/cache$"
-  assert_call "^mount -o subvol=@swap,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/var/lib/swap$"
-  assert_call "^mount -o subvol=@snapshots,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/.snapshots$"
+  assert_call "^mount -t btrfs -o subvol=@nix,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/nix$"
+  assert_call "^mount -t btrfs -o subvol=@home,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/home$"
+  assert_call "^mount -t btrfs -o subvol=@log,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/var/log$"
+  assert_call "^mount -t btrfs -o subvol=@cache,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/var/cache$"
+  assert_call "^mount -t btrfs -o subvol=@swap,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/var/lib/swap$"
+  assert_call "^mount -t btrfs -o subvol=@snapshots,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt/.snapshots$"
   # @ is the filesystem root's own mount: it is mounted once, at $mount, and never again as a sibling.
-  assert_calls "^mount -o subvol=@,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt$" 1
+  assert_calls "^mount -t btrfs -o subvol=@,noatime,compress=zstd $disk_dir/own.img2 $disk_dir/mnt$" 1
 }
 
 # A rerun of the same recipe is the same staging mount set: a subvolume already mounted is adopted,
@@ -764,7 +778,7 @@ EOF
   assert_call "^btrfs subvolume create $disk_dir/mnt/@nix$"
   assert_call "^btrfs subvolume create $disk_dir/mnt/@swap$"
   assert_no_call "btrfs subvolume create $disk_dir/mnt/@$"
-  assert_call "^mount -o subvol=@,noatime,compress=zstd $disk_dir/tree.img2 $disk_dir/mnt$"
+  assert_call "^mount -t btrfs -o subvol=@,noatime,compress=zstd $disk_dir/tree.img2 $disk_dir/mnt$"
   assert_no_call "mkfs"
 }
 
@@ -789,8 +803,8 @@ EOF
 
   run terraform_recipe_run opt "$stubs/opt.json" --disk "$disk_dir/opt.img"
   [ "$status" -eq 0 ]
-  assert_call "^mount -o nodatacow $disk_dir/opt.img2 $disk_dir/mnt$"
-  assert_call "^mount -o subvol=@,nodatacow $disk_dir/opt.img2 $disk_dir/mnt$"
+  assert_call "^mount -t btrfs -o nodatacow $disk_dir/opt.img2 $disk_dir/mnt$"
+  assert_call "^mount -t btrfs -o subvol=@,nodatacow $disk_dir/opt.img2 $disk_dir/mnt$"
 }
 
 # A shared drive is mounted by the same code path, so a btrfs root that already exists gets the same
@@ -801,7 +815,7 @@ EOF
 
   run terraform_recipe_run bts "$stubs/bts.json" --disk "$disk_dir/bts.img"
   [ "$status" -eq 0 ]
-  assert_call "^mount -o noatime,compress=zstd $disk_dir/bts.img2 $disk_dir/mnt$"
+  assert_call "^mount -t btrfs -o noatime,compress=zstd $disk_dir/bts.img2 $disk_dir/mnt$"
   assert_no_call "mkfs"
 }
 
@@ -821,8 +835,8 @@ EOF
     [ "$status" -eq 0 ]
     assert_no_call "mkfs"
     case "$fs" in
-    ext4) assert_call "^mount -o noatime $disk_dir/ext4.img2 $disk_dir/mnt$" ;;
-    xfs) assert_call "^mount -o noatime,logbsize=256k,noquota $disk_dir/xfs.img2 $disk_dir/mnt$" ;;
+    ext4) assert_call "^mount -t ext4 -o noatime $disk_dir/ext4.img2 $disk_dir/mnt$" ;;
+    xfs) assert_call "^mount -t xfs -o noatime,logbsize=256k,noquota $disk_dir/xfs.img2 $disk_dir/mnt$" ;;
     esac
   done
 }
@@ -836,8 +850,8 @@ EOF
 
   run terraform_recipe_run none "$stubs/none.json" --disk "$disk_dir/none.img"
   [ "$status" -eq 0 ]
-  assert_call "^mount $disk_dir/none.img2 $disk_dir/mnt$"
-  assert_call "^mount -o subvol=@ $disk_dir/none.img2 $disk_dir/mnt$"
+  assert_call "^mount -t btrfs $disk_dir/none.img2 $disk_dir/mnt$"
+  assert_call "^mount -t btrfs -o subvol=@ $disk_dir/none.img2 $disk_dir/mnt$"
 }
 
 # Options that cannot survive a word boundary would reach mount as two arguments.
@@ -928,7 +942,7 @@ EOF
 
   run terraform_recipe_run lin "$stubs/recipe.json"
   [ "$status" -eq 0 ]
-  assert_call "^mount -o noatime $disk_dir/lin.img3 $disk_dir/mnt$"
+  assert_call "^mount -t ext4 -o noatime $disk_dir/lin.img3 $disk_dir/mnt$"
   assert_call "^mount .* $disk_dir/mnt$"
   assert_no_call "mkfs"
   assert_unchanged lin

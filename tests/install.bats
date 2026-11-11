@@ -688,8 +688,8 @@ run_install() {
   # Both partitions carry a signature, so nothing is formatted and only the root is mounted.
   assert_no_call "mkfs"
   # The root and the ESP are both mounted: deploy writes the boot loader into the ESP.
-  assert_call "^mount -o noatime /dev/vda2 /mnt$"
-  assert_call "^mount -o fmask=0077,dmask=0077 /dev/vda1 /mnt/boot$"
+  assert_call "^mount -t ext4 -o noatime /dev/vda2 /mnt$"
+  assert_call "^mount -t vfat -o fmask=0077,dmask=0077 /dev/vda1 /mnt/boot$"
   assert_no_call "disko --mode"
   assert_out "mounted from the partitions propyl declares"
 }
@@ -864,7 +864,7 @@ run_install_in() { # <repo dir> [install.sh args]
   printf '' >"$stubs/owned"
   INSTALL_FORCE=1 run run_install --stage terraform propyl
   [ "$status" -eq 0 ]
-  assert_call "mount -o noatime /dev/vda2 /mnt"
+  assert_call "mount -t ext4 -o noatime /dev/vda2 /mnt"
   INSTALL_FORCE=1 run run_install --stage deploy propyl
   [ "$status" -eq 0 ]
   assert_call "nixos-install --flake .#propyl --root /mnt --no-root-passwd"

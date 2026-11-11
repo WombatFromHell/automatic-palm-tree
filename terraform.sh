@@ -237,10 +237,12 @@ mount_extra() {
     say "$dir already mounted — adopted, not rebuilt"
     return
   fi
+  # The type is named, never guessed: a device formatted moments ago can still read as blank, and a
+  # guess walks /proc/filesystems and hands the options to whichever helper it lands on first.
   if [ -n "$opts" ]; then
-    run mount -o "$opts" "$node" "$dir"
+    run mount -t "$fs" -o "$opts" "$node" "$dir"
   else
-    run mount "$node" "$dir"
+    run mount -t "$fs" "$node" "$dir"
   fi
 }
 
@@ -1080,9 +1082,9 @@ owned_run() {
     say "$mount already mounted — adopted, not rebuilt"
   else
     if [ -n "$opts" ]; then
-      run mount -o "$opts" "$root_node" "$mount"
+      run mount -t "$root_fs" -o "$opts" "$root_node" "$mount"
     else
-      run mount "$root_node" "$mount"
+      run mount -t "$root_fs" "$root_node" "$mount"
     fi
     mounted_now=1
   fi
@@ -1102,10 +1104,10 @@ owned_run() {
     if [ -n "$src" ]; then
       run umount -R "$mount"
     fi
-    run mount "$root_node" "$mount"
+    run mount -t btrfs "$root_node" "$mount"
     create_subvolumes "$mount"
     run umount -R "$mount"
-    run mount -o "subvol=@${opts:+,$opts}" "$root_node" "$mount"
+    run mount -t btrfs -o "subvol=@${opts:+,$opts}" "$root_node" "$mount"
     # Creating the tree is only half of staging. Every sibling of @ is a mount the host's config
     # declares, and an unmounted one is a boot failure rather than a cosmetic gap: deploy writes
     # the closure into @nix and the ssh keys into @home, and the boot mount of an empty @nix over
@@ -1421,9 +1423,9 @@ else
   # no /mnt at all, so the mount root gets the same mkdir mount_extra does for its siblings.
   run mkdir -p "$mount"
   if [ -n "$opts" ]; then
-    run mount -o "$opts" "$root_part" "$mount"
+    run mount -t "$root_fs" -o "$opts" "$root_part" "$mount"
   else
-    run mount "$root_part" "$mount"
+    run mount -t "$root_fs" "$root_part" "$mount"
   fi
 fi
 
