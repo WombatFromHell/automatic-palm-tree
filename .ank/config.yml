@@ -5,6 +5,9 @@ verifiers:
   gate:
     run: bash tests/run.sh
     default: true
+  vmgate:
+    run: VM_PUSH=1 bash tests/vm-run.sh
+    default: false
 roles:
   agent:
     can: [context, find, claim, log, done, new:task, new:adr:proposed]

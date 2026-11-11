@@ -94,14 +94,16 @@ run_shell() {
 
 # The gate boots the push itself, so a push run that dies before printing its log must fail the gate:
 # if it instead left VM_PUSH_LOG empty, both push tests would skip and a tier with a dead push would
-# report green. Stub PATH with no nix, roomy fake meminfo — vm-shell.sh passes its own headroom check
+# report green. Stub PATH whose nix is dead (not absent: vm-lib.bash guarantees a nix only when the
+# caller's PATH cannot resolve one), roomy fake meminfo — vm-shell.sh passes its own headroom check
 # and fails building the closure, which is the path that exits without a log. No boot.
 @test "the VM gate fails when its push run dies before printing a log" {
   local stub="$BATS_TMPDIR/vm-push-dead-stub-$$"
   mkdir -p "$stub"
+  printf '#!/usr/bin/env bash\nexit 1\n' >"$stub/nix"
   printf '#!/usr/bin/env bash\nprintf "Permissive\n"\n' >"$stub/getenforce"
   printf 'MemTotal: 32000000 kB\nMemAvailable: 20000000 kB\nSwapTotal: 8000000 kB\nSwapFree: 6000000 kB\n' >"$stub/meminfo"
-  chmod +x "$stub/getenforce"
+  chmod +x "$stub/nix" "$stub/getenforce"
   run env PATH="$stub:/usr/bin:/bin" VM_PUSH=1 VM_MEMINFO="$stub/meminfo" VM_GATE_MEM=1300 VM_GATE_PEAK_SECONDS=2 \
     bash "$repo/tests/vm-run.sh"
   rm -rf "$stub"

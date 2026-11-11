@@ -14,24 +14,12 @@
 # not booted — hence no `--boot`. A drive that boots is already proven by test 10 of vm-check.bats.
 #
 # Every stage prints a `marker <name> rc=.. secs=..` line, so the wall times land on the console
-# while each stage's own output stays in a per-stage log the markers quote on failure.
+# while each stage's own output stays in a per-stage log the markers quote on failure. `timed` is
+# shared with the other probes in vm-probe-lib.bash.
 set -u
 
 # shellcheck source=tests/vm-probe-lib.bash
 source "$(dirname "$0")/vm-probe-lib.bash"
-
-# One timed stage: the stage's output goes to its own log, and `time`'s real/user/sys lines go there
-# too, so the console carries only the marker.
-timed() {
-  local label=$1
-  shift
-  local stage_log="/tmp/drive-probe-$label.log" start=$SECONDS rc=0
-  { time "$@" >>"$stage_log" 2>&1; } 2>>"$stage_log" || rc=$?
-  # The command rides in the marker line rather than in a separate banner: the banner lines did not
-  # reach the serial console in the run that proved this, while marker lines always did.
-  printf 'marker %s rc=%s secs=%s cmd=%s\n' "$label" "$rc" "$((SECONDS - start))" "$*"
-  [ "$rc" = 0 ] || fail "$label failed: $(tail -c 300 "$stage_log")"
-}
 
 # 1. The drive formatted and mounted by the real terraform stage. The target store has to be the
 #    filesystem a host would actually boot from, not a scratch directory.
@@ -48,7 +36,7 @@ esac
 
 # 2. Archive -> drive store, with no guest-store unpack in between. This is the copy install.sh
 #    currently performs through /nix/.rw-store; doing it against the drive is the candidate.
-#    `file:` is read-only in practice here, and nothing writes into /push-cache.
+#    /push-cache holds this run's archive and nothing writes into it.
 before=$(find /mnt/nix/store -maxdepth 1 -type d 2>/dev/null | wc -l)
 timed drive_copy nix copy --no-check-sigs --from "file:/push-cache" --to /mnt "$path"
 nix path-info --store /mnt "$path" >/dev/null || fail "the closure is not valid in the drive store"

@@ -10,6 +10,18 @@
 
 ok() { printf 'SHELL OK: %s\n' "$1"; }
 
+# One timed stage: the command's output and `time`'s real/user/sys lines go into a per-stage log, so the
+# console carries only `marker <name> rc=.. secs=..`. Shared because both push probes measure the same
+# stages; marker lines always reach the serial console where banner lines did not.
+timed() {
+  local label=$1
+  shift
+  local stage_log="/tmp/probe-$label.log" start=$SECONDS rc=0
+  { time "$@" >>"$stage_log" 2>&1; } 2>>"$stage_log" || rc=$?
+  printf 'marker %s rc=%s secs=%s cmd=%s\n' "$label" "$rc" "$((SECONDS - start))" "$*"
+  [ "$rc" = 0 ] || fail "$label failed: $(tail -c 300 "$stage_log")"
+}
+
 fail() {
   printf 'SHELL FAIL: %s\n' "$1"
   exit 1

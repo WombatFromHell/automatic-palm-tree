@@ -74,6 +74,10 @@ if [ ! -e /dev/kvm ]; then
   printf 'vm-shell.sh: /dev/kvm is absent — this tier needs hardware acceleration.\n' >&2
   exit 1
 fi
+# RAM before anything is created: a --push run holds a guest scope (1300M) plus a host-side build
+# scope (1200M) at the same time. Refuse up front rather than letting systemd-oomd kill the largest
+# holder under user.slice mid-run, which on this host is the local model server, not the guest.
+vm_headroom_check "$([ -n "$push_host" ] && printf '%s' "$vm_headroom_push" || printf '%s' "$vm_headroom_guest")" || exit 1
 
 # The pid is in the dir name so `vm-run.sh stop` can tell an orphan from a run that is still alive:
 # a scope has no main process (systemd.scope(5)), so killing a guest never removes this dir.
@@ -89,10 +93,10 @@ default_timeout=300
 boot_timeout=${VM_SHELL_TIMEOUT:-$default_timeout}
 store_mb=${VM_STORE_IMG_MB:-8192}
 mkdir -p "$run/tmp/xchg" "$vm_tmp/logs"
-# The closure reaches the guest as a copy of its store paths on a share, not through its ssh daemon.
-# The copy is made into the run dir on every run and dies with it: no copy cached on this host may
-# satisfy the guest, so a run proves the closure travels rather than that a leftover still decodes.
-# The cost is paid every run (measured: 203s of wall time for methyl-test's closure).
+# The closure reaches the guest as an uncompressed export of its store paths on a share, not through
+# its ssh daemon. The export is written into the run dir on every run and dies with it: no export
+# cached on this host may satisfy the guest, so a run proves the closure travels rather than that a
+# leftover still decodes. The cost is paid every run.
 push_cache="$run/tmp/push-cache"
 [ -n "$push_host" ] && mkdir -p "$push_cache"
 # The archive this harness used to keep in $vm_tmp is gone; delete it so no run can find it.
@@ -125,7 +129,7 @@ rm -rf "$run/tmp/xchg/.git"
 
 {
   printf 'run=%s\n' "$run"
-  printf 'caps: MemoryMax=1300M MemorySwapMax=0 timeout=%ss\n' "$boot_timeout"
+  printf 'caps: MemoryMax=%s MemorySwapMax=0 timeout=%ss\n' 1300M "$boot_timeout"
   printf 'kvm=%s\n' "$(ls -l /dev/kvm)"
   printf 'store_img=%s apparent=%sM allocated=%sM\n' "$store_img" "$store_mb" "$(du -m "$store_img" | cut -f1)"
 } >"$log"
@@ -136,19 +140,30 @@ rm -rf "$run/tmp/xchg/.git"
 # host's live /nix/store — which matters because it has autologin root and no password.
 if [ -n "$push_host" ]; then
   vm_say "push: building $push_host's closure on the host"
+  build_secs=$SECONDS
   push_system=$(vm_scope "vm-push-$$" 1200M bash -c \
     "cd $repo && nix build --no-link --print-out-paths .#nixosConfigurations.$push_host.config.system.build.toplevel" 2>>"$log") || {
     printf 'vm-shell.sh: no closure for host %s — the build failed (see %s)\n' "$push_host" "$log" >&2
     exit 1
   }
+  printf 'push_build_secs=%s\n' "$((SECONDS - build_secs))" >>"$log"
   printf '%s\n' "$push_system" >"$run/tmp/xchg/push-system"
   printf 'push=%s\n' "$push_system" >>"$log"
-  # Copying is the slow half of the handover, and it is paid every run: the copy is this run's,
-  # so nothing a previous run packed can stand in for it.
+  # Copying is the slow half of the handover, and it is paid every run: the archive is this run's, so
+  # nothing a previous run packed can stand in for it. One recursive copy, not a shard: Nix refuses a
+  # path whose reference is not yet valid in the destination, so arbitrary groups of paths fail
+  # (logs/vm-shell-1794360566.log, push_rc=123).
+  #
+  # `compression=none` on the store URL is what removes the xz: measured on methyl-test's largest path
+  # (linux-firmware, 826MB), 1.98s to pack against 142s, and 2.48s to register into a fresh store against
+  # 4.02s. The narinfo carries `Compression: none`, so the probes read `file:/push-cache` unchanged — no
+  # flag on the read side. `nix-store --export` was tried instead and is out: it packs in 21s but its
+  # importer buffers, so it needs more RAM than this guest's cap (a scope at MemoryMax=1300M was killed
+  # at 1299MB importing methyl-test's 6.9 GiB export). .pi/PLAN-vm-pack-speed.md carries the numbers.
   rc=0
   start=$SECONDS
-  vm_say "push: copying the closure's store paths into $push_cache - raw bytes, re-hashed on both sides, nothing cached between runs"
-  nix copy --no-check-sigs --to "file:$push_cache" "$push_system" >>"$log" 2>&1 || rc=$?
+  vm_say "push: copying the closure's store paths into $push_cache - uncompressed nar, re-hashed on both sides, nothing cached between runs"
+  nix copy --no-check-sigs --to "file://$push_cache?compression=none" "$push_system" >>"$log" 2>&1 || rc=$?
   printf 'push_cache=new\n' >>"$log"
   printf 'push_rc=%s secs=%s\n' "$rc" "$((SECONDS - start))" >>"$log"
   if [ "$rc" -ne 0 ]; then
@@ -226,10 +241,16 @@ override="$run/override.nix"
   if [ -n "$push_host" ]; then
     # A host closure has to fit on the drive it is installed onto, and the 4 GB default does not.
     printf '  virtualisation.emptyDiskImages = lib.mkForce [ %s ];\n' "${VM_PUSH_DRIVE_MB:-10240}"
-    # The closure comes over the 9p share instead: the guest reads this run's store copy and
-    # registers it itself. The source is an absolute host path because it lives in the run dir, which
+    # The closure comes over the 9p share instead: the guest reads this run's export and imports it
+    # itself. The source is an absolute host path because it lives in the run dir, which
     # the guest reaches through this same share.
     printf '  virtualisation.sharedDirectories.push = { source = "%s"; target = "/push-cache"; securityModel = "none"; };\n' "$push_cache"
+    # 9p's maximum packet size, passed to every share in this guest (/repo, /push-cache, /deploy-out).
+    # The pinned nixpkgs default is 16384 (qemu-vm.nix:447, :1486), which makes the gigabyte of
+    # store bytes the guest reads off /push-cache a small-packet transfer. A bigger packet costs
+    # guest RAM, so this stays a knob: measure the registration span, raise it only while the deploy
+    # guest's peak still sits under the cap the suite tolerates.
+    printf '  virtualisation.msize = %s;\n' "${VM_PUSH_MSIZE:-262144}"
     if [ -n "$boot_drive" ]; then
       # The probe copies kernel/initrd out of the installed drive here; /mnt is the install
       # target, so a share under it would be shadowed by the mount.
@@ -245,7 +266,9 @@ override="$run/override.nix"
 } >"$override"
 
 vm_say "guest: building tests/vm-shell.nix"
+guest_secs=$SECONDS
 vm_build ./tests/vm-shell.nix "$run/guest" "$override" >>"$log" 2>&1
+printf 'guest_build_secs=%s\n' "$((SECONDS - guest_secs))" >>"$log"
 
 fifo="$run/console.fifo"
 mkfifo "$fifo"
@@ -265,10 +288,12 @@ peak=$!
 # Wait for the autologin shell before anything is typed: serial-getty prints its prompt before the
 # shell behind it exists, so lines typed at the first prompt are eaten by login and the guest then
 # sits idle at a prompt — which looks exactly like a hung run.
+boot_secs=$SECONDS
 vm_wait_for "$log" "root@" 90 || {
   printf 'vm-shell.sh: no autologin prompt in the console\n' >>"$log"
   exit 1
 }
+printf 'boot_wait_secs=%s\n' "$((SECONDS - boot_secs))" >>"$log"
 
 # The guest's own boot banner is the ready signal on the serial console — sshd's line goes to the
 # journal, which never reaches ttyS0, and typing before the banner lands in a login getty that
@@ -298,7 +323,7 @@ if [ "$ssh_result" = ok ]; then
   reach=$bind
   [ "$bind" = "0.0.0.0" ] &&
     reach=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
-  printf 'ssh: %s vm@%s — 10.0.2.15 is qemu internal NAT, unreachable from this host\n' "$ssh_base" "${reach:-this host}"
+  printf 'ssh: %s vm@%s — 10.0.2.15 is qemu internal NAT, unreachable from this host\n' "$ssh_base" "${reach:-this host}" | tee -a "$log"
 else
   tail -c 200 "$run/ssh.out" >>"$log"
   printf 'vm-shell.sh: ssh did not answer — a person cannot open a terminal into this guest\n' | tee -a "$log"
@@ -321,8 +346,13 @@ if [ -n "$script" ]; then
     fi
   fi
 else
-  # Forward the terminal until qemu closes the console; a write into a closed fifo dies with SIGPIPE.
-  cat >&9
+  # Forward the terminal until the guest is gone. Foregrounded, cat blocks reading stdin, so it never
+  # sees qemu's read end close: a person who powers off sits at a dead console and the run never
+  # prints its total. Backgrounded, the script waits for qemu and ends the forward itself — a write
+  # into a closed fifo would die with SIGPIPE, which is the same exit but only after a keystroke.
+  cat >&9 & fwd=$!
+  wait "$boot" || true
+  kill "$fwd" 2>/dev/null || true
 fi
 exec 9>&-
 vm_end_boot "vm-boot-$$" "$peak" "$boot"
@@ -350,6 +380,7 @@ if [ -n "$boot_drive" ]; then
   # instead, which prints no login prompt, so this marker separates the two. The offset is recorded
   # here because the deploy guest wrote its own prompt into the same log earlier.
   boot_start=$(wc -c <"$log")
+  boot_secs=$SECONDS
   vm_boot_disk "$out/kernel" "$out/initrd" "$(cat "$out/append.txt")" "$run/tmp/empty0.qcow2" "$log" \
     "${VM_BOOT_TIMEOUT:-300}" "$qemu" &
   disk=$!
@@ -360,6 +391,7 @@ if [ -n "$boot_drive" ]; then
 
   if vm_wait_for "$log" 'login:' "${VM_BOOT_TIMEOUT:-300}" "$boot_start"; then
     printf 'BOOT OK: installed generation reached its login prompt\n' >>"$log"
+    printf 'disk_boot_secs=%s\n' "$((SECONDS - boot_secs))" >>"$log"
   else
     printf 'installed drive never reached a login prompt\n' >>"$log"
     vm_kill_scope "vm-disk-boot-$$"
@@ -372,4 +404,7 @@ if [ -n "$boot_drive" ]; then
   vm_end_boot "vm-disk-boot-$$" "$peak_disk" "$disk"
 fi
 
+# The tier's whole wall clock, pack to drive boot, in the run's own log. The phase markers give
+# spans; only a total says whether the phases are the cost or the gaps between them are.
+printf 'total_secs=%s\n' "$SECONDS" >>"$log"
 printf 'log=%s\n' "$log"

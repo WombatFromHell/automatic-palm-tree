@@ -21,6 +21,14 @@
 vm_tmp=${VM_TMP:-/var/mnt/data0/temp/flakeroot-tmp}
 vm_repo=${VM_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 
+# Every build below runs inside a systemd scope, which inherits this shell's environment. A caller
+# whose PATH lacks nix (a bare login shell) dies mid-build with "nix: command not found", so the
+# standard profile bin is guaranteed here, not by the caller. An injected PATH that already resolves
+# nix is left alone: that is how vm-check.bats stubs a dead nix, and the stub is what must be found.
+if ! command -v nix >/dev/null 2>&1; then
+  PATH="/nix/var/nix/profiles/default/bin:$PATH"
+fi
+
 # RAM each run asks for before it creates anything, so every runner refuses with the same number:
 # a guest alone is scoped at 1300M, and a --push run holds that guest plus a host-side build scope
 # (1200M) at the same time. If the gate's threshold and the runner's ever disagree, the runner

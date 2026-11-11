@@ -28,14 +28,19 @@ case "$path" in
 esac
 ok "closure handed over: $(basename "$path")"
 
-# 4. Registration. The closure arrived as raw store paths on /push-cache, and this guest copied them
-#    into its own store, so the paths and their DB rows are real store content on the store disk —
+# 4. Registration. The closure arrived as a nar archive on /push-cache, and this guest copied it into
+#    its own store, so the paths and their DB rows are real store content on the store disk —
 #    `nix path-info` answering is the proof the closure is usable inside the guest rather than merely
 #    visible on a share. The paths are this host's own unsigned build, so the signature check is the
-#    client's to skip.
+#    client's to skip. `--import` of a raw export is not usable here: it buffers, and buffering 6.9 GiB
+#    does not fit this guest's cap (see tests/vm-shell.sh).
+start=$SECONDS
 nix path-info "$path" >/dev/null ||
   nix copy --no-check-sigs --from "file:/push-cache" "$path" ||
   fail "closure did not register from /push-cache"
+# fail() exits above, so reaching this line means the import succeeded; the span is what the wall-time
+# baseline measures (.pi/PLAN-vm-pack-speed.md).
+printf 'marker register rc=0 secs=%s\n' "$((SECONDS - start))"
 nix path-info "$path" >/dev/null || fail "closure is not registered in the guest store"
 ok "closure registered: $(nix path-info --recursive "$path" | wc -l) paths on $src"
 
@@ -46,7 +51,7 @@ cd /repo || fail "cannot enter the repo share"
 # The closure installed is the one this run booted: its fstab names the uuids the recipe declares, and
 # terraform.sh formats the drive with exactly those, so the drive mounts its own closure (step 6).
 INSTALL_SYSTEM="$path"
-install_stage prepare,terraform || fail "install stages failed"
+timed prepare install_stage prepare,terraform
 
 # 6. The recipe the drive was built from, carrying the uuids it declared. A uuid names a filesystem,
 #    so every mounted partition's uuid has to resolve on this drive: udev makes those links
@@ -61,10 +66,20 @@ missing=0
 for u in $(jq -r '.partitions[] | select(.mount != null) | .uuid' "$recipe"); do
   [ -e "/dev/disk/by-uuid/$u" ] || missing=$((missing + 1))
 done
+# A by-uuid link can be created after settle returns: check a second time before calling it a failure.
+[ "$missing" = 0 ] || {
+  udevadm settle --timeout=15 || fail "udev never settled after the filesystems were created"
+  missing=0
+  for u in $(jq -r '.partitions[] | select(.mount != null) | .uuid' "$recipe"); do
+    [ -e "/dev/disk/by-uuid/$u" ] || missing=$((missing + 1))
+  done
+}
 [ "$missing" = 0 ] || fail "$missing mounted partitions have no uuid path on the drive"
 ok "recipe uuids resolve on the drive: $mounted mounted partitions, every uuid resolves under /dev/disk/by-uuid"
 
-install_stage deploy || fail "deploy refused on a recipe whose mounts carry uuids"
+# Deploy is timed rather than guarded here: `timed` fails on a non-zero stage status and quotes the
+# tail of the stage log, which is the same refusal a recipe whose mounts carry uuids would print.
+timed deploy install_stage deploy
 ok "deployed the pushed closure: $(jq -r '[.partitions[] | .uuid] | join(" ")' "$recipe")"
 
 # 7. What the stages must have left on the drive: partitions, an ESP with boot entries, and the
