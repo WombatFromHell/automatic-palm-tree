@@ -14,7 +14,7 @@ in
       {
         system = "x86_64-linux";
         # Manual testing: the pinned rylos/yazi build, on this host only.
-        features = ["hm-yazi"];
+        features = ["hm-yazi" "hm-dsh"];
         homeModules.josh = [myHome];
       }
     ]
