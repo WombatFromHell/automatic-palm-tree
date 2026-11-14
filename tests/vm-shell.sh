@@ -350,7 +350,8 @@ else
   # sees qemu's read end close: a person who powers off sits at a dead console and the run never
   # prints its total. Backgrounded, the script waits for qemu and ends the forward itself — a write
   # into a closed fifo would die with SIGPIPE, which is the same exit but only after a keystroke.
-  cat >&9 & fwd=$!
+  cat >&9 &
+  fwd=$!
   wait "$boot" || true
   kill "$fwd" 2>/dev/null || true
 fi

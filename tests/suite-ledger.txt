@@ -22,6 +22,7 @@ tests/outputs.nix checks 11
 tests/wrap.nix checks 15
 tests/ank.nix attrs 5
 tests/caches.nix attrs 13
+tests/dsh.nix attrs 4
 tests/filesystems.nix attrs 60
 tests/loader.nix attrs 52
 tests/oomd.nix attrs 14
