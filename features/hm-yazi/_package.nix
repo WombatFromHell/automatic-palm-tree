@@ -47,15 +47,23 @@ in
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "4";
       CARGO_PROFILE_RELEASE_DEBUG = "0";
       CARGO_PROFILE_RELEASE_STRIP = "symbols";
+      RUSTONIG_SYSTEM_LIBONIG = true;
     };
+
+    # The fork's crate graph pulls in onig_sys; link system oniguruma (the nixpkgs onig convention).
+    # oniguruma goes in buildInputs, not nativeBuildInputs: the pkg-config wrapper builds
+    # PKG_CONFIG_PATH from buildInputs, and that is what the onig_sys build script probes.
+    buildInputs = [
+      unstable.rust-jemalloc-sys
+      unstable.oniguruma
+    ];
 
     nativeBuildInputs = [
       unstable.installShellFiles
       unstable.imagemagick
       unstable.llvmPackages.bintools
+      unstable.pkg-config
     ];
-
-    buildInputs = [unstable.rust-jemalloc-sys];
 
     postInstall = ''
       installShellCompletion --cmd yazi \
