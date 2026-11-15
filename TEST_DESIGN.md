@@ -12,8 +12,8 @@ deliberate, and each proves something an eval cannot see:
 - `tests/brave-layout.nix` — re-runs hm-brave's own `installPhase` over a synthetic rpm payload,
   where a copy of a store ELF stands in for the patched binary, because patchelf refuses a text
   file. A copy of a store ELF is the one thing the fixture cannot fake.
-- `tests/shellwrap.nix` — builds the three `writeShellApplication` scripts Home Manager ships
-  (`credsctl`, `sopsctl`, xilo's wrapper), taken from the feature modules that ship them rather
+- `tests/shellwrap.nix` — builds the two `writeShellApplication` scripts Home Manager ships
+  (`credsctl`, xilo's wrapper), taken from the feature modules that ship them rather
   than re-declared here, so nixpkgs' shellcheck runs on the text that ships, and the guard cannot
   pass while a module ships something the suites never exercised.
 - `tests/yazi-install.nix` — unpacks the two pinned yazi sources and re-runs their real
@@ -36,7 +36,7 @@ flowchart TD
   N --> C["configs.nix, one host per process<br/>TEST_HOST = methyl | methyl-nixos | propyl"]
   R --> M["bootstrap.sh mocked rebuild<br/>stub sudo + stub nixos-rebuild report their own cgroup:<br/>the scope wrap is observed, not grepped; plus the no-user-bus fallback"]
   R --> P["expander parity<br/>one nix eval lists every features/*/metadata.json x pinned system;<br/>bash expands the same list through render_url and diffs byte-for-byte"]
-  R --> I["stub bats suites, against PATH stubs<br/>bootstrap, build-harness, njust, creds, sopsctl, xilo, updater, install,<br/>cache-check (apps.cache-check's exit codes against a stubbed `nix`)<br/>skip when bats is absent"]
+  R --> I["stub bats suites, against PATH stubs<br/>bootstrap, build-harness, njust, creds, creds-sops, xilo, updater, install,<br/>cache-check (apps.cache-check's exit codes against a stubbed `nix`)<br/>skip when bats is absent"]
   R --> T["tests/terraform.bats<br/>inside `nix develop`, which carries the disk tools, inside a scope,<br/>bats --jobs: real mkfs/blkid/mtools/sfdisk on sparse images<br/>whose partitions are files; skip when nix, bats or parallel is absent"]
   LN --> X["exit 0 = repo is green"]
   DV --> X
@@ -167,16 +167,18 @@ elevation prefix puts `~/.nix-profile/bin` ahead of the stub dir), the systemd-c
 present. The stub `nix build` writes a closure at the `--out-link` it was handed, so activation
 is driven for real instead of grepped for.
 
-`tests/creds.bats` and `tests/sopsctl.bats` are the same shape for the two credential scripts in
-`features/hm-creds`: PATH stubs record argv, so the flags `systemd-creds`, `sops`, `age-keygen` and
+`tests/creds.bats` and `tests/creds-sops.bats` are the same shape for the one credential script in
+`features/hm-creds`, split by backend: the systemd-creds half and the sops half. PATH stubs record
+argv, so the flags `systemd-creds`, `sops`, `age-keygen` and
 `ssh-to-age` really receive are asserted rather than grepped for, and the exit codes are the
 assertion (1 usage, 2 no such record, 3 encrypt or decrypt failed). Each suite then runs one
 real-binary round trip per backend on the host `PATH` with the stub dir removed — ciphertext the
 real `sops` wrote must decrypt back to the same plaintext — and `skip`s when that binary is absent,
 so the gate stays green on a host with no sops. Those round trips build their keypairs and their pty
 runner once in `fixture_setup_file`, not per test: this tier runs every file's setup before any test,
-so per-test setup costs the gate seconds it does not need. `sopsctl.bats` also plants a `ksshaskpass` stub
-whose only job is to fail loudly: nothing in `sopsctl` may reach an askpass helper (DESIGN.md's
+so per-test setup costs the gate seconds it does not need. `creds-sops.bats` also plants a
+`ksshaskpass` stub whose only job is to fail loudly: nothing in `credsctl` may reach an askpass
+helper (DESIGN.md's
 `hm-creds` section says why), so a key derivation that does is caught here rather than on someone's
 terminal. It also drives the passphrase route both ways: an origin whose header says protected is
 derived with `SSH_TO_AGE_PASSPHRASE` exported (the variable ssh-to-age actually reads) and with it
@@ -212,7 +214,7 @@ flowchart LR
   S --> AP["tests/appdir.nix<br/>fixture build, not an eval"]
   S --> BL["tests/brave-layout.nix<br/>fixture build over a synthetic rpm payload"]
   S --> YZ["tests/yazi-install.nix<br/>fixture build over the pinned yazi sources"]
-  S --> SW["tests/shellwrap.nix<br/>fixture build of credsctl + sopsctl + xilo-wrapped, taken from<br/>the feature modules that ship them<br/>the build's exit status is the shellcheck, and the marker-substituted<br/>wrapper it produces is what tests/xilo.bats drives"]
+  S --> SW["tests/shellwrap.nix<br/>fixture build of credsctl + xilo-wrapped, taken from<br/>the feature modules that ship them<br/>the build's exit status is the shellcheck, and the marker-substituted<br/>wrapper it produces is what tests/xilo.bats drives"]
   S --> SU["tests/suite.nix<br/>nix-unit attrset merged from filesystems, pins, caches,<br/>warnings, swap and loader, plus two tripwires that make an<br/>empty suite file impossible to pass vacuously"]
   SU --> L
   SU --> CA
@@ -370,7 +372,7 @@ flowchart TD
     YZ1["features/hm-yazi/_package.nix's real postInstall over the two pinned sources:<br/>buildPhase and installPhase replaced and every Rust input dropped, so nothing<br/>compiles and no crate is fetched — completion files land in share/ from the<br/>revision actually pinned, which is what a bump would break"]
   end
   subgraph shellwrap["shellwrap.nix — fixture build, peak ~242MB"]
-    SW1["credsctl.sh, sopsctl.sh and xilo.sh wrapped exactly as the feature modules ship<br/>them — taken from the modules, not re-declared, so a module that ships something<br/>else fails here: writeShellApplication's checkPhase is the assertion, xilo's store<br/>path is a placeholder so nothing upstream is fetched, and the built output is grepped<br/>for the substituted marker. runtimeInputs are asserted too — jq for credsctl,<br/>sops/age/jq/ssh-to-age for sopsctl, and no askpass helper among them, since<br/>ssh-to-age never reads SSH_ASKPASS"]
+    SW1["credsctl.sh and xilo.sh wrapped exactly as the feature modules ship<br/>them — taken from the modules, not re-declared, so a module that ships something<br/>else fails here: writeShellApplication's checkPhase is the assertion, xilo's store<br/>path is a placeholder so nothing upstream is fetched, and the built output is grepped<br/>for the substituted marker. runtimeInputs are asserted too — jq, sops, age and<br/>ssh-to-age for credsctl, and no askpass helper among them, since<br/>ssh-to-age never reads SSH_ASKPASS"]
   end
   subgraph warnings["warnings.nix — bare module eval (13 attributes)"]
     W1["modules/warnings-gate.nix: assertion true with no warnings,<br/>false with one, and its message carries every warning verbatim"]

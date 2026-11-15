@@ -176,7 +176,8 @@ run_wrapper() {
 
 # --- real binaries: the yaml bundle reaching a consumer ---------------------
 #
-# End to end with real sops and real credsctl, a mock age key and mock secrets. The point is the
+# End to end with real sops, real age and the real credsctl, a mock age key and mock secrets. The
+# bundle is written as plaintext and sealed in place, the route the CLI recommends. The point is the
 # security properties of the hand-off, not just the values: the wrapper execs the CLI with the
 # secrets in its environment only, so the plaintext never appears in the wrapper's own output, never
 # in the argv the CLI is given, never as a file, and never in the caller's environment.
@@ -186,10 +187,15 @@ run_wrapper() {
   real="$(mktemp -d)"
   mkdir -p "$real/bin"
   cp "$repo/features/hm-creds/credsctl.sh" "$real/bin/credsctl"
-  cp "$repo/features/hm-creds/sopsctl.sh" "$real/bin/sopsctl"
-  chmod +x "$real/bin/credsctl" "$real/bin/sopsctl"
+  chmod +x "$real/bin/credsctl"
   PATH="$host_path" age-keygen -o "$real/key" 2>/dev/null || skip "age-keygen failed"
-  grep '^# public key:' "$real/key" | awk '{print $NF}' >"$real/recipient"
+  printf 'creation_rules:\n  - path_regex: \.sops\.(json|yaml)$\n    age: %s\n' \
+    "$(grep '^# public key:' "$real/key" | awk '{print $NF}')" >"$real/.sops.yaml"
+
+  # A literal block scalar keeps the secret's newlines exactly, which is the shape a multi-line
+  # secret has to be stored in: a plain scalar would fold them into spaces.
+  printf 'XILO_URL: https://xilo.test\nXILO_CACHE: acme/pkgs\nXILO_TOKEN: |-\n  tok\n  multi\n  line\n' \
+    >"$real/XILO.sops.yaml"
 
   # The consumer reports what it saw as presence markers and a line count — never the values, so a
   # grep for a secret anywhere in the wrapper's output is a real leak test. The markers are named
@@ -203,10 +209,8 @@ printf 'consumer secret lines=%s\n' "$(printf '%s\n' "${XILO_TOKEN:-}" | wc -l)"
 EOF
   chmod +x "$real/consumer"
 
-  jq -n --arg u 'https://xilo.test' --arg c 'acme/pkgs' --arg t $'tok\nmulti\nline' \
-    '{XILO_URL:$u,XILO_CACHE:$c,XILO_TOKEN:$t}' >"$real/fields.json"
-  env PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_RECIPIENTS="$real/recipient" SOPS_AGE_FILE="$real/key" \
-    bash "$repo/features/hm-creds/credsctl.sh" encrypt XILO.sops.yaml --fields "$real/fields.json"
+  env PATH="$real/bin:$host_path" CREDS_DIR="$real" SOPS_AGE_FILE="$real/key" \
+    bash "$repo/features/hm-creds/credsctl.sh" encrypt "$real/XILO.sops.yaml"
   before=$(sha256sum "$real/XILO.sops.yaml")
 
   # Command substitution leaves no `$status`, so the child's exit code is taken from `$?` here —
@@ -225,7 +229,7 @@ EOF
   [ "$before" = "$(sha256sum "$real/XILO.sops.yaml")" ]
   # LC_ALL=C so the record sorts first; the host's UTF-8 collation folds case and would not.
   [ "$(find "$real" -type f -not -path "$real/bin/*" | LC_ALL=C sort | tr '\n' ' ')" = \
-    "$real/XILO.sops.yaml $real/consumer $real/fields.json $real/key $real/recipient " ]
+    "$real/.sops.yaml $real/XILO.sops.yaml $real/consumer $real/key " ]
   rm -rf "$real"
 }
 

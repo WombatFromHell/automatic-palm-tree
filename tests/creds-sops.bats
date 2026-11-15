@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# features/hm-creds/sopsctl.sh against PATH stubs, plus one real-binary round trip.
+# features/hm-creds/credsctl.sh against PATH stubs, plus one real-binary round trip.
 #
 # Contract under test: init keeps the secret half in an age identity file ($SOPS_AGE_FILE, sops'
 # own default lookup) and the public half in the recipient file plus a .sops.yaml of creation rules
 # beside the records; the key can also come from $SOPS_KEYS_CMD (sops calls it itself — no key file,
 # no terminal), which stays the route for anyone who keeps a key in a wallet. Encrypt takes a PATH —
-# a plaintext *.sops.yaml or *.sops.json file encrypted in place with recipients from that rules
-# file (`--config`, so the cwd never matters) — or, with no PATH, reads json on stdin and writes
-# ciphertext to stdout for credsctl; a record is a map in either
+# a plaintext *.sops.yaml or *.sops.json file sealed in place with recipients from that rules
+# file (`--config`, so the cwd never matters) — or, with no PATH, reads one secret on stdin (or a
+# prompt) and seals it into the store as a record; a record is a map in either
 # shape sops supports (*.sops.json or *.sops.yaml — the suffix is the shape), whose OWN metadata
 # names the recipients, so `set` re-encrypts to those and keeps the shape; the plaintext is always
 # json, so jq reads both. `set` takes the new value from stdin — never an argument, since
@@ -27,7 +27,7 @@
 load helpers
 
 # setup_file builds the fixtures once per file. bats runs every @test in its own subshell with a
-# fresh stub dir, and keygen plus the pty runner cost about 150ms of each of this suite's 62 tests;
+# fresh stub dir, and keygen plus the pty runner cost about 150ms of each of this suite's 63 tests;
 # setup copies these into the test's stub dir.
 setup_file() {
   sops_template="$(mktemp -d)"
@@ -74,7 +74,7 @@ teardown_file() { rm -rf "$sops_template"; }
 setup() {
   harness_stub_dir
   export CALLS="$calls" STUBS="$stubs"
-  script="$repo/features/hm-creds/sopsctl.sh"
+  script="$repo/features/hm-creds/credsctl.sh"
   store="$stubs/store"
   mkdir -p "$store"
   printf 'age1aaa\nage1bbb\n' >"$store/recipient"
@@ -88,7 +88,7 @@ setup() {
     chmod +x "$tty"
   fi
 
-  # ksshaskpass exists in the suite only as a trap: nothing in sopsctl may run it, and the stub
+  # ksshaskpass exists in the suite only as a trap: nothing in credsctl may run it, and the stub
   # outranks whatever the host has on PATH, so any askpass call shows up in the call log.
   stub ksshaskpass <<'EOF'
 #!/usr/bin/env bash
@@ -104,9 +104,19 @@ case "$1" in
     inplace=""
     for a in "$@"; do [ "$a" = "-i" ] && inplace=1; done
     if [ -n "$inplace" ]; then
+      # Real sops refuses a file that already holds its metadata (measured: exit 203), so the stub
+      # refuses too — that refusal is why credsctl needs no "already a record" guard of its own.
+      case "${@: -1}" in
+        *.yaml) grep -q '^sops:' "${@: -1}" && { echo "Error: the file is already encrypted" >&2; exit 203; } ;;
+        *) jq -e '.sops' "${@: -1}" >/dev/null 2>&1 && { echo "Error: the file is already encrypted" >&2; exit 203; } ;;
+      esac
+      # In place, as real sops does: values become ciphertext and the metadata that names the
+      # recipient is appended. json keeps its shape, so decrypt reads it back the same way. The
+      # plaintext comes from the file, not stdin — sops takes the file as its argument.
       case "${@: -1}" in
         *.yaml) printf 'secret: ENC[AGE1,mock]\nsops:\n  age:\n    - recipient: age1fromrules\n' > "${@: -1}" ;;
-        *) printf '{"secret":"ENC[AGE1,mock]","sops":{"age":[{"recipient":"age1fromrules"}]}}\n' > "${@: -1}" ;;
+        *) jq -c '. + {sops: {age: [{recipient: "age1fromrules"}]}}' "${@: -1}" >"${@: -1}.tmp" &&
+          mv "${@: -1}.tmp" "${@: -1}" ;;
       esac
       exit 0
     fi
@@ -156,7 +166,10 @@ EOF
 
   # init writes the identity here instead of into a wallet, and the rules file beside the records.
   # CREDS_ROOT keeps the whole public store — rules, recipient file, records — inside the fixture, so
-  # the suite never touches the real ~/.local/share/credentials.
+  # the suite never touches the real ~/.local/share/credentials. The chain puts a unit's
+  # CREDENTIALS_DIRECTORY above CREDS_ROOT, and this host exports one, so it is cleared here: a
+  # fixture that resolved to the real store would write real records.
+  unset CREDS_DIR CREDENTIALS_DIRECTORY
   export SOPS_AGE_FILE="$stubs/keys.txt"
   rulefile="$store/.sops.yaml" # init puts the rules beside the records
   export CREDS_ROOT="$store"
@@ -164,8 +177,10 @@ EOF
   export SOPS_KEYS_CMD="kwallet-query -f flakeroot -r creds-identity kdewallet"
   PATH="$stubs:$PATH"
   record="$store/TOKEN.sops.json"
-  printf '{"secret":"s3cr3t"}' | ctl encrypt --format json >"$record"
-  chmod 400 "$record"
+  # The fixture is a plaintext record sealed in place — the recommended route, which names the
+  # recipients itself and stamps 0400.
+  printf '{"secret":"s3cr3t"}\n' >"$record"
+  ctl encrypt "$record"
   # setup's warm-up encrypt is fixture, not a test: the log starts empty for every test,
   # so only a test that ran ctl earlier in its own body needs to reset it.
   : >"$calls"
@@ -249,7 +264,7 @@ ctl() { bash "$script" "$@"; }
 }
 
 # --- reset ------------------------------------------------------------------
-# sopsctl owns four kinds of file: the identity, the rules file, the recipient file, and the records.
+# credsctl owns four kinds of file: the identity, the rules file, the recipient file, and the records.
 # `reset` names them so `init` starts fresh, and only --force deletes — the identity is the only thing
 # that can read the records, so removing both is permanent. Only a `.cred` stays: systemd-creds, not
 # sops, owns it.
@@ -272,6 +287,19 @@ ctl() { bash "$script" "$@"; }
   [ -f "$store/recipient" ]
   [ -f "$store/A.sops.yaml" ]
   [ -f "$store/B.sops.json" ]
+}
+
+# $creds_dir is the store every command reads, so reset must name that store — not the directory the
+# rules file happens to sit in. A split CREDS_DIR/CREDS_ROOT must not delete records elsewhere.
+@test "reset names the store in use when CREDS_DIR points away from CREDS_ROOT" {
+  split="$stubs/split"
+  mkdir -p "$split"
+  printf 'secret: hunter2\n' >"$split/A.sops.yaml"
+  export CREDS_DIR="$split"
+  run ctl reset
+  [ "$status" -eq 1 ]
+  assert_out "$split/A.sops.yaml"
+  assert_no_out "$store/TOKEN.sops.json"
 }
 
 @test "reset --force removes identity, rules, recipients and both record shapes, and init then starts fresh" {
@@ -297,7 +325,7 @@ ctl() { bash "$script" "$@"; }
   [ "$(stat -c '%a' "$SOPS_AGE_FILE")" = "600" ]
 }
 
-# Only sops' own directory is fair game. A custom $SOPS_AGE_FILE points somewhere sopsctl has no
+# Only sops' own directory is fair game. A custom $SOPS_AGE_FILE points somewhere credsctl has no
 # business deleting, so the identity file goes and its neighbours stay.
 @test "reset --force deletes a custom identity file, not the directory that holds it" {
   d="$stubs/d"
@@ -368,7 +396,7 @@ ctl() { bash "$script" "$@"; }
 
 # The rules file is the recipient source: sops-nix's own shape, keys as anchors under `keys:` and
 # aliases under `key_groups`, so each key is named once. A `recipient` file is only what a person
-# chose to make, not something sopsctl writes.
+# chose to make, not something credsctl writes.
 @test "keys takes the recipients from the rules file, naming each key once" {
   rm "$SOPS_RECIPIENTS"
   printf 'keys:\n  - &main age1aaa\n  - &mate age1bbb\ncreation_rules:\n  - path_regex: \\.sops\\.(json|yaml)$\n    key_groups:\n      - age:\n          - *main\n          - *mate\n' >"$rulefile"
@@ -408,20 +436,28 @@ ctl() { bash "$script" "$@"; }
   assert_no_call '^kwallet '
 }
 
-@test "encrypt defaults to a yaml record and takes recipients from the recipient file" {
-  run ctl encrypt <<'EOF'
-{"secret":"x"}
-EOF
+# A record name with a sops suffix and no file behind it is sealed from stdin or from the prompt, and
+# the suffix is the shape on disk: there is no format flag, because the name already says it.
+@test "encrypt NAME.sops.json seals one secret from stdin into the store, json, 0400" {
+  run ctl init
+  : >"$calls"
+  printf 'hunter2' | ctl encrypt NEW.sops.json
   [ "$status" -eq 0 ]
-  assert_call '^sops -e --input-type json --output-type yaml --age age1aaa,age1bbb --config /dev/null /dev/stdin'
+  [ -f "$store/NEW.sops.json" ]
+  [ "$(stat -c '%a' "$store/NEW.sops.json")" = "400" ]
+  assert_call '^sops -e --input-type json --output-type json --age age1aaa,age1bbb,age1stub --config '
 }
 
-@test "encrypt --format json writes a json record" {
-  run ctl encrypt --format json <<'EOF'
-{"secret":"x"}
-EOF
+@test "encrypt NAME.sops.yaml keeps the yaml shape the name asked for" {
+  run ctl init
+  : >"$calls"
+  printf 'hunter2' | ctl encrypt PLAN.sops.yaml
   [ "$status" -eq 0 ]
-  assert_call '^sops -e --input-type json --output-type json --age age1aaa,age1bbb --config /dev/null /dev/stdin'
+  [ -f "$store/PLAN.sops.yaml" ]
+  # The plaintext is json either way (one field), so the input type is json; the output type is the
+  # shape the name carries — measured on sops 3.13.3, json in / yaml out writes a yaml record.
+  assert_call '^sops -e --input-type json --output-type yaml --age age1aaa,age1bbb,age1stub --config '
+  assert_no_call '--output-type json'
 }
 
 # A path argument is the plaintext to encrypt, in place — sops' own way (`sops -e -i FILE`). The
@@ -442,17 +478,16 @@ EOF
   [ "$(stat -c '%a' "$store/PLAN.sops.yaml")" = "400" ]
 }
 
-@test "encrypt a plaintext json file the same way; a --format that contradicts the suffix is refused" {
+# A json plaintext file seals the same way; the name is the shape, so there is nothing to contradict.
+@test "encrypt a plaintext json file the same way, recipients from the rules file" {
   run ctl init
   : >"$calls"
   printf '{"secret":"hunter2"}\n' >"$store/PLAN.sops.json"
   run ctl encrypt "$store/PLAN.sops.json"
   [ "$status" -eq 0 ]
   assert_call "^sops -e -i --config $rulefile $store/PLAN.sops.json "
-  printf '{"secret":"hunter2"}\n' >"$store/B.sops.json"
-  run ctl encrypt "$store/B.sops.json" --format yaml
-  [ "$status" -eq 1 ]
-  grep -qi 'json record' <<<"$output"
+  assert_no_call '/dev/stdin'
+  assert_no_call '--age'
 }
 
 # No rules file yet: the recipient file is the fallback, so encrypt still names who can read it.
@@ -463,48 +498,51 @@ EOF
   assert_call '--age age1aaa,age1bbb'
 }
 
-# A record is immutable: re-encrypting one is `set` or `rekey`, not `encrypt`, and a path that is
-# not a *.sops.json / *.sops.yaml file is not a record at all.
+# The name is the shape, so a file that is not a record is not encryptable, and a record already
+# sealed is refused by sops itself (exit 203 upstream, an encrypt failure here): changing a value is
+# `set`, changing recipients is `rekey`.
 @test "encrypt refuses a file that is already a record and a path that is not one" {
   run ctl encrypt "$record"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 3 ]
   grep -qi 'already' <<<"$output"
   run ctl encrypt "$yaml_record"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 3 ]
+  # A path of the wrong shape is asking wrongly (1); a record-shaped path that is not there is
+  # 'no record' (2).
   run ctl encrypt "$store/loose.cred"
-  [ "$status" -eq 2 ]
+  [ "$status" -eq 1 ]
   run ctl encrypt "$store/nope.sops.yaml"
   [ "$status" -eq 2 ]
+  # The refusals above are refused before sops runs; the seal that failed earlier did call it.
+  : >"$calls"
   assert_no_call '^sops '
 }
 
-@test "encrypt refuses a format sops cannot write, and calls nothing" {
-  run ctl encrypt --format toml <<'EOF'
-{"secret":"x"}
-EOF
+@test "encrypt refuses a name that is not a record name, and calls nothing" {
+  run ctl encrypt 'bad name.sops.json'
   [ "$status" -eq 1 ]
-  grep -qi 'format' <<<"$output"
+  grep -qi 'invalid record name' <<<"$output"
   assert_no_call '^sops '
 }
 
-# A terminal is not a pipe. With no path and no stdin to read, sops sits on the tty forever, so
-# encrypt says where the plaintext comes from and calls nothing — a hang shows up as status 124
-# from the pty runner, not as a green test.
-@test "encrypt on a terminal exits with guidance instead of waiting for input" {
+# A terminal is not a pipe: encrypt prompts with echo off rather than reading a pipe, so a run with
+# nobody typing is a prompt waiting for input (the pty runner kills it at 3s), never a silent sops
+# call that would sit on the tty.
+@test "encrypt on a terminal prompts for the secret instead of reading a pipe" {
   [ -x "$tty" ] || skip "no python3 to hand a terminal to the child"
-  run "$tty" bash "$script" encrypt --format yaml
-  [ "$status" -eq 1 ]
-  grep -qi 'stdin' <<<"$output"
-  grep -qi 'credsctl' <<<"$output"
+  run ctl init
+  : >"$calls"
+  run "$tty" bash "$script" encrypt TTY.sops.json
+  [ "$status" -eq 124 ]
+  assert_out 'secret for TTY.sops.json'
   assert_no_call '^sops '
 }
 
-@test "encrypt with no rules file and no recipient file exits 1 and calls nothing" {
+@test "encrypt a sops-shaped name with no recipients names init and calls nothing" {
   rm "$SOPS_RECIPIENTS"
-  run ctl encrypt <<'EOF'
-{"secret":"x"}
-EOF
+  run ctl encrypt N.sops.json
   [ "$status" -eq 1 ]
+  assert_out 'init'
   assert_no_call '^sops '
 }
 
@@ -543,15 +581,18 @@ EOF
   [ "$status" -eq 3 ]
 }
 
-# A record shape is what makes a file readable here: a .cred belongs to systemd-creds, and sops has
-# no format to read it with.
-@test "a name with no record suffix is refused, without running sops" {
+# A record shape is what makes a file readable by sops: a .cred belongs to systemd-creds, and sops has
+# no format to read it with. `decrypt` of a .cred path goes through systemd-creds, which this suite does
+# not stub — that route is asserted in tests/creds.bats.
+@test "a .cred is not a sops record: get, verify and recipients refuse it, without running sops" {
   printf 'cipher' >"$store/loose.cred"
-  run ctl decrypt "$store/loose.cred"
-  [ "$status" -eq 2 ]
-  assert_no_call '^sops -d'
   run ctl get secret "$store/loose.cred"
   [ "$status" -eq 2 ]
+  run ctl verify "$store/loose.cred"
+  [ "$status" -eq 2 ]
+  run ctl recipients "$store/loose.cred"
+  [ "$status" -eq 2 ]
+  assert_no_call '^sops '
 }
 
 @test "verify proves integrity without printing the plaintext" {
@@ -577,7 +618,7 @@ EOF
   [ "$(stat -c '%a' "$record")" = "400" ]
   run ctl get secret "$record"
   [ "$output" = "new-value" ]
-  assert_call '^sops -e --input-type json --output-type json --age age1meta --config /dev/null /dev/stdin'
+  assert_call '^sops -e --input-type json --output-type json --age age1fromrules --config /dev/null /dev/stdin'
   assert_no_call 'new-value'
   run ! ls "$store"/TOKEN.sops.json.* >/dev/null 2>&1
 }
@@ -820,7 +861,7 @@ EOF
   run ctl init --from-ssh "$stubs/ssh_unlocked"
   [ "$status" -eq 0 ]
   assert_out 'never copied, unlocked or rewritten'
-  assert_out 'sopsctl init --from-ssh'
+  assert_out 'credsctl init --from-ssh'
 }
 
 # --- usage text --------------------------------------------------------------
@@ -858,9 +899,11 @@ EOF
   grep '^# public key:' "$stubs/realkey" | awk '{print $NF}' >"$store2/recipient"
   export CREDS_ROOT="$store2" SOPS_RECIPIENTS="$store2/recipient"
   export SOPS_KEYS_CMD="cat $stubs/realkey"
-  cipher=$(jq -n --arg v "$(printf 'line1\nline2')" '{secret:$v}' | ctl encrypt --format json)
-  printf '%s' "$cipher" >"$store2/A.sops.json"
-  chmod 400 "$store2/A.sops.json"
+  # The recommended route, against real sops: a plaintext record sealed in place, recipients from
+  # the recipient file because this store has no rules file.
+  jq -n --arg v "$(printf 'line1\nline2')" '{secret:$v}' >"$store2/A.sops.json"
+  run ctl encrypt "$store2/A.sops.json"
+  [ "$status" -eq 0 ]
   run ctl get secret "$store2/A.sops.json"
   [ "$status" -eq 0 ]
   [ "$output" = "line1
@@ -906,7 +949,7 @@ line2" ]
 }
 
 # The yaml shape, end to end with the real sops and a mock key: ciphertext stays yaml, a change stays
-# yaml, and every read still comes back as json for jq — no yaml parser anywhere in sopsctl.
+# yaml, and every read still comes back as json for jq — no yaml parser anywhere in credsctl.
 @test "real sops round trip through the yaml shape: encrypt, read, set, rekey all stay yaml" {
   PATH="$host_path" command -v sops >/dev/null 2>&1 || skip "no sops on the host PATH"
   PATH="$host_path" command -v age-keygen >/dev/null 2>&1 || skip "no age-keygen on the host PATH"
@@ -917,9 +960,12 @@ line2" ]
   grep '^# public key:' "$stubs/realkey4" | awk '{print $NF}' >"$store4/recipient"
   export CREDS_ROOT="$store4" SOPS_RECIPIENTS="$store4/recipient"
   export SOPS_AGE_FILE="$stubs/realkey4"
-  jq -n --arg s "$(printf 'one\nTwo\n')" --arg t 'abc' '{secret:$s,TOKEN:$t}' |
-    ctl encrypt >"$store4/B.sops.yaml"
-  chmod 400 "$store4/B.sops.yaml"
+  # A multi-field bundle is a plaintext record file, sealed in place; yaml keeps its shape, and a
+  # double-quoted scalar with a \n escape is how yaml carries an inner newline (a real newline in the
+  # file folds to a space).
+  printf 'secret: "one\\nTwo"\nTOKEN: abc\n' >"$store4/B.sops.yaml"
+  run ctl encrypt "$store4/B.sops.yaml"
+  [ "$status" -eq 0 ]
   grep -q '^secret: ENC\[AES256_GCM,data:' "$store4/B.sops.yaml"
   run ctl get TOKEN "$store4/B.sops.yaml"
   [ "$status" -eq 0 ]
@@ -977,9 +1023,10 @@ line2" ]
   # The rules file is the recipient list: init's own public key plus the key from the recipient file
   # the user made, each once. The recipient file itself is never rewritten.
   [ "$output" = "$(grep -oE 'age1[a-z0-9]+' "$store5/.sops.yaml" | awk '!seen[$0]++')" ]
-  # Re-encrypting a record is `set` or `rekey`, never encrypt.
+  # Re-encrypting a record is `set` or `rekey`, never encrypt: sops refuses a file that already
+  # holds its metadata, which is an encrypt failure here.
   run ctl encrypt "$store5/XILO.sops.yaml"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 3 ]
   # The json shape goes through the same rules entry.
   printf '{"secret":"hunter2"}\n' >"$store5/A.sops.json"
   run ctl encrypt "$store5/A.sops.json"
@@ -987,6 +1034,25 @@ line2" ]
   grep -q '"secret": "ENC\[AES256_GCM' "$store5/A.sops.json"
   run ctl get secret "$store5/A.sops.json"
   [ "$output" = "hunter2" ]
+}
+
+# sops refuses a plaintext file that is not a map, and says so itself. credsctl must name the seal it
+# attempted, not blame the rules file, which does have a rule for that suffix.
+@test "real sops refuses a plaintext file that is not a map, and credsctl does not blame the rules file" {
+  PATH="$host_path" command -v sops >/dev/null 2>&1 || skip "no sops on the host PATH"
+  PATH="$host_path" command -v age-keygen >/dev/null 2>&1 || skip "no age-keygen on the host PATH"
+  PATH="$host_path"
+  bad="$stubs/bad-shape"
+  mkdir -p "$bad"
+  age-keygen -o "$bad/keys.txt" 2>/dev/null || skip "age-keygen failed"
+  export CREDS_ROOT="$bad" SOPS_AGE_FILE="$bad/keys.txt" SOPS_RECIPIENTS="$bad/recipient"
+  run ctl init
+  [ "$status" -eq 0 ]
+  printf 'multi\nline\nvalue\n' >"$bad/BAD.sops.yaml"
+  run ctl encrypt "$bad/BAD.sops.yaml"
+  [ "$status" -eq 3 ]
+  assert_out 'cannot seal'
+  assert_no_out 'creation rule'
 }
 
 # --- the ssh-to-age passphrase route, against the real binary -------------------------------

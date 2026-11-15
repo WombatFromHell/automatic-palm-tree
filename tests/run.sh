@@ -401,10 +401,11 @@ fi
 # against PATH stubs, not eval suites: ~0MB and ~1s. njust's scope x mode argv, its local/remote
 # activation split and its xilo push rules are the same kind of thing, so tests/njust.bats joins
 # them. credsctl's record contract (one secret per file, extension picks the backend, records are
-# immutable) is argv and exit codes too, so tests/creds.bats joins them; its two real-tier tests
-# run the actual systemd-creds and age and skip when either is absent. sopsctl's sops plumbing
-# (key by command, json types on encrypt, field edits re-encrypted to the record's own recipients)
-# is the same kind of thing, so tests/sopsctl.bats joins them and its real tier runs actual sops.
+# immutable) is argv and exit codes too, so tests/creds.bats joins them; its real-tier tests
+# run the actual systemd-creds and age and skip when either is absent. credsctl's own sops plumbing
+# (recipients from the rules file, the key by command, field edits re-encrypted to the record's own
+# recipients) is the same kind of thing, so tests/creds-sops.bats joins them and its real tier runs
+# actual sops.
 # xilo-wrapped is the same shape: which records it asks credsctl for, in what order, and that the
 # CLI's own argv and exit status survive, so tests/xilo.bats joins them.
 # install.sh is staged destruction: which step asks for a yes, what a scripted run refuses, and that
@@ -424,7 +425,7 @@ fi
 # gigabyte, so it runs separately with `bats tests/vm-check.bats`. A vm-*.bats suite added to the
 # list below would boot a guest inside a gate whose point is that it only evaluates.
 stub_suites=(tests/bootstrap.bats tests/build-harness.bats tests/njust.bats tests/creds.bats
-  tests/sopsctl.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats
+  tests/creds-sops.bats tests/xilo.bats tests/updater.bats tests/install.bats tests/cache-check.bats
   tests/floors.bats tests/ci.bats tests/nix-eval.bats)
 for suite in "${stub_suites[@]}"; do
   case "$suite" in
@@ -444,7 +445,7 @@ else
     # One bats call with the files in parallel (--no-parallelize-within-files): each suite still runs
     # its tests sequentially inside its own worker, so shared stub state inside a suite survives.
     # `parallel` is borrowed from the devShell onto PATH rather than swapping shells, because
-    # creds.bats and sopsctl.bats run the host's real sops/age/systemd-creds. Without it the tier
+    # creds.bats and creds-sops.bats run the host's real sops/age/systemd-creds. Without it the tier
     # runs sequentially. Measured 35s -> 8s over 331 tests; a failure still names its file.
     jobs=()
     parallel_path=$(devpath parallel)
