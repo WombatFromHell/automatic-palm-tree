@@ -3,7 +3,10 @@
 #
 # Contract under test: `xilo` is the real CLI, reached by store path, and every subcommand gets
 # XILO_URL/XILO_CACHE/XILO_TOKEN filled from credsctl records — unless you already exported that
-# variable, which wins. Per-key records win over a bundle, and a record that exists in more than one
+# variable, which wins. Which records exist is asked of credsctl (`credsctl list`), because credsctl
+# owns the store location (CREDS_DIR, CREDENTIALS_DIRECTORY, CREDS_ROOT) — no path is spelled here,
+# the same delegation hm-njust's `_push` uses. Per-key records win over a bundle, and a record that
+# exists in more than one
 # backend is asked for as sops (a name+suffix), because sops decrypts far cheaper than the
 # systemd-creds polkit hop; with no per-key record the wrapper reads the bundle `XILO.sops.json` in
 # one decrypt. With no credsctl, or no record, the caller's environment is passed through untouched,
@@ -33,16 +36,32 @@ if [ -n "${XILO_SHOW_TOKEN:-}" ]; then printf 'xilo-token [%s]\n' "$XILO_TOKEN" 
 exit "${XILO_EXIT:-0}"
 EOF
 
-  # Real credsctl semantics for the only form the wrapper uses: decrypt --env NAME... -- CMD execs
-  # CMD with the secrets in its environment. A bare name resolves .cred first (the wrapper only ever
-  # emits a bare name when that is the only file present); a name carrying a suffix names that backend
-  # explicitly. A sops record — .sops.json or .sops.yaml — contributes every field, read as json,
-  # whatever its own shape; split on NUL, so a multi-line secret survives. Exit 2 means "no record".
+  # Real credsctl semantics for the two forms the wrapper uses. `list` prints the names in the store
+  # credsctl resolves (CREDS_DIR wins over CREDENTIALS_DIRECTORY) in credsctl's own column layout, and
+  # exits 1 when there is no such directory; a systemd-style store reports bare names, as
+  # systemd-creds list does. `decrypt --env NAME... -- CMD` execs CMD with the secrets in its
+  # environment. A bare name resolves .cred first (the wrapper only ever emits a bare name when that
+  # is the only record present); a name carrying a suffix names that backend explicitly. A sops
+  # record — .sops.json or .sops.yaml — contributes every field, read as json, whatever its own shape;
+  # split on NUL, so a multi-line secret survives. Exit 2 means "no record"; XILO_STUB_FAIL turns a
+  # decrypt into exit 3, a record that exists but cannot be read.
   stub credsctl <<'EOF'
 #!/usr/bin/env bash
 log="${XILO_STUB_LOG:?}"
+store="${CREDS_DIR:-$CREDENTIALS_DIRECTORY}"
 printf 'credsctl %s\n' "$*" >> "$log"
+if [ "$1" = list ]; then
+  [ -d "$store" ] || exit 1
+  for f in "$store"/*.cred "$store"/*.sops.*; do
+    [ -e "$f" ] || continue
+    name="$(basename "$f")"
+    [ -n "${XILO_STUB_SYSTEMD:-}" ] && name="${name%.cred}"
+    printf '%-20s %9s %6d %s\n' "$name" insecure 13 "$f"
+  done
+  exit 0
+fi
 if [ "$1" = decrypt ] && [ "$2" = --env ]; then
+  [ -n "${XILO_STUB_FAIL:-}" ] && exit 3
   shift 2
   assigns=()
   while [ "${1:-}" != "--" ]; do
@@ -50,13 +69,13 @@ if [ "$1" = decrypt ] && [ "$2" = --env ]; then
     base="$name"
     want=""
     case "$name" in
-      *.sops.json) base="${name%.sops.json}"; want="$CREDENTIALS_DIRECTORY/$base.sops.json" ;;
-      *.sops.yaml) base="${name%.sops.yaml}"; want="$CREDENTIALS_DIRECTORY/$base.sops.yaml" ;;
+      *.sops.json) base="${name%.sops.json}"; want="$store/$base.sops.json" ;;
+      *.sops.yaml) base="${name%.sops.yaml}"; want="$store/$base.sops.yaml" ;;
     esac
     if [ -z "$want" ]; then
-      want="$CREDENTIALS_DIRECTORY/$base.cred"
-      [ -e "$want" ] || want="$CREDENTIALS_DIRECTORY/$base.sops.json"
-      [ -e "$want" ] || want="$CREDENTIALS_DIRECTORY/$base.sops.yaml"
+      want="$store/$base.cred"
+      [ -e "$want" ] || want="$store/$base.sops.json"
+      [ -e "$want" ] || want="$store/$base.sops.yaml"
     fi
     [ -e "$want" ] || exit 2
     case "$want" in
@@ -119,7 +138,7 @@ run_wrapper() {
     XILO_STUB_LOG="$calls" XILO_SHOW_TOKEN=1 bash "$script" status
   [ "$status" -eq 0 ]
   assert_call '^credsctl decrypt --env XILO.sops.json -- '
-  assert_calls '^credsctl' 1
+  assert_calls '^credsctl decrypt' 1
   assert_call '^xilo-env XILO_URL=https://xilo.test XILO_TOKEN=set XILO_CACHE=acme/pkgs$'
   # A multi-line secret arrives whole; splitting the assignments on newlines would truncate it here.
   assert_call '^xilo-token \[tok$'
@@ -249,7 +268,7 @@ EOF
   jq -n '{secret:"https://from.record"}' >"$creds/xilo_url.sops.json"
   run run_wrapper status
   [ "$status" -eq 0 ]
-  assert_no_call '^credsctl'
+  assert_no_call '^credsctl decrypt'
   assert_call '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$'
 }
 
@@ -260,9 +279,11 @@ EOF
   env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_PROGRAM="$stubs/xilo-real" \
     XILO_STUB_LOG="$calls" XILO_URL=https://from.env bash "$script" status
   assert_call '^xilo-env XILO_URL=https://from.env XILO_TOKEN= XILO_CACHE=none$'
-  assert_no_call '^credsctl'
+  assert_no_call '^credsctl decrypt'
 }
 
+# A host that ships hm-xilo without hm-creds has a wrapper that can read nothing. Records on disk
+# would be silently ignored, so the fallback says where credentials come from instead of failing quiet.
 @test "no credsctl on PATH leaves the environment alone" {
   printf 'https://xilo.test\n' >"$creds/XILO_URL.cred"
   # /usr/bin has no credsctl (it lives in the nix profile), so this is the real fallback.
@@ -270,13 +291,66 @@ EOF
   [ "$status" -eq 0 ]
   assert_call '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$'
   assert_no_call credsctl
+  assert_out 'hm-creds'
+}
+
+# The notice is about a missing script, not about a record nobody stored: when the caller supplied
+# every variable, there is nothing to look for and the wrapper stays quiet.
+@test "every variable exported, with no credsctl, prints no notice" {
+  run env PATH=/usr/bin XILO_URL=https://from.env XILO_CACHE=acme/pkgs XILO_TOKEN=t \
+    XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" bash "$script" status
+  [ "$status" -eq 0 ]
+  assert_call '^xilo status$'
+  assert_no_out 'hm-creds'
 }
 
 @test "no record at all falls back to xilo's saved profile" {
   run run_wrapper status
   [ "$status" -eq 0 ]
   assert_call '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$'
-  assert_no_call '^credsctl'
+  assert_no_call '^credsctl decrypt'
+}
+
+# credsctl owns the store, so CREDS_DIR points it somewhere the default directory does not hold. The
+# wrapper must ask that store — hm-njust's `_push` already relies on this chain.
+@test "a CREDS_DIR store is asked for, not the directory the default path would suggest" {
+  store="$stubs/other-store"
+  mkdir -p "$store"
+  printf 'https://from.creds-dir\n' >"$store/XILO_URL.cred"
+  run env -u CREDENTIALS_DIRECTORY PATH="$stubs:$PATH" CREDS_DIR="$store" XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" bash "$script" status
+  [ "$status" -eq 0 ]
+  assert_call '^credsctl decrypt --env XILO_URL -- '
+  assert_call '^xilo-env XILO_URL=https://from.creds-dir XILO_TOKEN= XILO_CACHE=none$'
+}
+
+# A systemd-generated store is listed by the names systemd-creds mounts, without a .cred suffix; the
+# wrapper asks for those bare names too.
+@test "a systemd store is discovered from bare names" {
+  printf 'https://xilo.test\n' >"$creds/XILO_URL.cred"
+  printf 'secret-token\n' >"$creds/XILO_TOKEN.cred"
+  run env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_STUB_SYSTEMD=1 XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" bash "$script" status
+  [ "$status" -eq 0 ]
+  assert_call '^credsctl decrypt --env XILO_URL XILO_TOKEN -- '
+  assert_call '^xilo-env XILO_URL=https://xilo.test XILO_TOKEN=set XILO_CACHE=none$'
+}
+
+# A store credsctl cannot read has nothing to ask for: the caller's environment is passed through and
+# xilo's own profile authenticates.
+@test "a store credsctl cannot read falls back to xilo's saved profile" {
+  run env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$stubs/no-such-store" XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" bash "$script" status
+  [ "$status" -eq 0 ]
+  assert_call '^xilo-env XILO_URL=none XILO_TOKEN= XILO_CACHE=none$'
+  assert_no_call '^credsctl decrypt'
+}
+
+# A record that exists but cannot be decrypted must not run xilo with a credential that is not live:
+# credsctl's 3 is passed through, as hm-njust's _push refuses to push to the wrong cache.
+@test "a record credsctl cannot decrypt stops the run" {
+  printf 'secret-token\n' >"$creds/XILO_TOKEN.cred"
+  run env PATH="$stubs:$PATH" CREDENTIALS_DIRECTORY="$creds" XILO_STUB_FAIL=1 XILO_PROGRAM="$stubs/xilo-real" XILO_STUB_LOG="$calls" bash "$script" status
+  [ "$status" -eq 3 ]
+  assert_call '^credsctl decrypt --env XILO_TOKEN -- '
+  assert_no_call '^xilo'
 }
 
 @test "the CLI's exit status is the wrapper's" {

@@ -450,8 +450,8 @@ Style is not a gate step — see TEST_DESIGN.md.
 
 `home.nix` ships two scripts on `PATH` (`config.packages` in the shared `mkHomeConfig`), and both
 speak one record shape at mode `0400`: a `.cred` holds **exactly one secret**, a `*.sops.*` record is
-a map whose **fields are the secrets**, in `~/.local/share/credentials` (`CREDS_DIR`, or
-`CREDENTIALS_DIRECTORY` inside a generated unit — the same chain xilo reads). Records are immutable,
+a map whose **fields are the secrets**, in `~/.local/share/credentials` (`CREDS_DIR`, `CREDS_ROOT`, or
+`CREDENTIALS_DIRECTORY` inside a generated unit — a chain only `credsctl` spells). Records are immutable,
 so changing a value is `rm` then `encrypt`;
 plaintext only ever goes to stdout. `credsctl` owns the store — `list`, `encrypt NAME [FILE]`,
 `decrypt NAME [NAME...]`, `decrypt --env NAME... [-- CMD]`, `rm` — and exit codes
@@ -505,18 +505,22 @@ that file under a `~/.config` this repo keeps `0700`. KDE's own askpass call is
 that raises a dialog on demand.
 
 xilo's seam is one line: `features/hm-xilo` adds `xilo-wrapped` beside upstream's own
-`programs.xilo` package, and that wrapper execs `credsctl decrypt --env <the records it still
-needs> -- <the upstream CLI>` — a name plus its suffix picks the backend — filling only the
-variables it did not already have. A suffix on a name names the backend,
+`programs.xilo` package, and that wrapper asks `credsctl list` for the records it still needs — no
+store path of its own — then execs `credsctl decrypt --env <those names> -- <the upstream CLI>`, a
+name plus its suffix picking the backend, filling only the variables it did not already have. A
+suffix on a name names the backend,
 so `XILO_URL.sops.json` is preferred over `XILO_URL.cred` for the same key, and a bundle record
 (`XILO.sops.json`, whose field names are the variables) fills every key nothing else covers. That is
 the reason to prefer sops here: one decrypt fills the whole set, where systemd-creds costs one
-decrypt per secret; systemd-creds stays the backend for secrets a unit mounts. It resolves
-the same store — `CREDENTIALS_DIRECTORY`, else `~/.local/share/credentials` — so both scripts
-agree without either knowing the other; `CREDS_DIR` moves the store for `credsctl` only, which is
-why a unit sets `CREDENTIALS_DIRECTORY` (its `CredKey`/`CredExec` chain) and not `CREDS_DIR`. With
-no record and no `credsctl` on PATH the environment passes through untouched and xilo's own saved
-profile authenticates, so plain `xilo` is never shadowed.
+decrypt per secret; systemd-creds stays the backend for secrets a unit mounts. Listing is why the
+wrapper and `credsctl` agree without either knowing the other: `CREDS_DIR`, `CREDS_ROOT` and
+`CREDENTIALS_DIRECTORY` all reach `xilo-wrapped` through `credsctl`, and a unit still sets
+`CREDENTIALS_DIRECTORY` (its `CredKey`/`CredExec` chain) rather than `CREDS_DIR`. With no record or an
+unreadable store the environment passes through untouched and xilo's own saved profile authenticates,
+so plain `xilo` is never shadowed; a record that exists but cannot be decrypted stops the run rather
+than running xilo on a credential that is not live. hm-creds is a host's own line to write — the
+feature list is the gate, no enable flag — so a host that lists hm-xilo alone gets one stderr line
+naming the fallback instead of a wrapper that quietly ignores its records.
 
 The gate pins all of it: `tests/creds.bats` and `tests/sopsctl.bats` drive the scripts against
 PATH stubs that record argv — the flags `systemd-creds`, `sops`, `age-keygen` and `ssh-to-age`

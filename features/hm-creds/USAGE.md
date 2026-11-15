@@ -172,7 +172,8 @@ recipients and the key command belong to `sopsctl`.
 
 ## Overrides and exit codes
 
-- `CREDS_DIR` / `CREDENTIALS_DIRECTORY` — where the store is.
+- `CREDS_DIR` / `CREDENTIALS_DIRECTORY` — where the store is. Anything that asks `credsctl` follows
+  that chain, `xilo-wrapped` and `njust` included.
 - `AGE_ROOT` — the directory the identity lives in, in sops' own layout (`$AGE_ROOT/age/keys.txt`,
   default `~/.config/sops`). `AGE_ROOT=/var/lib/sops-nix` points at a sops-nix enclave.
 - `CREDS_ROOT` — the directory the public half lives in: rules file, records, and a recipient file
