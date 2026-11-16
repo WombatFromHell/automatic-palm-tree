@@ -25,7 +25,7 @@ lib/               # pure loader, one concern per file
                    #   / joinUnitMounts (concat groups, never //)
                    #   / unitName (where -> unit name, exported so consumers and tests
                    #   name a unit exactly the way mkUnitMounts does)
-  pin-meta.nix     #   metadata.json contract: pinnedSystems, assetHash, releaseAsset, gitSource
+  pin-meta.nix     #   metadata.json contract: pinnedSystems, assetHash, depsHash, releaseAsset, gitSource
   updater.sh       #   generic pin updater; features symlink it to their own update.sh
 modules/           # NixOS/HM modules the loader always imports
   cache-registry.nix caches.nix feature-options.nix host-facts.nix nix-settings.nix
@@ -195,19 +195,20 @@ flowchart LR
 
 ## Pin metadata
 
-Five features are metadata-backed today (`hm-brave`, `hm-ghostty`, `hm-tmux`, `hm-zed`, `hm-yazi`); each carries a
+Seven features are metadata-backed today (`hm-ank`, `hm-brave`, `hm-dsh`, `hm-ghostty`, `hm-tmux`, `hm-yazi`, `hm-zed`); each carries a
 `metadata.json` and a symlink to `lib/updater.sh` as its own `update.sh`
 (`update-all.sh` refuses a copy; `lib/updater.sh --install features/<name>` creates both). The template is expanded twice — once in Nix
 (`lib/pin-meta.nix releaseAsset`, at eval) and once in bash (`render_url`, at fetch) —
 and `tests/run.sh` diffs the two byte-for-byte for every pin and pinned system.
 
-`hm-yazi` is the one pin with `kind: nar` and `strategy: none`: its `version` is a commit, so the
-URL template renders a source archive (`pinMeta.gitSource`) and nothing ever discovers a newer
-revision — a bump is a deliberate `update.sh --to <rev>` with the hash re-fetched.
+Four pins are `kind: nar` with `strategy: none` (`hm-ank`, `hm-dsh`, `hm-tmux`, `hm-yazi`): their
+`version` is a commit, so the URL template renders a source archive (`pinMeta.gitSource`) and nothing
+ever discovers a newer revision — a bump is a deliberate `update.sh <rev>` with the hash re-fetched,
+and clears `depsHashes` so a lockfile-built derivation fails at eval naming the recompute.
 
 ```mermaid
 flowchart LR
-  J["features/&lt;name&gt;/metadata.json<br/>repo, version, kind, url, arches, hashes"] --> P["lib/pin-meta.nix<br/>pinnedSystems / assetHash / releaseAsset / gitSource"]
+  J["features/&lt;name&gt;/metadata.json<br/>repo, version, kind, url, arches, hashes, depsHashes"] --> P["lib/pin-meta.nix<br/>pinnedSystems / assetHash / depsHash / releaseAsset / gitSource"]
   P --> K["features/&lt;name&gt;/_package.nix<br/>fetchurl or fetchFromGitHub"]
   U["lib/updater.sh"] --> J
   U2["update-all.sh"] --> U
@@ -468,11 +469,11 @@ A record is one file, but sops looks its keys up as two files, and they belong t
 `credsctl` takes these knob names; the ones it hands to `sops` are `SOPS_AGE_KEY_FILE` and
 `SOPS_AGE_KEY_CMD`:
 
-| knob set here                         | file                                                                                               | half                                        | why                                                                                                                                                                                                                                                                                                |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SOPS_AGE_FILE` → `SOPS_AGE_KEY_FILE` | the age identity file, default `~/.config/sops/age/keys.txt`                                       | **private** — the key that opens records    | sops reads its key material with `open()`, not through a subprocess, so the file must be readable where sops runs; an identity file outranks the wallet command below (`run_sops` only falls back to it when the file is missing or unreadable)                                                    |
-| `SOPS_KEYS_CMD` → `SOPS_AGE_KEY_CMD`  | how to fetch a key at rest — `kwallet-query` in KWallet's age folder (default), `printenv` as CI's | **private**, only on demand                 | one process, no TTY, no pincode dialog; the key never lives on disk between uses                                                                                                                                                                                                                   |
-| `SOPS_RECIPIENTS`                     | an **optional** recipient file, default `~/.local/share/credentials/recipient`                     | **public** (an `age1…` public key per line) | read only if the user made one; its keys join the rules below, deduped. Nothing creates or appends to it — the recipients live in the rules file                                                                                                                                                   |
+| knob set here                         | file                                                                                               | half                                        | why                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SOPS_AGE_FILE` → `SOPS_AGE_KEY_FILE` | the age identity file, default `~/.config/sops/age/keys.txt`                                       | **private** — the key that opens records    | sops reads its key material with `open()`, not through a subprocess, so the file must be readable where sops runs; an identity file outranks the wallet command below (`run_sops` only falls back to it when the file is missing or unreadable)                                                              |
+| `SOPS_KEYS_CMD` → `SOPS_AGE_KEY_CMD`  | how to fetch a key at rest — `kwallet-query` in KWallet's age folder (default), `printenv` as CI's | **private**, only on demand                 | one process, no TTY, no pincode dialog; the key never lives on disk between uses                                                                                                                                                                                                                             |
+| `SOPS_RECIPIENTS`                     | an **optional** recipient file, default `~/.local/share/credentials/recipient`                     | **public** (an `age1…` public key per line) | read only if the user made one; its keys join the rules below, deduped. Nothing creates or appends to it — the recipients live in the rules file                                                                                                                                                             |
 | `SOPS_RULES`                          | a `.sops.yaml` of creation rules, default `.sops.yaml` beside the records                          | **public**                                  | which recipients a new record gets — a _policy_, not a key source; `credsctl` still writes it, then encrypts a stream with `--age` on `/dev/stdin` plus `--config /dev/null`, because sops would otherwise re-read a rules file from the current directory and no `path_regex` in one can match `/dev/stdin` |
 
 Everything upstream of that first row stays **ssh**: the ssh keypair is the origin, kept

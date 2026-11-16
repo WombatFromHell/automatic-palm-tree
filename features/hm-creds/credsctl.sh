@@ -428,7 +428,7 @@ cmd_encrypt() {
   # and a bare name seals the plaintext file found under that name — inside the store, or in the
   # directory the command runs in; any other bare name is the stream route. A path of the wrong shape is
   # not there is 'no record' (2).
-  if [[ ${1} == */* || ( ${1} == *.sops.* && ( -f "$1" || -f "$creds_dir/${1}" ) ) ]]; then
+  if [[ ${1} == */* || (${1} == *.sops.* && (-f $1 || -f "$creds_dir/${1}")) ]]; then
     for file in "$@"; do
       [[ ${file} == */* || -f $file ]] || file="$creds_dir/$file"
       [[ $file == *.sops.json || $file == *.sops.yaml ]] ||

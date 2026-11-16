@@ -27,7 +27,7 @@ tests/filesystems.nix attrs 60
 tests/loader.nix attrs 52
 tests/oomd.nix attrs 14
 tests/package-flags.nix attrs 1
-tests/pins.nix attrs 7
+tests/pins.nix attrs 10
 tests/ptrace.nix attrs 5
 tests/niri-watcher.nix attrs 4
 tests/suite.nix attrs 4

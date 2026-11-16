@@ -1,0 +1,11 @@
+{
+  "repo": "acme/widget",
+  "kind": "nar",
+  "strategy": "none",
+  "url": "https://github.com/{repo}/archive/{version}.tar.gz",
+  "version": "0000000000000000000000000000000000000000",
+  "hashes": {
+    "x86_64-linux": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  },
+  "depsHashes": {}
+}

@@ -18,6 +18,10 @@
 #   version   pinned version/tag; for a nar pin it is the commit itself, so a
 #           "none" pin is a fixed revision — it only moves when someone passes <ref>
 #   hashes    nix system -> hash of the pinned asset
+#   depsHashes optional: nix system -> hash of the lockfile dependency closure passed
+#           to fetchPnpmDeps. A moved pin changes the lockfile, so update_to clears it
+#           and the derivation fails at eval naming the recompute instead of building
+#           against the previous closure.
 #
 # CLI contract (identical for every feature):
 #   ./update.sh            # update to latest; verify pin when strategy is "none"
@@ -223,7 +227,7 @@ update_to() {
       die "checksum mismatch for $sys at $ver: published $published, fetched $(hash_hex "$pinHash")"
     hashes=$(jq -c --arg s "$sys" --arg v "$pinHash" '.[$s] = $v' <<<"$hashes")
   done
-  meta_set --arg ver "$ver" --argjson hashes "$hashes" '.version = $ver | .hashes = $hashes'
+  meta_set --arg ver "$ver" --argjson hashes "$hashes" '.version = $ver | .hashes = $hashes | if (.depsHashes | type) == "object" then .depsHashes = {} else . end'
   echo "==> Updated $META to version $ver" >&2
 }
 
@@ -245,6 +249,12 @@ main() {
     fi
     if update_available; then
       echo "==> Update available: $CUR -> $LATEST" >&2
+      exit 1
+    fi
+    # A lockfile-built feature with a cleared depsHashes is not deployable until the
+    # closure hash is recomputed, so --check names it rather than reporting the pin valid.
+    if [[ $(jq -r 'if (.depsHashes | type) == "object" then (.depsHashes | length) else -1 end' "$META") == 0 ]]; then
+      echo '==> depsHashes is empty: recompute the dependency-closure hash (fetchPnpmDeps hash="") before building.' >&2
       exit 1
     fi
     echo "==> Already up to date." >&2

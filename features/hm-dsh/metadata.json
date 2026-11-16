@@ -2,9 +2,12 @@
   "repo": "deepseek-ai/deepseek-harness",
   "kind": "nar",
   "strategy": "none",
-  "url": "https://github.com/deepseek-ai/deepseek-harness/archive/{version}.tar.gz",
+  "url": "https://github.com/{repo}/archive/{version}.tar.gz",
   "version": "38a6a5c965aa99ab525161efb7cc5cf1fe62fced",
   "hashes": {
     "x86_64-linux": "sha256-0stwYEjQsZ3dfQbIhEN8kR1B/WxsnWDMZ84HIBDbnKg="
+  },
+  "depsHashes": {
+    "x86_64-linux": "sha256-GdVkFooNVb4xNnXqjZW6ZbRgGGFhlioYTqbBdFms82g="
   }
 }

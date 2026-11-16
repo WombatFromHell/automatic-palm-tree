@@ -88,4 +88,32 @@ in {
       msg = "declares 'aarch64-linux' in arches but no hash is pinned";
     };
   };
+  # depsHashes is optional, but a pin that declares it must cover exactly the systems `hashes`
+  # pins: a closure hash for a system with no source hash is a build nobody can fetch.
+  testDepsHashesCoversExactlyThePinnedSystems = {
+    expr = lib.all (f: let
+      deps = (pin f).depsHashes or {};
+    in
+      deps == {} || (lib.attrNames deps) == (lib.attrNames (pin f).hashes))
+    pinned;
+    expected = true;
+  };
+
+  # lib/updater.sh update_to clears depsHashes when a pin moves. The cleared shape must name
+  # the recompute at eval rather than surface as a fetchPnpmDeps hash mismatch mid-build.
+  testClearedDepsHashNamesTheRecompute = {
+    expr = pinMeta.depsHash (fixturePin "pin-deps-cleared.json") "x86_64-linux";
+    expectedError = {
+      type = "ThrownError";
+      msg = "pins no dependency-closure hash for system 'x86_64-linux'";
+    };
+  };
+
+  testDepsHashForUnpinnedSystemThrows = {
+    expr = pinMeta.pinnedSystems (fixturePin "pin-deps-only-arch.json");
+    expectedError = {
+      type = "ThrownError";
+      msg = "pins 'aarch64-linux' in depsHashes but hashes pins only";
+    };
+  };
 }

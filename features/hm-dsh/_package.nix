@@ -27,14 +27,14 @@ in
     # its binary scan does not recognize toolchain-built Node
     # (Unsupported/no-getter), breaking every `dsh --profile …` boot. Prefer a
     # plain require under --expose-internals (which the wrapper below passes).
+    # patchPhase runs before pnpmBuildHook builds, so the patch lands on the source
+    # resolver.ts, not on the built output.
     patches = [./expose-internals-profile-resolution.patch];
     pnpmDeps = fetchPnpmDeps {
       inherit (finalAttrs) pname version src;
       pnpm = pnpm_11;
       fetcherVersion = 4;
-      # Closure of the pinned rc.3 pnpm-lock.yaml (not the rc.1-era baseline hash — rc.3 moved
-      # e.g. the zod peer 4.4.3 -> 4.6.6); computed via the fetcher's hash="" mismatch probe.
-      hash = "sha256-md84fDBaEnqdQxlsTpaGTkGWWH1dLUGwlSp0EJ+aOA4=";
+      hash = pinMeta.depsHash pin stdenv.hostPlatform.system;
     };
     nativeBuildInputs = [nodejs_24 pnpmConfigHook pnpmBuildHook pnpm_11 makeBinaryWrapper];
     # The tarball has no .git-commit marker: the stamp is the pinned rev, static at eval time.

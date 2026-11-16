@@ -187,6 +187,27 @@ hex_two() { printf '%064x' 2; }
   [ "$(meta '.hashes["x86_64-linux"]')" = "sha256-NEWSOURCE" ]
 }
 
+# A moved pin changes the lockfile, so the recorded closure hash must not survive the bump.
+@test "pinning a revision clears the dependency-closure hash" {
+  jq -n '{repo: "tmux/tmux", kind: "nar", strategy: "none",
+          url: "https://github.com/{repo}/archive/{version}.tar.gz",
+          version: "3.8", hashes: {"x86_64-linux": "sha256-OLD"},
+          depsHashes: {"x86_64-linux": "sha256-OLDCLOSURE"}}' >"$feature/metadata.json"
+  PREFETCH_HASH=sha256-NEWSOURCE run update abc1234
+  [ "$status" -eq 0 ]
+  [ "$(meta '.hashes["x86_64-linux"]')" = "sha256-NEWSOURCE" ]
+  [ "$(meta '.depsHashes | length')" = "0" ]
+}
+
+@test "--check refuses a pin whose dependency-closure hash was cleared" {
+  write_meta
+  jq '.depsHashes = {}' "$feature/metadata.json" >"$feature/metadata.json.new"
+  mv "$feature/metadata.json.new" "$feature/metadata.json"
+  run update --check
+  [ "$status" -eq 1 ]
+  [[ $output == *"depsHashes is empty"* ]]
+}
+
 @test "a failed prefetch leaves metadata.json untouched" {
   jq -n '{repo: "tmux/tmux", kind: "nar", strategy: "none",
           url: "https://github.com/{repo}/archive/{version}.tar.gz",
