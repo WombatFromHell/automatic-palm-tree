@@ -7,7 +7,7 @@
 tests/bootstrap.bats assert 19
 tests/build-harness.bats assert 6
 tests/cache-check.bats assert 13
-tests/creds.bats assert 26
+tests/creds.bats assert 36
 tests/creds-sops.bats assert 88
 tests/install.bats assert 171
 tests/njust.bats assert 122

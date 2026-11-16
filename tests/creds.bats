@@ -465,6 +465,43 @@ PY
   [ "$output" = "hunter2" ]
 }
 
+# --- a record holding a field named recipient ---------------------------------
+
+# A record's own field may be named `recipient`. sops writes its ciphertext as ENC[…], which no key can
+# be, so a lookup that matches any line mentioning `recipient` reads the record's data as a recipient:
+# `recipients` reports ciphertext beside the real keys, and `set` re-encrypts to a string sops refuses.
+@test "a record holding a field named recipient lists its recipients and set works on that field" {
+  cat >"$creds/WR.sops.json" <<'EOF'
+{
+    "recipient": "ENC[AES256_GCM,data:aaa,iv:bbb,tag:ccc,type:str]",
+    "secret": "ENC[AES256_GCM,data:ddd,iv:eee,tag:fff,type:str]",
+    "sops": {
+        "age": [
+            {
+                "recipient": "age1stub"
+            }
+        ]
+    }
+}
+EOF
+  write_in 'new'
+  printf 'recipient: ENC[AGE1,mock]\nsecret: ENC[AGE1,mock]\nsops:\n  age:\n    - recipient: age1stub\n' >"$creds/WR.sops.yaml"
+  run ctl recipients "$creds/WR.sops.json"
+  assert_out_count 'age1stub' 1
+  assert_no_out 'ENC'
+  run ctl recipients "$creds/WR.sops.yaml"
+  assert_out_count 'age1stub' 1
+  assert_no_out 'ENC'
+  SOPS_JSON='{"recipient":"new","secret":"x"}' run ctl set recipient "$creds/WR.sops.json" <"$stubs/in"
+  assert_status 0
+  assert_call '--output-type json --age age1stub --config /dev/null'
+  assert_no_call 'ENC'
+  SOPS_JSON='{"recipient":"new","secret":"x"}' run ctl set recipient "$creds/WR.sops.yaml" <"$stubs/in"
+  assert_status 0
+  assert_call '--output-type yaml --age age1stub --config /dev/null'
+  assert_no_call 'ENC'
+}
+
 # --- decrypt ----------------------------------------------------------------
 
 @test "decrypt takes several names and prints one record per line" {

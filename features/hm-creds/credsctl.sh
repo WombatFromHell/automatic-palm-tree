@@ -214,6 +214,10 @@ meta_values() {
       if (match($0, re)) {
         rest = substr($0, RSTART + RLENGTH)
         sub(/[" \t,].*$/, "", rest)
+        # An encrypted field of the record named `recipient` is data, not a recipient: sops writes
+        # ciphertext as ENC[…], and no key can be one. Truncated at the first comma above, it would
+        # otherwise read as a recipient sops refuses.
+        if (rest ~ /^ENC\[/) next
         print rest
       }
     }' "$1"
