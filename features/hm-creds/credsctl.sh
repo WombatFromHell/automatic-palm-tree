@@ -417,10 +417,10 @@ cmd_encrypt() {
   [[ $# -gt 0 ]] || die "encrypt needs a record name or a plaintext record file" 1
   # A plaintext record file is sealed in place, one sops process per file: sops takes only one
   # positional argument and silently ignores the rest (measured on 3.13.3). A path is always a seal,
-  # and a bare name seals the plaintext file the store already holds under it; any other bare name is
-  # the stream route. A path of the wrong shape is asking wrongly (1), a record-shaped path that is
+  # and a bare name seals the plaintext file found under that name — inside the store, or in the
+  # directory the command runs in; any other bare name is the stream route. A path of the wrong shape is
   # not there is 'no record' (2).
-  if [[ ${1} == */* || ( ${1} == *.sops.* && -f "$creds_dir/${1}" ) ]]; then
+  if [[ ${1} == */* || ( ${1} == *.sops.* && ( -f "$1" || -f "$creds_dir/${1}" ) ) ]]; then
     for file in "$@"; do
       [[ ${file} == */* || -f $file ]] || file="$creds_dir/$file"
       [[ $file == *.sops.json || $file == *.sops.yaml ]] ||

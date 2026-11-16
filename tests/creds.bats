@@ -311,6 +311,24 @@ EOF
   [ "$(stat -c '%a' "$creds/TWO.sops.yaml")" = "400" ]
 }
 
+# A plaintext record file is sealed wherever it is found, not only inside the store: a person writes
+# NAME.sops.json next to the plaintext they are holding and seals it from there. A bare name whose file
+# exists in the directory the command runs in is that file, so it must not fall through to the stream
+# route, which leaves the plaintext readable on disk and builds a record out of stdin instead.
+@test "encrypt seals a plaintext record file sitting in the directory it is run from" {
+  mkdir -p "$stubs/cwd"
+  printf '{"secret":"in-cwd"}' >"$stubs/cwd/BETA.sops.json"
+  write_in 'from-stdin'
+  # cd inside the child, not here: a cd in a Bats test leaks into the tests after it.
+  run bash -c 'cd "$0" && bash "$1" encrypt BETA.sops.json <"$2"' "$stubs/cwd" "$script" "$stubs/in"
+  [ "$status" -eq 0 ]
+  grep -q '^sops -e -i --age age1stub --config /dev/null BETA.sops.json$' "$calls"
+  assert_no_call '/dev/stdin'
+  [ "$(stat -c '%a' "$stubs/cwd/BETA.sops.json")" = "400" ]
+  # The store got no record built from stdin: the file in the directory is the record.
+  [ ! -e "$creds/BETA.sops.json" ]
+}
+
 # Sealing is sops' own job, so its own validation is what protects a record: a file that already
 # holds sops metadata is refused by sops (tests/creds-sops.bats), and anything that is not a record
 # shape is refused by credsctl before sops runs.
