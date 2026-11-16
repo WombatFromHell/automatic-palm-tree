@@ -69,6 +69,16 @@ case "$1" in
   *) exit 9 ;;
 esac
 EOF
+  # jq stays real — a sops record is json — but its argv is recorded too, so a secret can be proven
+  # absent from the arguments of every process credsctl spawns.
+  jq_bin="$(command -v jq)"
+  if [[ -n $jq_bin ]]; then
+    stub jq <<EOF
+#!/usr/bin/env bash
+echo "jq \$*" >> "$CALLS"
+exec "$jq_bin" "\$@"
+EOF
+  fi
   export CREDS_DIR="$creds"
   PATH="$stubs:$PATH"
 }
@@ -327,6 +337,32 @@ EOF
   [ "$(stat -c '%a' "$stubs/cwd/BETA.sops.json")" = "400" ]
   # The store got no record built from stdin: the file in the directory is the record.
   [ ! -e "$creds/BETA.sops.json" ]
+}
+
+# /proc/PID/cmdline is world-readable (0444) while /proc/PID/environ is 0400, so a secret handed to a
+# process as an argument is readable by every user on the machine for the life of that process. The
+# secret travels through the environment instead, the way cmd_set already hands a secret to a rekey.
+@test "encrypt hands the secret to jq through the environment, never through argv" {
+  command -v jq >/dev/null || skip "jq not on the host PATH"
+  secret=$'line one\nline two'
+  write_in "$secret"
+  run ctl encrypt BETA.sops.json <"$stubs/in"
+  assert_status 0
+  assert_calls '^jq -c -n' 1
+  assert_call '{secret:$ENV.CREDS_SECRET}'
+  assert_no_call 'line one'
+  # The stub decrypt returns the record's json, whatever it was sealed from.
+  SOPS_JSON='{"secret":"line one\nline two"}' run ctl decrypt BETA.sops.json
+  assert_status 0
+  # The environment carries the value as a plain string to jq, so a multi-line secret arrives whole.
+  [ "$output" = "$secret" ]
+  write_in "$secret"
+  run ctl encrypt GAMMA.cred <"$stubs/in"
+  assert_status 0
+  assert_no_call 'line one'
+  run ctl decrypt GAMMA.cred
+  assert_status 0
+  [ "$output" = "$secret" ]
 }
 
 # Sealing is sops' own job, so its own validation is what protects a record: a file that already
@@ -848,6 +884,23 @@ sops_store() {
   [ "$out" = "hello sops" ]
 }
 
+# Newlines are part of a secret (an ssh key, a token blob), so a multi-line value must come back whole
+# through both backends. The comparison is on the secret itself; the trailing newline each backend's
+# decrypt prints is a printing convention, not part of the value.
+@test "real backends hand a multi-line secret back whole" {
+  PATH="$host_path" command -v systemd-creds >/dev/null 2>&1 || skip "systemd-creds not on host PATH"
+  sops_store real-ml || skip "no sops or age-keygen on the host PATH"
+  secret=$'line one\nline two'
+  printf '%s' "$secret" >"$stubs/ml"
+  PATH="$host_path" CREDS_DIR="$real" bash "$script" encrypt ML.cred <"$stubs/ml"
+  [ "$(PATH="$host_path" CREDS_DIR="$real" bash "$script" decrypt ML.cred)" = "$secret" ]
+  PATH="$host_path" CREDS_DIR="$real" CREDS_ROOT="$real" SOPS_RECIPIENTS="$real/recipient" \
+    SOPS_AGE_FILE="$real/key" bash "$script" encrypt ML.sops.json <"$stubs/ml"
+  [ "$(PATH="$host_path" CREDS_DIR="$real" SOPS_AGE_FILE="$real/key" bash "$script" decrypt ML.sops.json)" = "$secret" ]
+  # Sealed, and nothing of the secret is in the ciphertext.
+  [ "$(stat -c '%a' "$real/ML.sops.json")" = "400" ]
+  run ! grep -q 'line one' "$real/ML.sops.json"
+}
 # The bundle shape, end to end with the real sops: several secrets and a multi-line one, read back
 # as environment variables by one decrypt. Mock key, mock secrets — nothing here touches a real
 # identity or record.

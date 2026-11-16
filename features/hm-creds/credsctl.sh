@@ -461,8 +461,11 @@ cmd_encrypt() {
   fi
   [[ -n $secret ]] || die "empty secret: nothing written"
   # sops takes the plaintext as json whatever the record's shape is, and encrypts every value in it, so
-  # the one secret is exactly one field — --arg keeps a multi-line secret intact.
-  json=$(jq -c -n --arg v "$secret" '{secret:$v}')
+  # sops takes the plaintext as json whatever the record's shape is, and encrypts every value in it, so
+  # the one secret is exactly one field. The value travels in the environment, not in argv: a process's
+  # arguments are readable by every user on the machine (/proc/PID/cmdline is 0444, environ is 0400),
+  # and $ENV keeps a multi-line secret whole — measured byte-for-byte through both backends.
+  json=$(CREDS_SECRET="$secret" jq -c -n '{secret:$ENV.CREDS_SECRET}')
 
   mkdir -p "$creds_dir"
   if [[ $ext == sops.* ]]; then
