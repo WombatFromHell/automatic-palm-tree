@@ -41,7 +41,14 @@ case "$1" in
     cat "${@: -1}" ;;
   list)
     [ "$2" = "--user" ] || exit 9
-    if [ -n "${SC_LIST_OUT:-}" ]; then printf '%s\n' "${SC_LIST_OUT}"; fi ;;
+    # Real systemd-creds prints a header and one row per FILE in its store, whatever the extension:
+    # a recipient file and the rules file show up there too, and so does every age record.
+    printf 'NAME                SECURE   SIZE PATH\n'
+    for file in "${HOME:-/nonexistent}/.local/share/credentials"/*; do
+      [ -f "$file" ] || continue
+      printf '%-20s %s  %sB  %s\n' "${file##*/}" \
+        "$([ "$(stat -c '%a' "$file")" = 400 ] && echo secure || echo insecure)" "$(wc -c <"$file")" "$file"
+    done ;;
   *) exit 9 ;;
 esac
 EOF
@@ -95,18 +102,31 @@ ctl() { bash "$script" "$@"; }
 # systemd-creds only ever reports its own store (~/.local/share/credentials). Listing that store
 # alongside $CREDS_DIR is only honest when they are the same directory; when CREDS_DIR points
 # elsewhere, the records there are listed here and systemd's store is not reported at all.
-@test "list on systemd's own store shows systemd's lines plus the age records, once each" {
+@test "list on systemd's own store reports every record once and never the rules or recipient file" {
   store="$stubs/home/.local/share/credentials"
   mkdir -p "$store"
   printf 'cipher' >"$store/alpha.cred"
   printf 'cipher' >"$store/beta.sops.json"
-  SC_LIST_OUT="alpha.cred secure 6B $store/alpha.cred" \
-    run env HOME="$stubs/home" CREDS_DIR="$store" bash "$script" list
-  [ "$status" -eq 0 ]
-  grep -q 'alpha.cred secure' <<<"$output"
-  grep -q 'beta.sops.json' <<<"$output"
-  grep -q '^systemd-creds list --user' "$calls"
-  [ "$(grep -c 'alpha.cred' <<<"$output")" = 1 ]
+  printf 'creation_rules:' >"$store/.sops.yaml"
+  printf 'age1stub\n' >"$store/recipient"
+  run env HOME="$stubs/home" CREDS_DIR="$store" bash "$script" list
+  assert_status 0
+  # systemd's rows are kept only for its own records, so each one appears exactly once.
+  assert_out_count 'alpha.cred' 1
+  assert_out_count 'beta.sops.json' 1
+  assert_no_out '.sops.yaml'
+  assert_no_out 'recipient'
+  assert_no_out 'NAME'
+  assert_call '^systemd-creds list --user$'
+}
+
+# An empty store is not a failure: systemd prints only its header, and nothing is a valid listing.
+@test "list on systemd's own empty store exits 0 and names nothing" {
+  store="$stubs/home/.local/share/credentials"
+  mkdir -p "$store"
+  run env HOME="$stubs/home" CREDS_DIR="$store" bash "$script" list
+  assert_status 0
+  [ -z "$output" ]
 }
 
 @test "list on an overridden CREDS_DIR lists that directory and asks systemd for nothing" {

@@ -145,10 +145,14 @@ cmd_list() {
   # systemd-creds only ever reports its own store (~/.local/share/credentials). Listing it beside
   # $creds_dir is honest only when they are the same directory; pointed elsewhere, the records there
   # are listed here and systemd's store is not reported at all.
-  local sys_dir="$HOME/.local/share/credentials" f
+  local sys_dir="$HOME/.local/share/credentials" f out
   shopt -s nullglob
   if [[ $creds_dir == "$sys_dir" ]]; then
-    systemd-creds list --user || die "systemd-creds list failed" 3
+    # systemd-creds lists every FILE in its store, header included. Only its *.cred rows belong here:
+    # its rows would report the age records a second time below, and its store also holds the rules
+    # file and a recipient file, which are not credentials. An empty store is not a failure.
+    out="$(systemd-creds list --user)" || die "systemd-creds list failed" 3
+    printf '%s\n' "$out" | grep -E '\.cred' || true
   else
     for f in "$creds_dir"/*.cred; do show_record "$f"; done
   fi
