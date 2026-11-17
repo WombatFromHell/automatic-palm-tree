@@ -28,8 +28,8 @@ in {
     njust
   ];
 
-  # {{ info }} and {{ clean }} recipes shell out to nh; hm-njust hosts do not
-  # need to list hm-nh as well.
+  # `info`, `clean` and the `nhm`/`nos` recipes shell out to nh; hm-njust hosts do not need to
+  # list hm-nh as well. nh is on PATH here, which is what the recipes call.
   programs.nh = {
     enable = true;
     package = lib.mkDefault pkgs.unstable.nh;

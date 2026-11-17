@@ -703,3 +703,107 @@ njust() { PATH="$stubs:$PATH" XDG_RUNTIME_DIR="$stubs" just --justfile "$justfil
   assert_no_call '^xilo-wrapped'
   rm -rf "$d"
 }
+
+# --- nh recipes ---------------------------------------------------------------
+# `nhm`/`nos` are the same scope x mode story handed to nh instead of `nix build`: nh resolves the
+# attribute, builds, elevates and activates. njust only builds the argv — a leading bare token is
+# nh's own subcommand, another bare token is the target and reaches nh as its own `-c`/`-H` flag,
+# `--dry-run` becomes nh's own `--dry`, and `--sudo` never reaches nh (nh elevates through its own
+# `-e/--elevation-strategy`). The stub records argv only, so any elevation njust performed would
+# show up as a `sudo` line in the log.
+
+@test "nhm runs nh's own home switch against the flake root, elevating nothing" {
+  FLAKE_ROOT="$stubs/flake" run njust nhm
+  [ "$status" -eq 0 ]
+  assert_call "^nh home switch $stubs/flake\$"
+  assert_no_call '^sudo'
+  # nh keeps its result in its own temp dir: njust names no out-link for these recipes.
+  assert_no_call '--out-link'
+}
+
+@test "nhm build runs nh home build, and nh takes only one subcommand" {
+  run njust nhm build --dry-run
+  [ "$status" -eq 0 ]
+  assert_call '^nh home build --dry'
+  : >"$calls"
+  run njust nhm build switch
+  [ "$status" -eq 1 ]
+  assert_out 'nh takes one subcommand'
+  assert_no_call '^nh'
+}
+
+@test "nhm build builds another host's home configuration without switching it" {
+  run njust nhm build bob@otherhost --dry-run
+  [ "$status" -eq 0 ]
+  assert_call '^nh home build --dry -c bob@otherhost'
+}
+
+@test "a bare configuration name reaches nh as its own -c flag" {
+  run njust nhm josh --dry-run
+  [ "$status" -eq 0 ]
+  assert_call '^nh home switch --dry -c josh'
+}
+
+@test "a remote home target is refused by the nh recipe too" {
+  run njust nhm bob@otherhost
+  [ "$status" -eq 1 ]
+  assert_out 'home activation is local'
+  assert_no_call '^nh'
+}
+
+@test "nos runs each of nh's own os deploy subcommands, and elevates nothing itself" {
+  FLAKE_ROOT="$stubs/flake" run njust nos methyl --dry-run
+  [ "$status" -eq 0 ]
+  assert_call "^nh os switch --dry -H methyl $stubs/flake\$"
+  assert_no_call '^sudo'
+  for sub in boot test build; do
+    : >"$calls"
+    run njust nos "$sub" methyl --dry-run
+    [ "$status" -eq 0 ]
+    assert_call "^nh os $sub --dry -H methyl"
+    assert_no_call '^sudo'
+  done
+}
+
+@test "a subcommand nh has that is not a deploy is refused, naming nh's own actions" {
+  run njust nos rollback
+  [ "$status" -eq 1 ]
+  assert_out 'nh os deploys with switch boot test build'
+  assert_no_call '^nh'
+  run njust nhm repl
+  [ "$status" -eq 1 ]
+  assert_out 'nh home deploys with switch build'
+  assert_no_call '^nh'
+}
+
+@test "--dry-run is nh's own dry flag, and njust previews nothing" {
+  run njust nos --dry-run
+  [ "$status" -eq 0 ]
+  assert_call '^nh os switch --dry '
+  assert_no_out 'would activate'
+  assert_no_out 'would run'
+}
+
+@test "--sudo never reaches nh and never wraps the call" {
+  run njust nos --sudo methyl --dry-run
+  [ "$status" -eq 0 ]
+  assert_call '^nh os switch --dry -H methyl'
+  assert_no_call '--sudo'
+  assert_no_call '^sudo'
+}
+
+@test "nh's own flags reach nh and never become the target" {
+  run njust nos -L -v --dry-run
+  assert_call '^nh os switch -L -v --dry'
+  assert_no_call '-H L'
+  run njust nhm --dry-run -f "$stubs/other.nix"
+  assert_call "--dry -f $stubs/other.nix"
+  assert_no_call '-c '
+}
+
+@test "nh recipes refuse --with-xilo, which needs an out-link nh does not make" {
+  run njust nhm --with-xilo
+  [ "$status" -eq 1 ]
+  assert_out '--with-xilo needs a build out-link'
+  assert_no_call '^nh'
+}

@@ -387,7 +387,10 @@ The strategy this flake follows:
   under the cap, saving ~4s on methyl and running _slower_ on propyl (17s against 9s).
   `nix-fast-build` delegated to it and inherited the cost, and neither tool activates a system
   generation, so a rebuild needs `nixos-rebuild` regardless. `nix.just` therefore runs `nix build`,
-  `nixos-rebuild`, and `home-manager switch`, and `features/hm-njust/home.nix` no longer installs
+  `nixos-rebuild`, and `home-manager switch`. The `nhm`/`nos` recipes hand build and activation to
+  `nh`, which calls plain `nix build` itself and elevates on its own, so there is no second
+  evaluator — but nh's own `--dry` builds for real and only skips activation, so the cheap preview
+  stays `njust os-build --dry-run`. `features/hm-njust/home.nix` no longer installs
   `pkgs.nix-fast-build` / `pkgs.nix-eval-jobs`. `bootstrap.sh` uses `nixos-rebuild` inside a scope
   and nothing else.
 - **One attribute per process.** A single expression holding every config is the higher-memory shape

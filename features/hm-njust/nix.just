@@ -18,7 +18,9 @@
 # it loudly — see the interpolation note above); `--with-xilo` is helper-level like
 # nix.fish's `_nfb` strips it: it is
 # acted on here (push the built closure to the xilo cache) and never forwarded.
-#
+# acted on here (push the built closure to the xilo cache) and never forwarded. The nh recipes
+# (`nhm`, `nos`) drop `--sudo` (nh elevates through its own `-e/--elevation-strategy`) and refuse
+# `--with-xilo` (nh keeps its result in a temp dir, so there is no out-link to push).
 # How far a recipe goes is its *mode*, a parameter of `_deploy`, not a flag: build builds;
 # switch builds then activates; boot/test build and set or check the next boot entry;
 # activate activates the generation that is already built and builds nothing; push uploads the
@@ -31,7 +33,7 @@
 # stay single-line because `just --list` prints only the last line of a comment block.
 #
 # shortcut: each client's flags are parsed by its own loop (`_exec`, `build`, `_clean`, `sweep`,
-# `_deploy`) rather than one shared parser, because the clients differ (`nh` vs `nix build` vs
+# `_deploy` and `_nh`) rather than one shared parser, because the clients differ (`nh` vs `nix build` vs
 # `nix-env`) and `--dry-run` means "print it" in `_exec` but "evaluate for real" in `build`. A
 # shared parser would hand argv back through stdout, which word-splits and globs it. Upgrade if a
 # fourth client needs the same table.
@@ -625,6 +627,82 @@ os-deploy-nas *args: (_deploy "nas" "boot" args)
 # `mode` is unused for the rebuild scope — nixos-rebuild takes its own action flag — but just
 # fills named parameters positionally, so a delegation has to supply something.
 rebuild *args: (_deploy "rebuild" "switch" args)
+
+
+# --- nh ----------------------------------------------------------------------
+# The same scope x mode story handed to nh instead of `nix build`: nh resolves the attribute,
+# builds, elevates and activates, and keeps its result in its own temp dir. njust only builds the
+# argv here: a leading bare token is nh's own subcommand, another bare token is the target and
+# reaches nh as its own selector flag, every flag is nh's own, and `--dry-run` is nh's own `--dry`.
+# The flake root is passed as the installable, so a recipe never depends on the cwd.
+
+# `kind` is nh's client (`home` or `os`), `{{ sub }}` the default when no token names one. Flags nh
+# takes a value for are paired, so a value never becomes the target.
+_nh kind sub *args:
+    #!/usr/bin/env bash
+    set -uf pipefail
+    arr=({{ args }})
+    # nh's deploy subcommands, and the ones it has that are not deploys.
+    case "{{ kind }}" in
+    home) acts="switch build" other="repl" ;;
+    *) acts="switch boot test build" other="repl info rollback build-vm build-image" ;;
+    esac
+    sub=""
+    tgt=""
+    flags=()
+    for ((i = 0; i < ${#arr[@]}; i++)); do
+        a="${arr[i]}"
+        case "$a" in
+        # nh elevates through its own `-e/--elevation-strategy`, and a sudo'd nh would not inherit
+        # Nix's bin dir. nh is never wrapped in the elevation prefix.
+        --sudo) ;;
+        # nh leaves its result in a temp dir, so there is nothing to push.
+        --with-xilo) { echo "Error: --with-xilo needs a build out-link; nh keeps its own result — push what is active with 'njust os-push-active', or build with 'njust os-build --with-xilo'" >&2; exit 1; } ;;
+        # njust's flag, nh's own spelling: build for real, activate nothing.
+        --dry-run) flags+=("--dry") ;;
+        --option|--override-input)
+            flags+=("$a" "${arr[i + 1]:-}" "${arr[i + 2]:-}"); i=$((i + 2)) ;;
+        -c|-H|-f|-e|-o|-d|-j|-I|-U|-s|-b|-p|--configuration|--hostname|--file|--expr|--out-link|--diff|--max-jobs|--include|--update-input|--specialisation|--backup-extension|--elevation-strategy|--build-host|--target-host|--cores|--log-format|--builders|--profile)
+            flags+=("$a" "${arr[i + 1]:-}"); i=$((i + 1)) ;;
+        -*) flags+=("$a") ;;
+        *)
+            case " $acts " in
+            *" $a "*)
+                [[ -n "$sub" ]] && { echo "Error: nh takes one subcommand; '$a' after '$sub'" >&2; exit 1; }
+                sub="$a" ;;
+            *)
+                # A token nh has but njust does not deploy with is refused, not sent as a target.
+                case " $other " in
+                *" $a "*) { echo "Error: nh {{ kind }} deploys with $acts; '$a' is not a deploy — njust leaves it to plain nh" >&2; exit 1; } ;;
+                esac
+                tgt="$a" ;;
+            esac
+            ;;
+        esac
+    done
+    [[ -n "$sub" ]] || sub="{{ sub }}"
+    # Another host's home configuration would be activated on THIS host; building it is allowed.
+    [[ "{{ kind }}" == home && "$sub" == switch && "$tgt" == *@* ]] && {
+        echo "Error: home activation is local; '$tgt' is another host — build it with 'njust nhm build $tgt'" >&2
+        exit 1
+    }
+    cmd=(nh "{{ kind }}" "$sub" "${flags[@]}")
+    # The target is nh's own selector: a homeConfigurations name for home, a hostname for os.
+    if [[ -n "$tgt" ]]; then
+        sel=-H
+        [[ "{{ kind }}" == home ]] && sel=-c
+        cmd+=("$sel" "$tgt")
+    fi
+    cmd+=("{{ flake }}")
+    echo "${cmd[*]}"
+    "${cmd[@]}"
+
+# Home configuration, built and activated by nh: its own elevation, its own result link. The
+# leading bare token is nh's subcommand (`switch` by default, `build` builds only).
+nhm *args: (_nh "home" "switch" args)
+
+# NixOS configuration, deployed by nh: `switch`, `boot`, `test` or `build`, `switch` by default.
+nos *args: (_nh "os" "switch" args)
 
 # NixOS generations (nix.fish: nhdls / nhdrm) are `_gens os`: the elevation and the "no system
 # profile here" guard live in that one place.

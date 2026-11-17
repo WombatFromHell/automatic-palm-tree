@@ -167,6 +167,13 @@ elevation prefix puts `~/.nix-profile/bin` ahead of the stub dir), the systemd-c
 present. The stub `nix build` writes a closure at the `--out-link` it was handed, so activation
 is driven for real instead of grepped for.
 
+It also covers the `nhm`/`nos` recipes, which hand build and activation to `nh`: the suite pins the
+client and subcommand nh is called with (a leading bare token is nh's own subcommand, `switch` by
+default), the target as nh's own `-c`/`-H` flag, nh's flags verbatim (`-L`, `-v`, `--option a b`),
+`--dry-run` arriving as nh's own `--dry`, and the refusals — a remote home target, a subcommand nh
+has that is not a deploy, `--with-xilo`, and a second subcommand on one call. `--sudo` is dropped:
+the stub records argv only, so an elevation njust should not perform would show up as a `sudo` call.
+
 `tests/creds.bats` and `tests/creds-sops.bats` are the same shape for the one credential script in
 `features/hm-creds`, split by backend: the systemd-creds half and the sops half. PATH stubs record
 argv, so the flags `systemd-creds`, `sops`, `age-keygen` and
