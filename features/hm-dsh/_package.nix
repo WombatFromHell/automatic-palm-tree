@@ -23,6 +23,8 @@
   # Everything the web profile ships: the CLI and its plugin packages. Left out are the desktop
   # carriers (Electron), the test carriers, ssh/lsp plugins, and repo-only docs and tooling. A
   # wrongly listed dir fails the web-boot test, not the build, so bisect with an empty list.
+  # The experimental entries are the dirs the shipped dependency graphs never reach: build-time
+  # packers and plugins no dependent mounts.
   trimDirs = [
     ".agents"
     "apps/desktop"
@@ -31,6 +33,12 @@
     "apps/plugin-market-generator"
     "benchmarks"
     "docs"
+    "packages/experimental/client-ui-claude-code-mods"
+    "packages/experimental/hook-protocol"
+    "packages/experimental/webhook"
+    "packages/experimental/webhook-github"
+    "packages/experimental/webworker-packer"
+    "packages/experimental/webworker-runtime"
     "packages/host/authentication-desktop"
     "packages/lsp"
     "packages/ssh"
@@ -110,20 +118,58 @@ in
       runHook preInstall
 
       ${lib.optionalString reachabilityPrune ''
-        # The shipped program is apps/cli, so its production dependency graph is what `dsh` loads.
-        # Workspace plugins are workspace symlinks, not .pnpm entries, so they survive untouched:
-        # only third-party packages are pruned. The pinned checkout holds 1435 entries (2.1G);
-        # this graph keeps 422 of them (620M).
-        pnpm --filter ./apps/cli list --prod --depth Infinity --parseable \
-          | sed -n 's#.*/node_modules/\.pnpm/\([^/]*\)/node_modules/.*#\1#p' | sort -u > keep.txt
+        # Which workspace dirs `dsh` and the browser can import: the graphs of apps/cli, the web
+        # bundle and the vendor code it loads. Workspace dirs are symlinks, not .pnpm entries, so
+        # they survive untouched and only third-party packages are pruned. The pinned checkout holds
+        # 1435 entries (2.1G); this keeps 353 of them.
+        pnpm list --prod --depth Infinity --parseable \
+          --filter=./apps/cli --filter=./apps/web --filter="./vendor/*" > graph.txt
+        # Workspace dirs those graphs reach. Only imports from these can fail at boot, so only
+        # links inside them are checked; optional plugins outside them (codex, Claude SDK, desktop)
+        # stay pruned on purpose.
+        sed "s#$PWD/##" graph.txt | grep -v '/node_modules/\.pnpm/' | sort -u > shipped.txt
+        # pnpm's list stops at workspace boundaries, so a workspace package's own npm dependencies
+        # are missing from graph.txt. Follow the installed node_modules links from the shipped dirs
+        # instead: that is the real closure, and an entry left out shows up as a gateway error at
+        # runtime. peerDependencies and devDependencies are not followed — plugins carry those.
+        node -e '
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const marker = "/node_modules/.pnpm/";
+          const linkOf = (dir, name) => {
+            let d = dir;
+            for (;;) {
+              try {
+                return fs.realpathSync(path.join(d, "node_modules", name));
+              } catch {
+                const up = path.dirname(d);
+                if (up === d) return null;
+                d = up;
+              }
+            }
+          };
+          const keep = new Set();
+          const queue = fs.readFileSync("shipped.txt", "utf8").split("\n").filter(Boolean);
+          while (queue.length > 0) {
+            const dir = queue.pop();
+            const manifest = path.join(dir, "package.json");
+            if (!fs.existsSync(manifest)) continue;
+            const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
+            const names = { ...pkg.dependencies, ...pkg.optionalDependencies };
+            for (const name of Object.keys(names)) {
+              const target = linkOf(dir, name);
+              if (target === null || !target.includes(marker)) continue; // workspace dir: shipped whole
+              const entry = target.slice(target.lastIndexOf(marker) + marker.length).split("/")[0];
+              if (keep.has(entry)) continue;
+              keep.add(entry);
+              queue.push(target);
+            }
+          }
+          fs.writeFileSync("keep.txt", [...keep].sort().join("\n") + "\n");
+        '
         # dsh shells out to the pnpm shipped in node_modules, so it must survive the prune. It
         # declares no dependencies of its own, so its entry alone is its whole closure.
         ls node_modules/.pnpm | grep -E '^pnpm@' >> keep.txt
-        # Dev-only third-party tools still reach apps/cli's graph because pnpm's --prod list
-        # follows peerDependencies: lint plugins, the test runner, DOM emulation, type-only
-        # packages, and the ONNX voice runtime whose carrier dir is trimmed above. Nothing in
-        # lib/ or apps/web/dist loads them, and web-boot is the proof.
-        grep -vE '^(eslint|jsdom|vitest|@vitest|vite|esbuild|oxlint|@types|sherpa-onnx)' keep.txt > keep-only.txt && mv keep-only.txt keep.txt
         for d in node_modules/.pnpm/*/; do
           n=$(basename "$d")
           [ "$n" = node_modules ] && continue
@@ -132,20 +178,45 @@ in
       ''}
 
       mkdir -p $out/libexec/dsh
-      # Copy the tree minus VCS metadata, tool caches and (optionally) maps and unused repo dirs.
+      # Copy the tree minus VCS metadata, tool caches and unused repo dirs. Maps are excluded first,
+      # while patterns are still unanchored: an anchored `*.map` cannot match a nested path, so it would
+      # ship every map. Nothing in lib/ or dist/ imports a map at runtime.
       tar -cf - \
+        ${lib.optionalString trimSourceMaps "--exclude='*.map'"} \
         --anchored --no-wildcards-match-slash \
         --exclude=./.git --exclude=./.github --exclude=./.turbo --exclude=./.vite --exclude=./.cache \
-        ${lib.optionalString trimSourceMaps "--exclude='*.map'"} \
         ${lib.concatMapStringsSep " " (d: "--exclude=./${d}") trimDirs} \
         ${lib.concatMapStringsSep " " (d: "--exclude='./${d}'") trimNested} \
         . | tar -xf - --no-same-owner -C $out/libexec/dsh
 
-      # Pruning leaves symlinks in the workspace packages' own node_modules pointing at deleted
-      # store entries, which Node reports as ERR_MODULE_NOT_FOUND. -xtype l matches links with
-      # missing targets in one pass, repo-wide, without forking `test` per link.
-      find $out/libexec/dsh -xtype l -printf '%p -> %l\n' \
-        | grep -E -- '-> .*(packages|apps|vendor)/' | sort | tee dangling-workspace.txt
+      # Pruning can leave a workspace package's own node_modules link pointing at a deleted store
+      # entry: Node reports ERR_MODULE_NOT_FOUND at runtime and the UI shows it as a gateway error.
+      # A link whose name is in the owning package.json's `dependencies` is loadable code, so it
+      # fails the build; devDependency links (test carriers, build tools) are dead weight and are
+      # deleted with every other dangling link. -xtype l finds links with a missing target in one pass.
+      # Graph entries for optional deps of other platforms are declared but never installed, so a
+      # missing dir is not a dangling link: its stderr and find's exit status are ignored.
+      find $(sed "s#^#$out/libexec/dsh/#" shipped.txt) -xtype l -printf '%p\n' 2>/dev/null > link-check.txt || true
+      node -e '
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const bad = [];
+        for (const link of fs.readFileSync("link-check.txt", "utf8").split("\n").filter(Boolean)) {
+          const cut = link.lastIndexOf("/node_modules/");
+          if (cut < 0) continue;
+          const name = link.slice(cut + 14);
+          const manifest = path.join(link.slice(0, cut), "package.json");
+          if (!fs.existsSync(manifest)) continue;
+          const deps = JSON.parse(fs.readFileSync(manifest, "utf8")).dependencies;
+          if (deps !== undefined && Object.hasOwn(deps, name)) {
+            bad.push(link + " -> required dependency " + name);
+          }
+        }
+        if (bad.length > 0) {
+          fs.writeSync(2, bad.join("\n") + "\ninstall phase: a shipped package links to a dependency the prune deleted\n");
+          process.exit(1);
+        }
+      ' link-check.txt
       find $out/libexec/dsh -xtype l -delete
 
       # pnpm keeps workspace packages only inside .pnpm/node_modules; bare import() of them needs a
