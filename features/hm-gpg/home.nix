@@ -26,10 +26,19 @@
     fi
     export PINENTRY_TMUX_PROGRAM="${pkgs.pinentry-curses}/bin/pinentry-curses"
 
-    # 1. GUI askpass, whenever a display is actually reachable -- covers
-    # local sessions regardless of tmux/zellij/SSH state, since a real
-    # window always beats a terminal popup when one's available.
-    if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+    # 1. GUI askpass, only when a display is reachable *from this session*.
+    # gpg hands the agent its own DISPLAY, so an empty $DISPLAY here means the
+    # caller cannot see the desktop -- the case that hangs git/lazygit, because
+    # the window opens on the host desktop while an SSH client waits forever.
+    # A remote SSH session can only use a forwarded display (localhost:N).
+    display_ok=0
+    if [ -n "$DISPLAY" ]; then
+      case "$DISPLAY" in
+        localhost:*) display_ok=1 ;;
+        *) if [ -z "$SSH_CLIENT" ] && [ -z "$SSH_CONNECTION" ]; then display_ok=1; fi ;;
+      esac
+    fi
+    if [ "$display_ok" = 1 ]; then
       if [ -x "${pkgs.pinentry-qt}/bin/pinentry-qt" ]; then
         exec "${pkgs.pinentry-qt}/bin/pinentry-qt" "$@"
       elif [ -x "${pkgs.pinentry-gnome3}/bin/pinentry-gnome3" ]; then
@@ -37,12 +46,15 @@
       fi
     fi
 
-    # 2. tmux/zellij popup dispatchers -- only when there's no display to
-    # fall back to (i.e. we're on a remote/headless SSH client) AND we're
-    # actually inside a live multiplexer session, checked via the real
+    # 2. tmux/zellij popup dispatchers -- whenever no display is usable from this
+    # session (remote SSH pane, or a headless local one), checked via the real
     # $TMUX/$ZELLIJ env vars rather than PINENTRY_USER_DATA.
-    if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
-      if [ -n "$TMUX" ] && command -v tmux >/dev/null 2>&1; then
+    if [ "$display_ok" = 0 ]; then
+      # gpg-agent may be a systemd/desktop service whose environment carries no
+      # $TMUX, so a prompt started from a tmux pane never sees it. Ask tmux itself
+      # whether a client is attached; pinentry-tmux still falls back to plain
+      # pinentry when there is no client to draw a popup in.
+      if { [ -n "$TMUX" ] || tmux display-message -p '#{client_name}' >/dev/null 2>&1; } && command -v tmux >/dev/null 2>&1; then
         exec timeout ${popupTimeout} "${pinentryTmux}/bin/pinentry-tmux" "$@"
       fi
       if [ -n "$ZELLIJ" ] && command -v zellij >/dev/null 2>&1; then
