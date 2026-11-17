@@ -26,7 +26,7 @@ in {
     expr = package.drvAttrs.preBuild;
     expected = ''
       export DSH_CLIENT_COMMIT_HASH="${pin.version}"
-      export DSH_CLIENT_BUILD_PROFILE="official";
+      export DSH_CLIENT_BUILD_PROFILE="official"
     '';
   };
 
