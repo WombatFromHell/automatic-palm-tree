@@ -4,9 +4,9 @@
   "strategy": "latest",
   "channel": ".name | startswith(\"Release \")",
   "url": "https://github.com/{repo}/releases/download/v{version}/brave-browser_{version}_amd64.deb",
-  "version": "1.99.57",
+  "version": "1.100.58",
   "hashes": {
-    "x86_64-linux": "sha256-jNFMV/f9bXnf2aJUUBdbVDihsRtWX/XQitmRtwLen9U="
+    "x86_64-linux": "sha256-LZ0eZk79YDQ8dzJMg2vkAsvlfOElSZdVhN+n0HPxVqU="
   },
   "sigKey": {
     "source": "https://brave-browser-downloads.s3.brave.com/keys/github-checksums-release.asc",
