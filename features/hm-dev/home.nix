@@ -20,6 +20,7 @@
       nil
       nixd
       npins
+      pkgs.unstable.pi-coding-agent
       python314
       ruff
       shellcheck
