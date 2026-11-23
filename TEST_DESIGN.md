@@ -546,26 +546,30 @@ flowchart TD
   N --> N6["other architectures: every host is x86_64-linux,<br/>so pin-meta's per-system boundaries are not exercised"]
   N --> N7["assertion text: NixOS assertions are data on .config.assertions,<br/>they never throw at eval, so we assert the collected list"]
   N --> N8["warnings observed at eval: they go to the CLI, not into a derivation log.<br/>The build tier fails them via modules/warnings-gate.nix"]
-  N --> N9["store layouts beyond the three proven: hm-ghostty's AppDir, hm-brave's rpm<br/>and hm-yazi's completion layout. tmux, zed, dmemcg, korthos and lsfg unpack real<br/>vendor assets whose fixture would have to download them"]
+  N --> N9["store layouts beyond the three proven: hm-ghostty's AppDir, hm-brave's rpm<br/>and hm-yazi's completion layout. tmux, zed, dmemcg, korthos, lsfg and pi-bolt unpack real<br/>vendor assets whose fixture would have to download them; pi-bolt checks its own layout at<br/>build time through installCheckPhase"]
 ```
 
-The eight `features/*/_package.nix` derivations are covered on their **input** side by
+The nine `features/*/_package.nix` derivations are covered on their **input** side by
 `tests/pins.nix` (pin metadata expands to a resolved URL for every pinned system) and by
 `tests/run.sh` diffing the bash and Nix URL expanders byte-for-byte. What a derivation then does
 with that asset is build-tier: `tests/appdir.nix` proves hm-ghostty's relocation by re-running its
 installPhase over a synthetic AppDir, `tests/brave-layout.nix` proves hm-brave's rpm layout by
 re-running its installPhase over a synthetic rpm payload, `tests/yazi-install.nix` proves hm-yazi's
 completion, man and icon layout by re-running its postInstall over the sources actually pinned, and
-the wrap is proven at eval by `tests/wrap.nix`. The other five (`hm-tmux`, `hm-zed`,
-`nixos-dmemcg`, `nixos-korthos`, `nixos-lsfg`) unpack assets whose fixture would have to download
-them, so they stay input-side only.
+the wrap is proven at eval by `tests/wrap.nix`. The other six (`hm-tmux`, `hm-zed`,
+`nixos-dmemcg`, `nixos-korthos`, `nixos-lsfg`, `hm-pibolt`) unpack assets whose fixture would have
+to download them, so they stay input-side only; hm-pibolt additionally runs `pi --version` and
+`pi-start --help` from the store path in its own `installCheckPhase`, so a broken interpreter
+rewrite or a tree moved away from the binary fails the build rather than the activation.
 
 Deliberately skipped: per-feature coverage of all 40 modules. Feature modules are exercised
 through the hosts that enable them — 38 of 40 are enabled by at least one host, so they evaluate
-and their effects are asserted. Three have no host today: the zram tier of `nixos-swap` is off on
+and their effects are asserted. Four have no host today: the zram tier of `nixos-swap` is off on
 every host and is covered by fixture hosts in `tests/swap.nix`; `hm-dcal` and
 `hm-ghostty` are listed nowhere and are covered by fixture hosts in `tests/home.nix` and
-`tests/wrap.nix`. A feature no host asks for is not a shipping contract.
+`tests/wrap.nix`, and `hm-pibolt` is listed nowhere and is covered by a fixture host in
+`tests/home.nix` (its layout is the derivation's own build check). A feature no host asks for is
+not a shipping contract.
 If one of them becomes load-bearing, cover it by enabling it on a fixture host, not by isolating the
 module.
 Kernel choice is the exception:

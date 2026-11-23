@@ -20,13 +20,13 @@ let
   raw = s.rawFeaturePkgs;
   rawPkgs = lib.attrValues raw;
 
-  # Two features no real host enables (hm-dcal and hm-ghostty). The zram tier of nixos-swap has
+  # Three features no real host enables (hm-dcal, hm-ghostty and hm-pibolt). The zram tier of nixos-swap has
   # no host either and is covered by fixture hosts in tests/swap.nix.
   # A fixture host asks for them through the same builder, so the effect is what gets checked.
   # hm-nixgl is part of the ask: ghostty's GPU wrapper is a no-op without it, exactly as on NixOS.
   # dcal is resolved the way features/hm-dcal/home.nix resolves it.
   dcal = s.pkgs.unstable.flakePackages.dcal.${s.pkgs.unstable.stdenv.hostPlatform.system}.default;
-  fx = s.hmCfg (s.fixtureHost false ["hm-dcal" "hm-ghostty" "hm-nixgl"] {});
+  fx = s.hmCfg (s.fixtureHost false ["hm-dcal" "hm-ghostty" "hm-nixgl" "hm-pibolt"] {});
   # The copies of one derivation that reached a package list, by the name the package reports
   # (support.nix's pkgName). One rule, used on both sides of the builder: a fixture and a host must
   # not answer the question differently.
@@ -38,6 +38,11 @@ let
   # forcing that would fetch the crate set behind Cargo.lock, exactly as the yazi check below.
   ank = s.pkgs.callPackage ../features/hm-ank/_package.nix {};
   ankPin = builtins.fromJSON (builtins.readFile ../features/hm-ank/metadata.json);
+
+  # hm-pibolt is an unpack-and-symlink vendor binary, so only pname/version are forced here: forcing
+  # outPath is the download. Its layout is the derivation's own installCheckPhase, at build time.
+  pibolt = s.pkgs.callPackage ../features/hm-pibolt/_package.nix {};
+  piboltPin = builtins.fromJSON (builtins.readFile ../features/hm-pibolt/metadata.json);
 
   # The copies of one derivation that reached PATH. Absence is allowed — which GUI features a
   # host enables is the host's business — so the companion check below keeps this from going
@@ -113,8 +118,8 @@ let
     (ck "every package from a feature derivation is wrapped and on PATH exactly once"
       (lib.all wrappedOnce rawPkgs))
 
-    # The two features no real host enables yet: dcal lands on PATH unwrapped (it is a plain
-    # binary, not a GPU app), ghostty lands wrapped exactly once.
+    # The three features no real host enables yet: dcal and pi-bolt land on PATH unwrapped (they
+    # are plain binaries, not GPU apps), ghostty lands wrapped exactly once.
     (ck "a fixture host asking for hm-dcal gets dcal on PATH exactly once"
       ((lib.length (fxInstalled dcal)) == 1 && (lib.head (fxInstalled dcal)).outPath == dcal.outPath))
     (ck "its desktop entry points at that binary"
@@ -123,6 +128,14 @@ let
       ((lib.length (fxInstalled raw.ghostty))
         == 1
         && (lib.head (fxInstalled raw.ghostty)).outPath != raw.ghostty.outPath))
+    # One package object carries both `pi` and `pi-start`, so the count is one, not two; the version
+    # is the release tag the pin names, which is what a bump would move.
+    (ck "a fixture host asking for hm-pibolt gets it on PATH exactly once, unwrapped, at the pinned tag"
+      ((lib.length (fxInstalled pibolt))
+        == 1
+        && (lib.head (fxInstalled pibolt)).outPath == pibolt.outPath
+        && (lib.head (fxInstalled pibolt)).version == piboltPin.version
+        && (lib.head (fxInstalled pibolt)).meta.mainProgram == "pi"))
 
     # The pinned fork build is what the program module installs. The upstream wrapper inherits
     # pname/version from the unwrapped package, so `version` reads back as the pinned commit.

@@ -38,7 +38,7 @@ floors() { TESTS_DIR="$1" LEDGER="$2" bash "$repo/tests/floors.sh"; }
 @test "a new suite with assertions cannot slip in unfloored" {
   mkdir -p "$stubs/t"
   printf '@test "x" { assert_out "a"; }\n' >"$stubs/t/new.bats"
-  printf 'tests/home.nix checks 21\n' >"$stubs/t/ledger.txt"
+  printf 'tests/home.nix checks 22\n' >"$stubs/t/ledger.txt"
   run floors "$stubs/t" "$stubs/t/ledger.txt"
   [ "$status" = 1 ]
   assert_out "FAIL tests/new.bats [unfloored]"

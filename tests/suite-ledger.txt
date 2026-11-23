@@ -16,7 +16,7 @@ tests/terraform.bats assert 251
 tests/updater.bats assert 13
 tests/xilo.bats assert 42
 tests/configs.nix checks 27
-tests/home.nix checks 21
+tests/home.nix checks 22
 tests/mounts.nix checks 8
 tests/outputs.nix checks 11
 tests/wrap.nix checks 15

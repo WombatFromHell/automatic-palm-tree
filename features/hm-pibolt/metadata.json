@@ -1,0 +1,14 @@
+{
+  "repo": "opensec-git/Pi-Bolt",
+  "kind": "sri",
+  "strategy": "latest",
+  "channel": ".tag_name | startswith(\"bolt-v\")",
+  "url": "https://github.com/{repo}/releases/download/{version}/pi-bolt-linux-{arch}.tar.xz",
+  "arches": {
+    "x86_64-linux": "x64"
+  },
+  "version": "bolt-v1.3.0",
+  "hashes": {
+    "x86_64-linux": "sha256-bRXlc9fu6/7PEMHhurKI3rD/13PZMVtoLAwy/ts66lg="
+  }
+}
