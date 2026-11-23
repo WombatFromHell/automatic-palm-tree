@@ -129,12 +129,12 @@ let
         == 1
         && (lib.head (fxInstalled raw.ghostty)).outPath != raw.ghostty.outPath))
     # One package object carries both `pi` and `pi-start`, so the count is one, not two; the version
-    # is the release tag the pin names, which is what a bump would move.
-    (ck "a fixture host asking for hm-pibolt gets it on PATH exactly once, unwrapped, at the pinned tag"
+    # is the release version the pinned tag carries, which is what a bump would move.
+    (ck "a fixture host asking for hm-pibolt gets it on PATH exactly once, unwrapped, at the pinned release"
       ((lib.length (fxInstalled pibolt))
         == 1
         && (lib.head (fxInstalled pibolt)).outPath == pibolt.outPath
-        && (lib.head (fxInstalled pibolt)).version == piboltPin.version
+        && (lib.head (fxInstalled pibolt)).version == (lib.removePrefix "bolt-" piboltPin.version)
         && (lib.head (fxInstalled pibolt)).meta.mainProgram == "pi"))
 
     # The pinned fork build is what the program module installs. The upstream wrapper inherits

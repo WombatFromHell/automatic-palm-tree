@@ -26,7 +26,10 @@ in
   # checksum file; upgrade when a release is ever tampered with.
   stdenv.mkDerivation (finalAttrs: {
     pname = "pi-bolt-bin";
-    inherit (pin) version;
+    # metadata.json carries the release tag, which is what the download URL names. The store path
+    # wants the version the tag carries, not its channel prefix: pi-bolt-bin-v1.3.0, not
+    # pi-bolt-bin-bolt-v1.3.0.
+    version = lib.removePrefix "bolt-" pin.version;
 
     src = fetchurl asset;
 
@@ -68,7 +71,7 @@ in
       # The rewritten interpreter is what makes a store-path binary run at all, and 0.0.0 is what
       # pi prints when package.json is not beside the executable it resolved.
       # pi opens a trust lock under $HOME at startup, and the build sandbox has no writable one.
-      export HOME="${TMPDIR:-/tmp}"
+      export HOME="$TMPDIR"
       ver="$($out/bin/pi --version)"
       case "$ver" in
         0.0.0*)
