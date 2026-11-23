@@ -51,6 +51,9 @@ in
       mkdir -p $out/bin $out/libexec
       mv "$dir" $out/libexec/pi-bolt
 
+      # docs/ and examples/ are upstream source-tree extras; pi resolves its resources (theme/,
+      # assets/, native/) beside itself and never reads them.
+      rm -rf "$out/libexec/pi-bolt/docs" "$out/libexec/pi-bolt/examples"
       # `pi` is dynamically linked against the host's glibc (/lib64); `pi-start` is statically
       # linked, so only pi needs rewriting into the store.
       linker="$(cat $NIX_CC/nix-support/dynamic-linker)"
