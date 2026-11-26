@@ -1,0 +1,13 @@
+{
+  "repo": "jmfederico/pi-web",
+  "kind": "nar",
+  "strategy": "none",
+  "url": "https://github.com/{repo}/archive/{version}.tar.gz",
+  "version": "09d6e5fbb342f22f9abb32d18e83a2953ebd01d3",
+  "hashes": {
+    "x86_64-linux": "sha256-NR/U7nIpu4YKwI0QPgKzY6TRJqe/ajSwQg96/BYQwms="
+  },
+  "depsHashes": {
+    "x86_64-linux": "sha256-9/cDPxOCDOpTylmmf1vkz8E/syuHkYrEx2HBL5c5h+8="
+  }
+}

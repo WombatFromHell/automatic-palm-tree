@@ -15,6 +15,7 @@ let
     (import ./package-flags.nix)
     (import ./ank.nix)
     (import ./dsh.nix)
+    (import ./piweb.nix)
     (import ./pins.nix)
     (import ./caches.nix)
     (import ./warnings.nix)
